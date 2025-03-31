@@ -1,0 +1,8 @@
+name: rtccore
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - nodejs=22
+  - uv
+  - jupyterlab
