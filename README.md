@@ -62,6 +62,7 @@ editable copy of `jupyter_rtc_core` into your environment by running the script
 below.
 
 ```bash
+jlpm install
 jlpm dev:install
 ```
 
