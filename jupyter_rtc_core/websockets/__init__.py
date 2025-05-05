@@ -1,2 +1,2 @@
-from .yawareness_websocket import YAwarenessWebsocket
-from .ydoc_websocket import YDocWebsocket
+from .global_awareness_ws import GlobalAwarenessWebsocket
+from .yroom_ws import YRoomWebsocket
