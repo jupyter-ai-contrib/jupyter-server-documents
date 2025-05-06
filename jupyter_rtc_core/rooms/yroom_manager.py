@@ -16,7 +16,7 @@ class YRoomManager:
         # TODO: needs YRoomLoader implementation
         # Should initialize `YRoomLoader` and pass a reference of it when
         # initializing the `YRoom`.
-        return
+        return None
         
     def delete_room(self, room: YRoom) -> None:
         # TODO

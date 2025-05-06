@@ -157,7 +157,7 @@ class YRoom:
         YDoc to disk.
         """
         # Ignore the message if client is desynced
-        if self._should_ignore_update(client_id):
+        if self._should_ignore_update(client_id, "SyncUpdate"):
             return
 
         # Apply the SyncUpdate to the YDoc
@@ -182,7 +182,7 @@ class YRoom:
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
         # Ignore the message if client is desynced
-        if self._should_ignore_update(client_id):
+        if self._should_ignore_update(client_id, "AwarenessUpdate"):
             return
 
         # Apply the AwarenessUpdate message
