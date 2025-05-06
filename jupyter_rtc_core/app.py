@@ -5,6 +5,9 @@ from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
 
 class RtcExtensionApp(ExtensionApp):
     name = "jupyter_rtc_core"
+    app_name = "Collaboration"
+    description = "A new implementation of real-time collaboration (RTC) in JupyterLab."
+
     handlers = [  # type:ignore[assignment]
         # dummy handler that verifies the server extension is installed;
         # this can be deleted prior to initial release.
@@ -14,3 +17,7 @@ class RtcExtensionApp(ExtensionApp):
         # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket)
     ]
+
+    def initialize(self):
+        super().initialize()
+    
