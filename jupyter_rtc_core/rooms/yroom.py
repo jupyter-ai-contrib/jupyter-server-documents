@@ -19,29 +19,47 @@ class YRoom:
     _client_group: YjsClientGroup
     _message_queue: asyncio.Queue[Tuple[str, bytes]]
 
+
     def __init__(self, log: Logger, loop: asyncio.AbstractEventLoop):
-        self.ydoc = pycrdt.Doc()
-        self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
+        # Bind instance attributes
         self.log = log
         self.loop = loop
+
+        # Initialize YDoc, YAwareness, YjsClientGroup, and message queue
+        self.ydoc = pycrdt.Doc()
+        self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
         self._client_group = YjsClientGroup()
         self._message_queue = asyncio.Queue()
 
-        # start listening to the message queue
+        # Start background task that handles messages in the message queue
         self.loop.create_task(self._on_new_message())
     
+
     @property
     def clients(self) -> YjsClientGroup:
+        """
+        Returns the `YjsClientGroup` for this room, which provides an API for
+        managing the set of clients connected to this room.
+        """
+
         return self._client_group
     
+
     def add_client(self, websocket: tornado.websocket.WebSocketHandler) -> str:
-        """Calls self.clients.add(), returns a client ID."""
+        """
+        Creates a new client from the given Tornado WebSocketHandler and
+        adds it to the room. Returns the ID of the new client.
+        """
+
         return self.clients.add(websocket)
 
+
     def remove_client(self, client_id: str) -> None:
-        """Calls self.clients.remove()."""
+        """Removes a client from the room, given the client ID."""
+
         self.clients.remove(client_id)
     
+
     def add_message(self, client_id: str, message: bytes) -> None:
         """
         Adds new message to the message queue. Items placed in the message queue
@@ -49,6 +67,7 @@ class YRoom:
         """
         self._message_queue.put_nowait((client_id, message))
     
+
     async def _on_new_message(self) -> None:
         """
         Async method that only runs when a new message arrives in the message
@@ -62,8 +81,8 @@ class YRoom:
             except asyncio.QueueShutDown:
                 break
         
-            message_type = message[0]
             # Handle Awareness messages
+            message_type = message[0]
             if message_type == YMessageType.AWARENESS:
                 self.handle_awareness_update(client_id, message[1:])
                 continue
@@ -89,15 +108,17 @@ class YRoom:
                 )
                 continue
 
+
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
         """
-        Handles SyncStep1 messages from new clients by computing a SyncStep2
-        message and replying over WebSockets.
+        Handles SyncStep1 messages from new clients by computing & replying with
+        a SyncStep2 message.
         """
-        # mark client as non-synced
+        # Mark client as desynced
         new_client = self.clients.get(client_id, synced_only=False)
         self.clients.mark_desynced(client_id)
 
+        # Compute SyncStep2 reply
         try:
             message_payload = message[1:]
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self.ydoc)
@@ -107,12 +128,11 @@ class YRoom:
             self.log.exception(e)
             return
 
+        # Write SyncStep2 reply to the client's WebSocket
         try:
             # TODO: remove the assert once websocket is made required
             assert isinstance(new_client.websocket, tornado.websocket.WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message)
-            
-            # mark the new client as synced
             self.clients.mark_synced(client_id)
         except Exception as e:
             self.log.error(f"An exception occurred when writing the SyncStep2 reply to new client '{new_client.id}':")
@@ -126,9 +146,8 @@ class YRoom:
         the YDoc, broadcasting the update to all other clients, and saving the
         YDoc to disk.
         """
-        client = self.clients.get(client_id, synced_only=False)
-        if not client.synced:
-            self.log.warning(f"Received a SyncUpdate message from client '{client_id}', but the client is not synced. Ignoring this message.")
+        # Ignore the message if client is desynced
+        if self._should_ignore_update(client_id):
             return
 
         # Apply the SyncUpdate to the YDoc
@@ -143,22 +162,50 @@ class YRoom:
         # Broadcast the SyncUpdate to all other synced clients
         self._broadcast_message_from(client_id, message, message_type="SyncUpdate")
         
-        # Finally, save the file to disk: TODO.
+        # Finally, save the file to disk
+        # TODO: requires YRoomLoader implementation
         return
 
+
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
+        # Ignore the message if client is desynced
+        if self._should_ignore_update(client_id):
+            return
+
         # Apply the AwarenessUpdate message
         message_payload = message[1:]
         self.awareness.apply_awareness_update(message_payload, origin=self)
 
         # Broadcast AwarenessUpdate message to all other synced clients
         self._broadcast_message_from(client_id, message, message_type="AwarenessUpdate")
+
+
+    def _should_ignore_update(self, client_id: str, message_type: Literal['AwarenessUpdate', 'SyncUpdate']) -> bool:
+        """
+        Returns whether a handler method should ignore an AwarenessUpdate or
+        SyncUpdate message from a client because it is desynced. Automatically
+        logs a warning if returning `True`. `message_type` is used to produce
+        more readable warnings.
+        """
+
+        client = self.clients.get(client_id, synced_only=False)
+        if not client.synced:
+            self.log.warning(f"Ignoring a {message_type} message from client '{client_id}' because the client is not synced.")
+            return True
+        
+        return False
     
+
     def _broadcast_message_from(self, client_id: str, message: bytes, message_type: Literal['AwarenessUpdate', 'SyncUpdate']):
+        """
+        Broadcasts a given message from a given client to all other clients.
+        This method automatically logs warnings when writing to a WebSocket
+        fails. `message_type` is used to produce more readable warnings.
+        """
         other_clients = self.clients.get_others(client_id)
         for other_client in other_clients:
             try:
-                # TODO: remove this assertion
+                # TODO: remove this assertion once websocket is made required
                 assert isinstance(other_client.websocket, tornado.websocket.WebSocketHandler)
                 other_client.websocket.write_message(message)
             except Exception as e:
@@ -167,5 +214,5 @@ class YRoom:
 
         
     def stop(self) -> None:
-        # TODO
+        # TODO: requires YRoomLoader implementation
         return
