@@ -6,10 +6,10 @@ from ..websockets import YjsClientGroup
 
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
+from tornado.websocket import WebSocketHandler
 
 if TYPE_CHECKING:
     from typing import Literal, Tuple
-    import tornado.websocket
 
 class YRoom:
     ydoc: pycrdt.Doc
@@ -45,7 +45,7 @@ class YRoom:
         return self._client_group
     
 
-    def add_client(self, websocket: tornado.websocket.WebSocketHandler) -> str:
+    def add_client(self, websocket: WebSocketHandler) -> str:
         """
         Creates a new client from the given Tornado WebSocketHandler and
         adds it to the room. Returns the ID of the new client.
@@ -95,7 +95,8 @@ class YRoom:
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_STEP2:
                 self.log.warning(
-                    f"Ignoring a SyncStep2 message from client '{client_id}'. The server should not receive SyncStep2 messages."
+                    f"Ignoring a SyncStep2 message from client '{client_id}'. "
+                    "The server should not receive SyncStep2 messages."
                 )
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
@@ -103,8 +104,11 @@ class YRoom:
                 continue
             else:
                 self.log.warning(
-                    f"Ignoring an unrecognized message with header '{message_type},{message_subtype}' from client '{client_id}'." \
-                    "Messages must have one of the following headers: '0,0' (SyncStep1), '0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
+                    "Ignoring an unrecognized message with header "
+                    f"'{message_type},{message_subtype}' from client "
+                    "'{client_id}'. Messages must have one of the following "
+                    "headers: '0,0' (SyncStep1), '0,2' (SyncUpdate), or "
+                    "'1,*' (AwarenessUpdate)."
                 )
                 continue
 
@@ -124,18 +128,24 @@ class YRoom:
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self.ydoc)
             assert isinstance(sync_step2_message, bytes)
         except Exception as e:
-            self.log.error(f"An exception occurred when computing the SyncStep2 reply to new client '{new_client.id}':")
+            self.log.error(
+                "An exception occurred when computing the SyncStep2 reply "
+                f"to new client '{new_client.id}':"
+            )
             self.log.exception(e)
             return
 
         # Write SyncStep2 reply to the client's WebSocket
         try:
             # TODO: remove the assert once websocket is made required
-            assert isinstance(new_client.websocket, tornado.websocket.WebSocketHandler)
+            assert isinstance(new_client.websocket, WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message)
             self.clients.mark_synced(client_id)
         except Exception as e:
-            self.log.error(f"An exception occurred when writing the SyncStep2 reply to new client '{new_client.id}':")
+            self.log.error(
+                "An exception occurred when writing the SyncStep2 reply "
+                f"to new client '{new_client.id}':"
+            )
             self.log.exception(e)
             return
 
@@ -155,7 +165,10 @@ class YRoom:
             message_payload = message[1:]
             pycrdt.handle_sync_message(message_payload, self.ydoc)
         except Exception as e:
-            self.log.error(f"An exception occurred when applying a SyncUpdate message from client '{client_id}':")
+            self.log.error(
+                "An exception occurred when applying a SyncUpdate message "
+                f"from client '{client_id}':"
+            )
             self.log.exception(e)
             return
         
@@ -173,8 +186,16 @@ class YRoom:
             return
 
         # Apply the AwarenessUpdate message
-        message_payload = message[1:]
-        self.awareness.apply_awareness_update(message_payload, origin=self)
+        try:
+            message_payload = message[1:]
+            self.awareness.apply_awareness_update(message_payload, origin=self)
+        except Exception as e:
+            self.log.error(
+                "An exception occurred when applying an AwarenessUpdate"
+                f"message from client '{client_id}':"
+            )
+            self.log.exception(e)
+            return
 
         # Broadcast AwarenessUpdate message to all other synced clients
         self._broadcast_message_from(client_id, message, message_type="AwarenessUpdate")
@@ -190,7 +211,10 @@ class YRoom:
 
         client = self.clients.get(client_id, synced_only=False)
         if not client.synced:
-            self.log.warning(f"Ignoring a {message_type} message from client '{client_id}' because the client is not synced.")
+            self.log.warning(
+                f"Ignoring a {message_type} message from client "
+                f"'{client_id}' because the client is not synced."
+            )
             return True
         
         return False
@@ -206,10 +230,14 @@ class YRoom:
         for other_client in other_clients:
             try:
                 # TODO: remove this assertion once websocket is made required
-                assert isinstance(other_client.websocket, tornado.websocket.WebSocketHandler)
+                assert isinstance(other_client.websocket, WebSocketHandler)
                 other_client.websocket.write_message(message)
             except Exception as e:
-                self.log.warning(f"An exception occurred when broadcasting a {message_type} message from client '{client_id}' to client '{other_client.id}:'")
+                self.log.warning(
+                    f"An exception occurred when broadcasting a "
+                    f"{message_type} message from client '{client_id}' "
+                    f"to client '{other_client.id}:'"
+                )
                 self.log.exception(e)
 
         
