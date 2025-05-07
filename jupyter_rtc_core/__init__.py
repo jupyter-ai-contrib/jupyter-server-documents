@@ -26,10 +26,11 @@ def _jupyter_server_extension_points():
 
 
 def _link_jupyter_server_extension(server_app):
+    """Setup custom config needed by this extension."""
     server_app.kernel_websocket_connection_class = RTCWebsocketConnection
     c = Config()
     c.ServerApp.kernel_websocket_connection_class = "jupyter_rtc_core.outputs.connection.RTCWebsocketConnection"
-    c.MappingKernelManager.buffer_offline_messages = False
+    # c.MappingKernelManager.buffer_offline_messages = False
     server_app.update_config(c)
 
 

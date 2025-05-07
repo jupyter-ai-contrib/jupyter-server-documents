@@ -28,7 +28,14 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
             value = self.session.unpack(msg_list[field2idx[field]])
         return value
 
-    def _save_cell_id(self, channel, msg, msg_list):
+    def save_cell_id(self, channel, msg, msg_list):
+        """Save the cell_id <-> msg_id map.
+        
+        This method is used to create a map between cell_id and msg_id.
+        Incoming execute_request messages have both a cell_id and msg_id.
+        When output messages are send back to the frontend, this map is used
+        to find the cell_id for a given parent msg_id.
+        """
         if channel != "shell":
             return
         header = self.get_part("header", msg.get("header"), msg_list)
@@ -41,8 +48,62 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         if md is None:
             return
         cell_id = md.get('cellId')
-        self.log.info(f'execute_reply: {msg_id} {cell_id}')
+        self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
         self._cell_ids[msg_id] = cell_id
+    
+    def get_cell_id(self, msg_id):
+        """Retrieve a cell_id from a parent msg_id."""
+        return self._cell_ids[msg_id]
+
+    def disconnect(self):
+        """Handle a disconnect."""
+        self.log.debug("Websocket closed %s", self.session_key)
+        # unregister myself as an open session (only if it's really me)
+        if self._open_sessions.get(self.session_key) is self.websocket_handler:
+            self._open_sessions.pop(self.session_key)
+
+        if self.kernel_id in self.multi_kernel_manager:
+            self.multi_kernel_manager.notify_disconnect(self.kernel_id)
+            self.multi_kernel_manager.remove_restart_callback(
+                self.kernel_id,
+                self.on_kernel_restarted,
+            )
+            self.multi_kernel_manager.remove_restart_callback(
+                self.kernel_id,
+                self.on_restart_failed,
+                "dead",
+            )
+
+            # start buffering instead of closing if this was the last connection
+            if (
+                self.kernel_id in self.multi_kernel_manager._kernel_connections
+                and self.multi_kernel_manager._kernel_connections[self.kernel_id] == 0
+            ):
+                # We need to comment this out because the start_buffering method
+                # closes the ZMQ streams for the different channels. But we need
+                # to keep those alive while the kernel is running. Need to think
+                # carefully about how this works.
+                # self.multi_kernel_manager.start_buffering(
+                #     self.kernel_id, self.session_key, self.channels
+                # )
+                ZMQChannelsWebsocketConnection._open_sockets.remove(self)
+                self._close_future.set_result(None)
+                return
+
+        # This method can be called twice, once by self.kernel_died and once
+        # from the WebSocket close event. If the WebSocket connection is
+        # closed before the ZMQ streams are setup, they could be None.
+        for stream in self.channels.values():
+            if stream is not None and not stream.closed():
+                stream.on_recv(None)
+                stream.close()
+
+        self.channels = {}
+        try:
+            ZMQChannelsWebsocketConnection._open_sockets.remove(self)
+            self._close_future.set_result(None)
+        except Exception:
+            pass
 
     def handle_incoming_message(self, incoming_msg: str) -> None:
         """Handle incoming messages from Websocket to ZMQ Sockets."""
@@ -82,7 +143,10 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
                     % msg["header"]["msg_type"]
                 )
                 ignore_msg = True
-        self._save_cell_id(channel, msg, msg_list)
+
+        # Persist the map between cell_id and msg_id
+        self.save_cell_id(channel, msg, msg_list)
+
         if not ignore_msg:
             stream = self.channels[channel]
             if self.subprotocol == "v1.kernel.websocket.jupyter.org":
@@ -109,19 +173,14 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
 
         self._on_error(channel, msg, parts)
 
+        # Handle output messages
         header = self.get_part("header", msg.get("header"), parts)
         msg_type = header["msg_type"]
-        if msg_type == "stream" or msg_type == "display_data":
-            parent_header = self.get_part("parent_header", msg.get("parent_header"), parts)
-            self.log.info(header)
-            self.log.info(parent_header)
-            msg_id = parent_header["msg_id"]
-            cell_id = self._cell_ids.get(msg_id)
-            self.log.info(cell_id)
-            content = self.get_part("content", msg.get("content"), parts)
-            asyncio.create_task(self._handle_output(msg_type, cell_id, content))
+        if msg_type in ("stream", "display_data", "execute_result", "error"):
+            self.handle_output(msg_type, msg, parts)
             return
 
+        # We can probably get rid of the rate limiting
         if self._limit_rate(channel, msg, parts):
             return
 
@@ -130,15 +189,30 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         else:
             self._on_zmq_reply(stream, msg)
     
-    async def _handle_output(self, msg_type, cell_id, content):
-        self.log.info(content)
+    def handle_output(self, msg_type, msg, parts):
+        """Handle output messages by writing them to the server side Ydoc."""
+        parent_header = self.get_part("parent_header", msg.get("parent_header"), parts)
+        msg_id = parent_header["msg_id"]
+        cell_id = self.get_cell_id(msg_id)
+        self.log.info(f"Retreiving (msg_id, cell_id): ({msg_id} {cell_id})")
+        content = self.get_part("content", msg.get("content"), parts)
+        self.log.info(f"{cell_id} {msg_type} {content}")
+        asyncio.create_task(self.output_task(msg_type, cell_id, content))
+
+    async def output_task(self, msg_type, cell_id, content):
+        """A coroutine to handle output messages."""
         settings = self.websocket_handler.settings
         kernel_session_manager = settings["session_manager"]
-        kernel_session = await kernel_session_manager.get_session(kernel_id=self.kernel_id)
+        try:
+            kernel_session = await kernel_session_manager.get_session(kernel_id=self.kernel_id)
+        except:
+            pass
         path = kernel_session["path"]
-        self.log.info(path)
-        jupyter_server_ydoc = settings["jupyter_server_ydoc"]
-        notebook = await jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
+        try:
+            jupyter_server_ydoc = settings["jupyter_server_ydoc"]
+            notebook = await jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
+        except:
+            pass
         cells = notebook.ycells
         target = None
         for cell in cells:
@@ -146,8 +220,35 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
                 target = cell
         if target is None:
             return
-        o = None
+        output = self.transform_output(msg_type, content)
+        target["outputs"].append(output)
+    
+    def transform_output(self, msg_type, content):
+        """Transform output from IOPub messages to the nbformat specification."""
         if msg_type == "stream":
-            o = Map({"output_type": "stream", "text": content["text"], "name": content["name"]})
-        if o is not None:
-            target["outputs"].append(o)
+            output = Map({
+                "output_type": "stream",
+                "text": content["text"],
+                "name": content["name"]
+            })
+        elif msg_type == "display_data":
+            output = Map({
+                "output_type": "display_data",
+                "data": content["data"],
+                "metadata": content["metadata"]
+            })
+        elif msg_type == "execute_result":
+            output = Map({
+                "output_type": "execute_result",
+                "data": content["data"],
+                "metadata": content["metadata"],
+                "execution_count": content["execution_count"]
+            })
+        elif msg_type == "error":
+            output = Map({
+                "output_type": "error",
+                "traceback": content["traceback"],
+                "ename": content["ename"],
+                "evalue": content["evalue"]
+            })
+        return output
