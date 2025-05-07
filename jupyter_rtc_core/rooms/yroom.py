@@ -99,10 +99,7 @@ class YRoom:
                 self.handle_sync_step1(client_id, message)
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-                self.log.warning(
-                    f"Ignoring a SyncStep2 message from client '{client_id}'. "
-                    "The server should not receive SyncStep2 messages."
-                )
+                self.handle_sync_step2(client_id, message)
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
                 self.handle_sync_update(client_id, message)
@@ -112,8 +109,8 @@ class YRoom:
                     "Ignoring an unrecognized message with header "
                     f"'{message_type},{message_subtype}' from client "
                     "'{client_id}'. Messages must have one of the following "
-                    "headers: '0,0' (SyncStep1), '0,2' (SyncUpdate), or "
-                    "'1,*' (AwarenessUpdate)."
+                    "headers: '0,0' (SyncStep1), '0,1' (SyncStep2), "
+                    "'0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
                 )
                 continue
 
@@ -216,10 +213,6 @@ class YRoom:
             self.log.exception(e)
             return
         
-        # Broadcast the SyncUpdate to all other synced clients and save the YDoc
-        # to disk.
-        self.write_sync_update(message_payload, client_id)
-
 
     def write_sync_update(self, message_payload: bytes, client_id: str | None = None) -> None:
         """
