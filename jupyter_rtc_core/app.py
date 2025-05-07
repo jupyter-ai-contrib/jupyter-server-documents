@@ -15,7 +15,7 @@ class RtcExtensionApp(ExtensionApp):
 
     handlers = [  # type:ignore[assignment]
         # dummy handler that verifies the server extension is installed;
-        # this can be deleted prior to initial release.
+        # # this can be deleted prior to initial release.
         (r"jupyter-rtc-core/get-example/?", RouteHandler),
         # global awareness websocket
         # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),

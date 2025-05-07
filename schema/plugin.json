@@ -4,5 +4,13 @@
   "description": "@jupyter/rtc-core settings.",
   "type": "object",
   "properties": {},
-  "additionalProperties": false
+  "additionalProperties": false,
+  "jupyter.lab.toolbars": {
+    "Notebook": [
+      {
+        "name": "executionProgress",
+        "disabled": true
+      }
+    ]
+  }
 }
