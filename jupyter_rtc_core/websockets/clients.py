@@ -68,12 +68,10 @@ class YjsClientGroup:
         """
         return YjsClient()
 
-    def get_others(self, client_id: str, synced_only: bool = True) -> list[YjsClient]:
+    def get_all(self, synced_only: bool = True) -> list[YjsClient]:
         """
-        Gets all *other* clients given a client ID. Useful for broadcasting
-        SyncUpdate messages.
-        
-        Set synced_only=False to also get pending clients.
+        Returns a list of all synced clients.
+        Set synced_only=False to also get desynced clients.
         """
         return []
     
