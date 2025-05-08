@@ -15,8 +15,8 @@ from traitlets.utils.importstring import import_item
 
 from jupyter_client.manager import AsyncKernelManager
 
-from . import types
-from . import states
+# from . import types
+from .states import ExecutionStates, LifecycleStates
 from .kernel_client import AsyncKernelClient
 
 
@@ -30,27 +30,34 @@ class NextGenKernelManager(AsyncKernelManager):
     
     client_factory: Type = Type(klass="jupyter_rtc_core.kernels.kernel_client.NextGenAsyncKernelClient")
 
-    # Configurable settings in a kernel manager that I want.
-    time_to_connect: int = Int(
+    connection_attempts: int = Int(
         default_value=10,
-        help="The timeout for connecting to a kernel."
+        help="The number of initial heartbeat attempts once the kernel is alive. Each attempt is 1 second apart."
     ).tag(config=True)
     
-    execution_state: types.EXECUTION_STATES = Unicode()
+    execution_state: ExecutionStates = Unicode()
     
     @validate("execution_state")
     def _validate_execution_state(self, proposal: dict):
-        if not proposal["value"] in states.EXECUTION_STATES:
-            raise TraitError(f"execution_state must be one of {states.EXECUTION_STATES}")
-        return proposal["value"]
+        value = proposal["value"]
+        if type(value) == ExecutionStates:
+            # Extract the enum value.
+            value = value.value
+        if not value in ExecutionStates:
+            raise TraitError(f"execution_state must be one of {ExecutionStates}")
+        return value
 
-    lifecycle_state: types.EXECUTION_STATES = Unicode()
+    lifecycle_state: LifecycleStates = Unicode()
     
     @validate("lifecycle_state")
     def _validate_lifecycle_state(self, proposal: dict):
-        if not proposal["value"] in states.LIFECYCLE_STATES:
-            raise TraitError(f"lifecycle_state must be one of {states.LIFECYCLE_STATES}")
-        return proposal["value"]
+        value = proposal["value"]
+        if type(value) == LifecycleStates:
+            # Extract the enum value.
+            value = value.value
+        if not value in LifecycleStates:
+            raise TraitError(f"lifecycle_state must be one of {LifecycleStates}")
+        return value
     
     state = Dict()
     
@@ -89,34 +96,34 @@ class NextGenKernelManager(AsyncKernelManager):
     
     def set_state(
         self, 
-        lifecycle_state: typing.Optional[types.LIFECYCLE_STATES] = None, 
-        execution_state: typing.Optional[types.EXECUTION_STATES] = None,
+        lifecycle_state: LifecycleStates = None, 
+        execution_state: ExecutionStates = None,
         broadcast=True
     ):
         if lifecycle_state:
-            self.lifecycle_state = lifecycle_state
+            self.lifecycle_state = lifecycle_state.value
         if execution_state:
-            self.execution_state = execution_state
+            self.execution_state = execution_state.value
             
         if broadcast:
             # Broadcast this state change to all listeners
             self.broadcast_state()
 
     async def start_kernel(self, *args, **kwargs):
-        self.set_state("starting", "starting")
+        self.set_state(LifecycleStates.STARTING, ExecutionStates.STARTING)
         out = await super().start_kernel(*args, **kwargs)
-        self.set_state("started")
+        self.set_state(LifecycleStates.STARTED)
         await self.connect()
         return out
         
     async def shutdown_kernel(self, *args, **kwargs):
-        self.set_state("terminating")
+        self.set_state(LifecycleStates.TERMINATING)
         await self.disconnect()
         out = await super().shutdown_kernel(*args, **kwargs)
-        self.set_state("terminated", "dead")
+        self.set_state(LifecycleStates.TERMINATED, ExecutionStates.DEAD)
      
     async def restart_kernel(self, *args, **kwargs):
-        self.set_state("restarting")
+        self.set_state(LifecycleStates.RESTARTING)
         return await super().restart_kernel(*args, **kwargs)
 
     async def connect(self):
@@ -129,7 +136,7 @@ class NextGenKernelManager(AsyncKernelManager):
         be in a starting phase. We can keep a connection
         open regardless if the kernel is ready. 
         """
-        self.set_state("connecting", "busy")
+        self.set_state(LifecycleStates.CONNECTING, ExecutionStates.BUSY)
         # Use the new API for getting a client.
         self.main_client = self.client()
         # Track execution state by watching all messages that come through
@@ -143,15 +150,15 @@ class NextGenKernelManager(AsyncKernelManager):
         attempt = 0
         while not self.main_client.hb_channel.is_alive():
             attempt += 1
-            if attempt > self.time_to_connect:
+            if attempt > self.connection_attempts:
                 # Set the state to unknown.
-                self.set_state("unknown", "unknown")
+                self.set_state(LifecycleStates.UNKNOWN, ExecutionStates.UNKNOWN)
                 raise Exception("The kernel took too long to connect to the ZMQ sockets.")
             # Wait a second until the next time we try again.
             await asyncio.sleep(1)
         # Send an initial kernel info request on the shell channel.
-        self.main_client.kernel_info()
-        self.set_state("connected")
+        self.main_client.send_kernel_info()
+        self.set_state(LifecycleStates.CONNECTED)
         
     async def disconnect(self):
         await self.main_client.stop_listening()
@@ -181,15 +188,15 @@ class NextGenKernelManager(AsyncKernelManager):
         deserialized_msg = session.deserialize(smsg, content=False)
         if deserialized_msg["msg_type"] == "status":
             content = session.unpack(deserialized_msg["content"])
-            status = content["execution_state"]
-            if status == "starting":
+            execution_state = content["execution_state"]
+            if execution_state == "starting":
                 # Don't broadcast, since this message is already going out.
-                self.set_state("starting", status, broadcast=False)
+                self.set_state(LifecycleStates.STARTING, execution_state, broadcast=False)
             else:
                 parent = deserialized_msg.get("parent_header", {})
                 msg_id = parent.get("msg_id", "")
                 parent_channel = self.main_client.message_source_cache.get(msg_id, None)
                 if parent_channel and parent_channel == "shell":
                     # Don't broadcast, since this message is already going out.
-                    self.set_state("connected", status, broadcast=False)
+                    self.set_state(LifecycleStates.CONNECTED, execution_state, broadcast=False)
             

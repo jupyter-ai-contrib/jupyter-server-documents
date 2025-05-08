@@ -8,7 +8,6 @@ from .utils import LRUCache
 from jupyter_client.asynchronous.client import AsyncKernelClient
 import anyio
 
-from jupyter_client.session import Session
 
 class NextGenAsyncKernelClient(AsyncKernelClient): 
     """
@@ -23,7 +22,7 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
     message_source_cache = Instance(
         default_value=LRUCache(maxsize=1000), klass=LRUCache
     )
-
+    
     # A set of callables that are called when a
     # ZMQ message comes back from the kernel.
     _listeners = Set(allow_none=True)
@@ -44,6 +43,7 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
         # Background this task.
         self._listening_task = asyncio.create_task(_listening())
 
+
     async def stop_listening(self):
         # If the listening task isn't defined yet
         # do nothing.
@@ -51,8 +51,8 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
             return
         
         # Attempt to cancel the task.
-        self._listening_task.cancel()
         try:
+            self._listening_task.cancel()
             # Await cancellation.
             await self._listening_task
         except asyncio.CancelledError:
@@ -86,13 +86,13 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
         async with anyio.create_task_group() as tg:
             # Broadcast the message to all listeners.
             for listener in self._listeners:
-                async def _wrap_listener(listener, channel_name, msg): 
+                async def _wrap_listener(listener_to_wrap, channel_name, msg): 
                     """
                     Wrap the listener to ensure its async and 
                     logs (instead of raises) exceptions.
                     """
                     try:
-                        listener(channel_name, msg)
+                        listener_to_wrap(channel_name, msg)
                     except Exception as err:
                         self.log.error(err)
                 
@@ -109,7 +109,7 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
         self._listeners.add(callback)
 
     def remove_listener(self, callback: t.Callable[[dict], None]):
-        """Remove a listener to teh ZMQ interface. If the listener
+        """Remove a listener to the ZMQ interface. If the listener
         is not found, this method does nothing.
         """
         self._listeners.discard(callback)
@@ -130,7 +130,10 @@ class NextGenAsyncKernelClient(AsyncKernelClient):
             except Exception as err:
                 self.log.error(err)
     
-    def kernel_info(self):
+    def send_kernel_info(self):
+        """Sends a kernel info message on the shell channel. Useful 
+        for determining if the kernel is busy or idle.
+        """
         msg = self.session.msg("kernel_info_request")
         # Send message, skipping the delimiter and signature
         msg = self.session.serialize(msg)[2:]
