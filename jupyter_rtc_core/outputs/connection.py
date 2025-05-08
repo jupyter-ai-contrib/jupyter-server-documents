@@ -56,56 +56,6 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         """Retrieve a cell_id from a parent msg_id."""
         return self._cell_ids[msg_id]
 
-    def disconnect(self):
-        """Handle a disconnect."""
-        self.log.debug("Websocket closed %s", self.session_key)
-        # unregister myself as an open session (only if it's really me)
-        if self._open_sessions.get(self.session_key) is self.websocket_handler:
-            self._open_sessions.pop(self.session_key)
-
-        if self.kernel_id in self.multi_kernel_manager:
-            self.multi_kernel_manager.notify_disconnect(self.kernel_id)
-            self.multi_kernel_manager.remove_restart_callback(
-                self.kernel_id,
-                self.on_kernel_restarted,
-            )
-            self.multi_kernel_manager.remove_restart_callback(
-                self.kernel_id,
-                self.on_restart_failed,
-                "dead",
-            )
-
-            # start buffering instead of closing if this was the last connection
-            if (
-                self.kernel_id in self.multi_kernel_manager._kernel_connections
-                and self.multi_kernel_manager._kernel_connections[self.kernel_id] == 0
-            ):
-                # We need to comment this out because the start_buffering method
-                # closes the ZMQ streams for the different channels. But we need
-                # to keep those alive while the kernel is running. Need to think
-                # carefully about how this works.
-                # self.multi_kernel_manager.start_buffering(
-                #     self.kernel_id, self.session_key, self.channels
-                # )
-                ZMQChannelsWebsocketConnection._open_sockets.remove(self)
-                self._close_future.set_result(None)
-                return
-
-        # This method can be called twice, once by self.kernel_died and once
-        # from the WebSocket close event. If the WebSocket connection is
-        # closed before the ZMQ streams are setup, they could be None.
-        for stream in self.channels.values():
-            if stream is not None and not stream.closed():
-                stream.on_recv(None)
-                stream.close()
-
-        self.channels = {}
-        try:
-            ZMQChannelsWebsocketConnection._open_sockets.remove(self)
-            self._close_future.set_result(None)
-        except Exception:
-            pass
-
     def handle_incoming_message(self, incoming_msg: str) -> None:
         """Handle incoming messages from Websocket to ZMQ Sockets."""
         ws_msg = incoming_msg
@@ -229,12 +179,12 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         except KeyError:
             # Do a linear scan to find the cell
             self.log.info(f"Linear scan: {cell_id}")
-            cell_index, target_cell = self._find_cell(cell_id, cells)
+            cell_index, target_cell = self.find_cell(cell_id, cells)
         else:
             # Verify that the cached value still matches
             if target_cell["id"] != cell_id:
                 self.log.info(f"Invalid cache hit: {cell_id}")
-                cell_index, target_cell = self._find_cell(cell_id, cells)
+                cell_index, target_cell = self.find_cell(cell_id, cells)
             else:
                 self.log.info(f"Validated cache hit: {cell_id}")
         if target_cell is None:
@@ -243,7 +193,7 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         output = self.transform_output(msg_type, content)
         target_cell["outputs"].append(output)
     
-    def _find_cell(self, cell_id, cells):
+    def find_cell(self, cell_id, cells):
         """Find the cell with a given cell_id.
         
         This does a simple linear scan of the cells, but in reverse order because
