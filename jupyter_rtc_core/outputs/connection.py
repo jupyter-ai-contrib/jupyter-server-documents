@@ -144,6 +144,7 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         """Handle output messages by writing them to the server side Ydoc."""
         parent_header = self.get_part("parent_header", msg.get("parent_header"), parts)
         msg_id = parent_header["msg_id"]
+        self.log.info(f"handle_output: {msg_id}")
         try:
             cell_id = self.get_cell_id(msg_id)
         except KeyError:
@@ -179,10 +180,21 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         if target_cell is None:
             return
 
-        output = self.transform_output(msg_type, content)
+        # Convert from the message spec to the nbformat output structure
+        output = self.transform_output(msg_type, content, ydoc=False)
         outputs_manager = settings["outputs_manager"]
-        outputs_manager.write(file_id, cell_id, 0, content)
-        target_cell["outputs"].append(output)
+        self.log.info(f"OutputsManager: {outputs_manager}")
+        output_url = outputs_manager.write(file_id, cell_id, output)
+        nb_output = Map({
+                "output_type": "display_data",
+                "data": {
+                    'text/html': f'<a href="{output_url}">Output</a>'
+                },
+                "metadata": {
+                    "outputs_service": True
+                }
+            })
+        target_cell["outputs"].append(nb_output)
     
     def find_cell(self, cell_id, cells):
         # Find the target_cell and its cell_index and cache
@@ -223,29 +235,33 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
                 break
         return cell_index, target_cell
     
-    def transform_output(self, msg_type, content):
+    def transform_output(self, msg_type, content, ydoc=False):
         """Transform output from IOPub messages to the nbformat specification."""
+        if ydoc:
+            factory = Map
+        else:
+            factory = lambda x: x
         if msg_type == "stream":
-            output = Map({
+            output = factory({
                 "output_type": "stream",
                 "text": content["text"],
                 "name": content["name"]
             })
         elif msg_type == "display_data":
-            output = Map({
+            output = factory({
                 "output_type": "display_data",
                 "data": content["data"],
                 "metadata": content["metadata"]
             })
         elif msg_type == "execute_result":
-            output = Map({
+            output = factory({
                 "output_type": "execute_result",
                 "data": content["data"],
                 "metadata": content["metadata"],
                 "execution_count": content["execution_count"]
             })
         elif msg_type == "error":
-            output = Map({
+            output = factory({
                 "output_type": "error",
                 "traceback": content["traceback"],
                 "ename": content["ename"],
