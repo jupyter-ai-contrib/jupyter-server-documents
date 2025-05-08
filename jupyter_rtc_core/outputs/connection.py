@@ -166,7 +166,7 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
             jupyter_server_ydoc = settings["jupyter_server_ydoc"]
             notebook = await jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
         except:
-            pass
+            return
         cells = notebook.ycells
 
         # Find the target_cell and its cell_index and cache
@@ -191,6 +191,8 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
             return
 
         output = self.transform_output(msg_type, content)
+        outputs_manager = settings["outputs_manager"]
+        outputs_manager.write(file_id, cell_id, 0, content)
         target_cell["outputs"].append(output)
     
     def find_cell(self, cell_id, cells):

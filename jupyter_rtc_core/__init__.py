@@ -12,6 +12,8 @@ from traitlets.config import Config
 
 from .handlers import setup_handlers
 from .outputs.connection import RTCWebsocketConnection
+from .outputs.handlers import setup_handlers as setup_output_handlers
+from .outputs.manager import OutputsManager
 
 
 def _jupyter_labextension_paths():
@@ -44,5 +46,9 @@ def _load_jupyter_server_extension(server_app):
         JupyterLab application instance
     """
     setup_handlers(server_app.web_app)
+    setup_output_handlers(server_app.web_app)
+    om = OutputsManager(server_app.config)
+    server_app.web_app.settings["outputs_manager"] = om
+
     name = "jupyter_rtc_core"
     server_app.log.info(f"Registered {name} server extension")
