@@ -162,6 +162,12 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         except:
             pass
         path = kernel_session["path"]
+
+        file_id_manager = settings["file_id_manager"]
+        file_id = file_id_manager.get_id(path)
+        if file_id is None:
+            return
+
         try:
             jupyter_server_ydoc = settings["jupyter_server_ydoc"]
             notebook = await jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
@@ -169,6 +175,16 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
             return
         cells = notebook.ycells
 
+        cell_index, target_cell = self.find_cell(cell_id, cells)
+        if target_cell is None:
+            return
+
+        output = self.transform_output(msg_type, content)
+        outputs_manager = settings["outputs_manager"]
+        outputs_manager.write(file_id, cell_id, 0, content)
+        target_cell["outputs"].append(output)
+    
+    def find_cell(self, cell_id, cells):
         # Find the target_cell and its cell_index and cache
         target_cell = None
         cell_index = None
@@ -179,23 +195,17 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         except KeyError:
             # Do a linear scan to find the cell
             self.log.info(f"Linear scan: {cell_id}")
-            cell_index, target_cell = self.find_cell(cell_id, cells)
+            cell_index, target_cell = self.scan_cells(cell_id, cells)
         else:
             # Verify that the cached value still matches
             if target_cell["id"] != cell_id:
                 self.log.info(f"Invalid cache hit: {cell_id}")
-                cell_index, target_cell = self.find_cell(cell_id, cells)
+                cell_index, target_cell = self.scan_cells(cell_id, cells)
             else:
                 self.log.info(f"Validated cache hit: {cell_id}")
-        if target_cell is None:
-            return
+        return cell_index, target_cell
 
-        output = self.transform_output(msg_type, content)
-        outputs_manager = settings["outputs_manager"]
-        outputs_manager.write(file_id, cell_id, 0, content)
-        target_cell["outputs"].append(output)
-    
-    def find_cell(self, cell_id, cells):
+    def scan_cells(self, cell_id, cells):
         """Find the cell with a given cell_id.
         
         This does a simple linear scan of the cells, but in reverse order because

@@ -39,11 +39,12 @@ class OutputsManager(LoggingConfigurable):
         if not os.path.isfile(path):
             raise FileNotFoundError(f"The output file doesn't exist: {path}")
         with open(path, "r", encoding="utf-8") as f:
-            output = json.load(f)
+            output = json.loads(f.read())
         return output
 
     def write(self, file_id, cell_id, cell_index, output):
         self._ensure_path(file_id, cell_id)
         path = self.build_path(file_id, cell_id, cell_index)
+        data = json.dumps(output, ensure_ascii=False)
         with open(path, "w", encoding="utf-8") as f:
-            json.dump(output, f, ensure_ascii=False)
+            f.write(data)
