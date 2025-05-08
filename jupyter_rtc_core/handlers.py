@@ -12,3 +12,6 @@ class RouteHandler(APIHandler):
         self.finish(json.dumps({
             "data": "This is /jupyter-rtc-core/get-example endpoint!"
         }))
+
+
+

@@ -8,6 +8,7 @@ except ImportError:
     warnings.warn("Importing 'jupyter_rtc_core' outside a proper installation.")
     __version__ = "dev"
 
+
 from .app import RtcExtensionApp
 
 
