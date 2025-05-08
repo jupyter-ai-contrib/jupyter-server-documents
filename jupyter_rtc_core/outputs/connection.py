@@ -15,6 +15,7 @@ from jupyter_server.services.kernels.connection.base import (
 class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
 
     _cell_ids = Dict(default_value={})
+    _cell_indices = Dict(default_value={})
 
     def get_part(self, field, value, msg_list):
         """Get a part of a message."""
@@ -193,7 +194,10 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         """Handle output messages by writing them to the server side Ydoc."""
         parent_header = self.get_part("parent_header", msg.get("parent_header"), parts)
         msg_id = parent_header["msg_id"]
-        cell_id = self.get_cell_id(msg_id)
+        try:
+            cell_id = self.get_cell_id(msg_id)
+        except KeyError:
+            return
         self.log.info(f"Retreiving (msg_id, cell_id): ({msg_id} {cell_id})")
         content = self.get_part("content", msg.get("content"), parts)
         self.log.info(f"{cell_id} {msg_type} {content}")
@@ -214,14 +218,48 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         except:
             pass
         cells = notebook.ycells
-        target = None
-        for cell in cells:
-            if cell["id"] == cell_id:
-                target = cell
-        if target is None:
+
+        # Find the target_cell and its cell_index and cache
+        target_cell = None
+        cell_index = None
+        try:
+            # See if we have a cached value for the cell_index
+            cell_index = self._cell_indices[cell_id]
+            target_cell = cells[cell_index]
+        except KeyError:
+            # Do a linear scan to find the cell
+            self.log.info(f"Linear scan: {cell_id}")
+            cell_index, target_cell = self._find_cell(cell_id, cells)
+        else:
+            # Verify that the cached value still matches
+            if target_cell["id"] != cell_id:
+                self.log.info(f"Invalid cache hit: {cell_id}")
+                cell_index, target_cell = self._find_cell(cell_id, cells)
+            else:
+                self.log.info(f"Validated cache hit: {cell_id}")
+        if target_cell is None:
             return
+
         output = self.transform_output(msg_type, content)
-        target["outputs"].append(output)
+        target_cell["outputs"].append(output)
+    
+    def _find_cell(self, cell_id, cells):
+        """Find the cell with a given cell_id.
+        
+        This does a simple linear scan of the cells, but in reverse order because
+        we believe that users are more often running cells towards the end of the
+        notebook.
+        """
+        target_cell = None
+        cell_index = None
+        for i in reversed(range(0, len(cells))):
+            cell = cells[i]
+            if cell["id"] == cell_id:
+                target_cell = cell
+                cell_index = i
+                self._cell_indices[cell_id] = cell_index
+                break
+        return cell_index, target_cell
     
     def transform_output(self, msg_type, content):
         """Transform output from IOPub messages to the nbformat specification."""

@@ -7,10 +7,12 @@ except ImportError:
     import warnings
     warnings.warn("Importing 'jupyter_rtc_core' outside a proper installation.")
     __version__ = "dev"
-from .handlers import setup_handlers
 
-from .outputs.connection import RTCWebsocketConnection
 from traitlets.config import Config
+
+from .handlers import setup_handlers
+from .outputs.connection import RTCWebsocketConnection
+
 
 def _jupyter_labextension_paths():
     return [{
@@ -30,7 +32,6 @@ def _link_jupyter_server_extension(server_app):
     server_app.kernel_websocket_connection_class = RTCWebsocketConnection
     c = Config()
     c.ServerApp.kernel_websocket_connection_class = "jupyter_rtc_core.outputs.connection.RTCWebsocketConnection"
-    # c.MappingKernelManager.buffer_offline_messages = False
     server_app.update_config(c)
 
 
