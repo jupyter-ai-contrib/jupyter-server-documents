@@ -4,8 +4,10 @@ import {
 } from '@jupyterlab/application';
 
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-
+import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
+import { NotebookPanel } from '@jupyterlab/notebook';
+import { YNotebookContentFactory } from './notebook';
 
 /**
  * Initialization data for the @jupyter/rtc-core extension.
@@ -41,4 +43,24 @@ const plugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
-export default plugin;
+/**
+ * The notebook cell factory provider.
+ */
+const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
+  id: '@jupyter-rtc-core/notebook-extension:factory',
+  description: 'Provides the notebook cell factory.',
+  provides: NotebookPanel.IContentFactory,
+  requires: [IEditorServices],
+  autoStart: true,
+  activate: (app: JupyterFrontEnd, editorServices: IEditorServices) => {
+    const editorFactory = editorServices.factoryService.newInlineEditor;
+    return new YNotebookContentFactory({ editorFactory });
+  }
+};
+
+const plugins: JupyterFrontEndPlugin<any>[] = [
+  plugin,
+  factory
+];
+
+export default plugins;
