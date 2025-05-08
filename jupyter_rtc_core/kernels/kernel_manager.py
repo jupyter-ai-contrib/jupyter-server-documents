@@ -69,7 +69,7 @@ class NextGenKernelManager(AsyncKernelManager):
         }
     
     @observe('execution_state')
-    def _observer_execution_state(self, changes):
+    def _observer_execution_state(self, change):
         state = self.state
         state["execution_state"] = change['new']
         self.state = state    
