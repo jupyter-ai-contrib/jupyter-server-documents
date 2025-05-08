@@ -1,6 +1,7 @@
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePath
+import shutil
 
 
 from traitlets.config.configurable import LoggingConfigurable
@@ -21,24 +22,26 @@ from jupyter_core.paths import jupyter_runtime_dir
 
 class OutputsManager(LoggingConfigurable):
 
-    outputs_path = Unicode(help="The local runtime dir")
+    outputs_path = Instance(PurePath, help="The local runtime dir")
     _last_output_index = Dict(default_value={})
 
     @default("outputs_path")
     def _default_outputs_path(self):
-        return os.path.join(jupyter_runtime_dir(), "outputs")
+        return Path(jupyter_runtime_dir()) / "outputs"
     
     def _ensure_path(self, file_id, cell_id):
-        nested_dir = Path(self.outputs_path) / file_id / cell_id
+        nested_dir = self.outputs_path / file_id / cell_id
         self.log.info(f"Creating directory: {nested_dir}")
         nested_dir.mkdir(parents=True, exist_ok=True)
 
-    def _build_path(self, file_id, cell_id, output_index):
-        return os.path.join(self.outputs_path, file_id, cell_id, f"{output_index}.output")
-
-    def _build_stream_path(self, file_id, cell_id):
-        return os.path.join(self.outputs_path, file_id, cell_id, "stream")
-
+    def _build_path(self, file_id, cell_id=None, output_index=None):
+        path = self.outputs_path / file_id
+        if cell_id is not None:
+            path = path / cell_id
+        if output_index is not None:
+            path = path / f"{output_index}.output"
+        return path
+    
     def get(self, file_id, cell_id, output_index):
         """Get an outputs by file_id, cell_id, and output_index."""
         self.log.info(f"OutputsManager.get: {file_id} {cell_id} {output_index}")
@@ -51,7 +54,7 @@ class OutputsManager(LoggingConfigurable):
 
     def get_stream(self, file_id, cell_id):
         "Get the stream output for a cell by file_id and cell_id."
-        path = self._build_stream_path(file_id, cell_id)
+        path = self._build_path(file_id, cell_id) / "stream"
         if not os.path.isfile(path):
             raise FileNotFoundError(f"The output file doesn't exist: {path}")
         with open(path, "r", encoding="utf-8") as f:
@@ -81,11 +84,17 @@ class OutputsManager(LoggingConfigurable):
 
     def write_stream(self, file_id, cell_id, output):
         self._ensure_path(file_id, cell_id)
-        path = self._build_stream_path(file_id, cell_id)
+        path = self._build_path(file_id, cell_id) / "stream"
         text = output["text"]
         mode = 'a' if os.path.isfile(path) else 'w'
         with open(path, "a", encoding="utf-8") as f:
             f.write(text)
         url = f"/api/outputs/{file_id}/{cell_id}/stream"
         return url
+    
+    def clear(self, file_id, cell_id=None):
+        path = self._build_path(file_id, cell_id)
+        shutil.rmtree(path)
+
+
 

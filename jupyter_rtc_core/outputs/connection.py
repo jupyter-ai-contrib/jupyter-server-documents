@@ -4,7 +4,7 @@ import typing as t
 
 from pycrdt import Map
 
-from traitlets import Dict
+from traitlets import Dict, Unicode
 
 from jupyter_server.services.kernels.connection.channels import ZMQChannelsWebsocketConnection
 from jupyter_server.services.kernels.connection.base import (
@@ -15,7 +15,25 @@ from jupyter_server.services.kernels.connection.base import (
 class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
 
     _cell_ids = Dict(default_value={})
+    _msg_ids = Dict(default_value={})
     _cell_indices = Dict(default_value={})
+    file_id = Unicode(allow_none=True, default_value=None)
+
+    @property
+    def outputs_manager(self):
+        return self.websocket_handler.settings["outputs_manager"]
+    
+    @property
+    def session_manager(self):
+        return self.websocket_handler.settings["session_manager"]
+
+    @property
+    def file_id_manager(self):
+        return self.websocket_handler.settings["file_id_manager"]
+    
+    @property
+    def jupyter_server_ydoc(self):
+        return self.websocket_handler.settings["jupyter_server_ydoc"]
 
     def get_part(self, field, value, msg_list):
         """Get a part of a message."""
@@ -49,12 +67,28 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         if md is None:
             return
         cell_id = md.get('cellId')
+        existing_msg_id = self.get_msg_id(cell_id)
+
+        if existing_msg_id != msg_id:
+            if self.file_id is not None:
+                self.log.info(f"Cell has been rerun, removing old outputs: {self.file_id} {cell_id}")
+                self.outputs_manager.clear(file_id=self.file_id, cell_id=cell_id)
         self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
         self._cell_ids[msg_id] = cell_id
-    
+        self._msg_ids[cell_id] = msg_id
+
     def get_cell_id(self, msg_id):
         """Retrieve a cell_id from a parent msg_id."""
-        return self._cell_ids[msg_id]
+        return self._cell_ids.get(msg_id)
+
+    def get_msg_id(self, cell_id):
+        return self._msg_ids.get(cell_id)
+
+    def disconnect(self):
+        if self.file_id is not None:
+            self.log.info(f"Removing server outputs: {self.file_id}")
+            self.outputs_manager.clear(file_id=self.file_id)
+        super().disconnect()
 
     def handle_incoming_message(self, incoming_msg: str) -> None:
         """Handle incoming messages from Websocket to ZMQ Sockets."""
@@ -145,9 +179,8 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
         parent_header = self.get_part("parent_header", msg.get("parent_header"), parts)
         msg_id = parent_header["msg_id"]
         self.log.info(f"handle_output: {msg_id}")
-        try:
-            cell_id = self.get_cell_id(msg_id)
-        except KeyError:
+        cell_id = self.get_cell_id(msg_id)
+        if cell_id is None:
             return
         self.log.info(f"Retreiving (msg_id, cell_id): ({msg_id} {cell_id})")
         content = self.get_part("content", msg.get("content"), parts)
@@ -156,22 +189,19 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
-        settings = self.websocket_handler.settings
-        kernel_session_manager = settings["session_manager"]
+        kernel_session_manager = self.session_manager
         try:
             kernel_session = await kernel_session_manager.get_session(kernel_id=self.kernel_id)
         except:
             pass
         path = kernel_session["path"]
 
-        file_id_manager = settings["file_id_manager"]
-        file_id = file_id_manager.get_id(path)
+        file_id = self.file_id_manager.get_id(path)
         if file_id is None:
             return
-
+        self.file_id = file_id
         try:
-            jupyter_server_ydoc = settings["jupyter_server_ydoc"]
-            notebook = await jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
+            notebook = await self.jupyter_server_ydoc.get_document(path=path, copy=False, file_format='json', content_type='notebook')
         except:
             return
         cells = notebook.ycells
@@ -182,9 +212,7 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
 
         # Convert from the message spec to the nbformat output structure
         output = self.transform_output(msg_type, content, ydoc=False)
-        outputs_manager = settings["outputs_manager"]
-        self.log.info(f"OutputsManager: {outputs_manager}")
-        output_url = outputs_manager.write(file_id, cell_id, output)
+        output_url = self.outputs_manager.write(file_id, cell_id, output)
         nb_output = Map({
                 "output_type": "display_data",
                 "data": {
