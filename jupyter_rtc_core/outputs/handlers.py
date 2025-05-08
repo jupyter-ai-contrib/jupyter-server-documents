@@ -24,7 +24,7 @@ class OutputsAPIHandler(APIHandler):
     async def get(self, file_id, cell_id, output_index):
         try:
             output = self.outputs.get(file_id, cell_id, output_index)
-        except KeyError:
+        except FileNotFoundError:
             self.set_status(404)
             self.finish()
         else:
