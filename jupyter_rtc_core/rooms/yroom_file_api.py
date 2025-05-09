@@ -12,6 +12,7 @@ from jupyter_ydoc import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_server.utils import ensure_async
 import logging
+import os
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
@@ -44,6 +45,7 @@ class YRoomFileAPI:
 
     def __init__(
         self,
+        *,
         file_format: Literal["text", "base64"],
         file_type: Literal["file", "notebook"],
         file_id: str,
@@ -72,18 +74,20 @@ class YRoomFileAPI:
 
     def get_path(self) -> str:
         """
-        Returns the path to the file by querying the FileIdManager.
+        Returns the path to the file by querying the FileIdManager. This is a
+        relative path to the `root_dir` in `ContentsManager`.
 
         Raises a `RuntimeError` if the file ID does not refer to a valid file
         path.
         """
-        path = self._fileid_manager.get_path(self.file_id)
-        if not path:
+        abs_path = self._fileid_manager.get_path(self.file_id)
+        if not abs_path:
             raise RuntimeError(
                 f"Unable to locate file with ID: '{self.file_id}'."
             )
-        
-        return path
+
+        rel_path = os.path.relpath(abs_path, self._contents_manager.root_dir)
+        return rel_path
 
     async def get_jupyter_ydoc(self) -> YBaseDoc:
         """
