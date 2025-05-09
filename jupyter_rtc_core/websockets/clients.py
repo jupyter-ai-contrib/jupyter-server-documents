@@ -23,18 +23,25 @@ class YjsClient:
     """The Tornado WebSocketHandler handling the WS connection to this client."""
     id: str
     """UUIDv4 string that uniquely identifies this client."""
-    synced: bool
-    """Indicates whether the SS1 + SS2 handshake has been completed."""
     last_modified: datetime
     """Indicates the last modified time when synced state is modified"""
+
+    _synced: bool
 
     def __init__(self, websocket):
         self.websocket: WebSocketHandler | None = websocket
         self.id: str = str(uuid.uuid4())
-        self.synced: bool = False
+        self._synced: bool = False
         self.last_modified = datetime.now(timezone.utc)
         
-    
+    @property
+    def synced(self):
+        """
+        Indicates whether the initial Client SS1 + Server SS2 handshake has been
+        completed.
+        """
+        return self._synced
+
     @synced.setter
     def synced(self, v: bool):
         self.synced = v

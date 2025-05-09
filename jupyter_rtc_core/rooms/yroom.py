@@ -1,54 +1,86 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from logging import Logger
 import asyncio
 from ..websockets import YjsClientGroup
 
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
+from jupyter_ydoc import ydocs as jupyter_ydoc_classes
+from jupyter_ydoc.ybasedoc import YBaseDoc
 from tornado.websocket import WebSocketHandler
+from .yroom_file_api import YRoomFileAPI
 
 if TYPE_CHECKING:
     from typing import Literal, Tuple
+    from jupyter_server_fileid.manager import BaseFileIdManager
+    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
 class YRoom:
     """A Room to manage all client connection to one notebook file"""
-    room_id: str
-    """Room Id"""
-    ydoc: pycrdt.Doc
-    """Ydoc"""
-    awareness: pycrdt.Awareness
-    """Ydoc awareness object"""
-    loop: asyncio.AbstractEventLoop
-    """Event loop"""
+
     log: Logger
     """Log object"""
+    room_id: str
+    """Room Id"""
+    _jupyter_ydoc: YBaseDoc
+    """JupyterYDoc"""
+    _ydoc: pycrdt.Doc
+    """Ydoc"""
+    _awareness: pycrdt.Awareness
+    """Ydoc awareness object"""
+    _loop: asyncio.AbstractEventLoop
+    """Event loop"""
     _client_group: YjsClientGroup
     """Client group to manage synced and desynced clients"""
     _message_queue: asyncio.Queue[Tuple[str, bytes]]
     """A message queue per room to keep websocket messages in order"""
 
 
-    def __init__(self, *, room_id: str, log: Logger, loop: asyncio.AbstractEventLoop):
+    def __init__(
+        self,
+        *,
+        room_id: str,
+        log: Logger,
+        loop: asyncio.AbstractEventLoop,
+        fileid_manager: BaseFileIdManager,
+        contents_manager: AsyncContentsManager | ContentsManager,
+    ):
         # Bind instance attributes
         self.log = log
-        self.loop = loop
+        self._loop = loop
         self.room_id = room_id
 
-        # Initialize YDoc, YAwareness, YjsClientGroup, and message queue
-        self.ydoc = pycrdt.Doc()
-        self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
-        self.awareness.observe(self.send_server_awareness)
-        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self.loop)
-        self._message_queue = asyncio.Queue()
-        
-        # Start observer on the `ydoc` to ensure new updates are broadcast to
-        # all clients and saved to disk.
-        self.ydoc.observe(lambda event: self.write_sync_update(event.update))
+        # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
+        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
+        self._ydoc = pycrdt.Doc()
+        self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
+        JupyterYDocClass = cast(
+            type[YBaseDoc],
+            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
+        )
+        self.jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
 
-        # Start background task that routes new messages in the message queue
-        # to the appropriate handler method.
-        self.loop.create_task(self._on_new_message())
+        # Initialize YRoomFileAPI and begin loading content
+        self.file_api = YRoomFileAPI(
+            room_id=self.room_id,
+            jupyter_ydoc=self.jupyter_ydoc,
+            log=self.log,
+            loop=self._loop,
+            fileid_manager=fileid_manager,
+            contents_manager=contents_manager
+        )
+        self.file_api.load_ydoc_content()
+        
+        # Start observers on `self.ydoc` and `self.awareness` to ensure new
+        # updates are broadcast to all clients and saved to disk.
+        self._awareness.observe(self.send_server_awareness)
+        self._ydoc.observe(lambda event: self.write_sync_update(event.update))
+
+        # Initialize message queue and start background task that routes new
+        # messages in the message queue to the appropriate handler method.
+        self._message_queue = asyncio.Queue()
+        self._loop.create_task(self._on_new_message())
     
 
     @property
@@ -59,21 +91,32 @@ class YRoom:
         """
 
         return self._client_group
+
+
+    async def get_jupyter_ydoc(self):
+        """
+        Returns a reference to the room's JupyterYDoc
+        (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
+        loaded from the ContentsManager.
+        """
+        await self.file_api.ydoc_content_loaded
+        return self.jupyter_ydoc
     
 
-    def add_client(self, websocket: WebSocketHandler) -> str:
+    async def get_ydoc(self):
         """
-        Creates a new client from the given Tornado WebSocketHandler and
-        adds it to the room. Returns the ID of the new client.
+        Returns a reference to the room's YDoc (`pycrdt.Doc`) after
+        waiting for its content to be loaded from the ContentsManager.
         """
+        await self.file_api.ydoc_content_loaded
+        return self._ydoc
 
-        return self.clients.add(websocket)
-
-
-    def remove_client(self, client_id: str) -> None:
-        """Removes a client from the room, given the client ID."""
-
-        self.clients.remove(client_id)
+    
+    def get_awareness(self):
+        """
+        Returns a reference to the room's awareness (`pycrdt.Awareness`).
+        """
+        return self._awareness
     
 
     def add_message(self, client_id: str, message: bytes) -> None:
@@ -91,6 +134,11 @@ class YRoom:
         message type & subtype, which are obtained from the first 2 bytes of the
         message.
         """
+        # Wait for content to be loaded before processing any messages in the
+        # message queue
+        await self.file_api.ydoc_content_loaded
+
+        # Begin processing messages from the message queue
         while True:
             try: 
                 client_id, message = await self._message_queue.get()
@@ -141,7 +189,7 @@ class YRoom:
         # Compute SyncStep2 reply
         try:
             message_payload = message[1:]
-            sync_step2_message = pycrdt.handle_sync_message(message_payload, self.ydoc)
+            sync_step2_message = pycrdt.handle_sync_message(message_payload, self._ydoc)
             assert isinstance(sync_step2_message, bytes)
         except Exception as e:
             self.log.error(
@@ -170,7 +218,7 @@ class YRoom:
         # Send SyncStep1 message
         try:
             assert isinstance(new_client.websocket, WebSocketHandler)
-            sync_step1_message = pycrdt.create_sync_message(self.ydoc)
+            sync_step1_message = pycrdt.create_sync_message(self._ydoc)
             new_client.websocket.write_message(sync_step1_message)
         except Exception as e:
             self.log.error(
@@ -191,7 +239,7 @@ class YRoom:
         """
         try:
             message_payload = message[1:]
-            pycrdt.handle_sync_message(message_payload, self.ydoc)
+            pycrdt.handle_sync_message(message_payload, self._ydoc)
         except Exception as e:
             self.log.error(
                 "An exception occurred when applying a SyncStep2 message "
@@ -217,7 +265,7 @@ class YRoom:
         # Apply the SyncUpdate to the YDoc
         try:
             message_payload = message[1:]
-            pycrdt.handle_sync_message(message_payload, self.ydoc)
+            pycrdt.handle_sync_message(message_payload, self._ydoc)
         except Exception as e:
             self.log.error(
                 "An exception occurred when applying a SyncUpdate message "
@@ -251,7 +299,7 @@ class YRoom:
         # Apply the AwarenessUpdate message
         try:
             message_payload = message[1:]
-            self.awareness.apply_awareness_update(message_payload, origin=self)
+            self._awareness.apply_awareness_update(message_payload, origin=self)
         except Exception as e:
             self.log.error(
                 "An exception occurred when applying an AwarenessUpdate"
@@ -315,7 +363,7 @@ class YRoom:
             return
         
         updated_clients = [v for value in changes[0].values() for v in value]
-        state = self.awareness.encode_awareness_update(updated_clients)
+        state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
         self._broadcast_message(message, "AwarenessUpdate")
         
