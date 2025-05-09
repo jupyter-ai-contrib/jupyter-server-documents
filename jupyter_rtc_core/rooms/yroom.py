@@ -21,7 +21,7 @@ class YRoom:
 
     log: Logger
     """Log object"""
-    _room_id: str
+    room_id: str
     """Room Id"""
     _jupyter_ydoc: YBaseDoc
     """JupyterYDoc"""
@@ -49,7 +49,7 @@ class YRoom:
         # Bind instance attributes
         self.log = log
         self._loop = loop
-        self._room_id = room_id
+        self.room_id = room_id
 
         # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -63,7 +63,7 @@ class YRoom:
 
         # Initialize YRoomFileAPI and begin loading content
         self.file_api = YRoomFileAPI(
-            room_id=self._room_id,
+            room_id=self.room_id,
             jupyter_ydoc=self.jupyter_ydoc,
             log=self.log,
             loop=self._loop,
@@ -259,7 +259,7 @@ class YRoom:
         """
         # Remove client and kill websocket if received SyncUpdate when client is desynced
         if self._should_ignore_update(client_id, "SyncUpdate"):
-            self.log.error(f"Should not receive SyncUpdate message when double handshake is not completed for client '{client_id}' and room '{self._room_id}'")
+            self.log.error(f"Should not receive SyncUpdate message when double handshake is not completed for client '{client_id}' and room '{self.room_id}'")
             self._client_group.remove(client_id)
 
         # Apply the SyncUpdate to the YDoc
