@@ -37,8 +37,6 @@ class YRoomFileAPI:
     file_type: Literal["file", "notebook"]
     file_id: str
     log: logging.Logger
-    ydoc: pycrdt.Doc
-    awareness: pycrdt.Awareness
     jupyter_ydoc: YBaseDoc
 
     _fileid_manager: BaseFileIdManager
