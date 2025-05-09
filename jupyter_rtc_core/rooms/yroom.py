@@ -90,21 +90,6 @@ class YRoom:
         return self._client_group
     
 
-    def add_client(self, websocket: WebSocketHandler) -> str:
-        """
-        Creates a new client from the given Tornado WebSocketHandler and
-        adds it to the room. Returns the ID of the new client.
-        """
-
-        return self.clients.add(websocket)
-
-
-    def remove_client(self, client_id: str) -> None:
-        """Removes a client from the room, given the client ID."""
-
-        self.clients.remove(client_id)
-    
-
     def add_message(self, client_id: str, message: bytes) -> None:
         """
         Adds new message to the message queue. Items placed in the message queue
