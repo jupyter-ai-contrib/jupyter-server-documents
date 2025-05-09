@@ -88,6 +88,32 @@ class YRoom:
         """
 
         return self._client_group
+
+
+    async def get_jupyter_ydoc(self):
+        """
+        Returns a reference to the room's JupyterYDoc
+        (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
+        loaded from the ContentsManager.
+        """
+        await self.file_api.ydoc_content_loaded
+        return self.jupyter_ydoc
+    
+
+    async def get_ydoc(self):
+        """
+        Returns a reference to the room's YDoc (`pycrdt.Doc`) after
+        waiting for its content to be loaded from the ContentsManager.
+        """
+        await self.file_api.ydoc_content_loaded
+        return self.ydoc
+
+    
+    def get_awareness(self):
+        """
+        Returns a reference to the room's awareness (`pycrdt.Awareness`).
+        """
+        return self.awareness
     
 
     def add_message(self, client_id: str, message: bytes) -> None:
