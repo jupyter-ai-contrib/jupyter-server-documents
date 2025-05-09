@@ -12,32 +12,43 @@ if TYPE_CHECKING:
     from typing import Literal, Tuple
 
 class YRoom:
+    """A Room to manage all client connection to one notebook file"""
+    room_id: str
+    """Room Id"""
     ydoc: pycrdt.Doc
+    """Ydoc"""
     awareness: pycrdt.Awareness
+    """Ydoc awareness object"""
     loop: asyncio.AbstractEventLoop
+    """Event loop"""
     log: Logger
+    """Log object"""
     _client_group: YjsClientGroup
+    """Client group to manage synced and desynced clients"""
     _message_queue: asyncio.Queue[Tuple[str, bytes]]
+    """A message queue per room to keep websocket messages in order"""
 
 
-    def __init__(self, log: Logger, loop: asyncio.AbstractEventLoop):
+    def __init__(self, *, room_id: str, log: Logger, loop: asyncio.AbstractEventLoop):
         # Bind instance attributes
         self.log = log
         self.loop = loop
+        self.room_id = room_id
 
         # Initialize YDoc, YAwareness, YjsClientGroup, and message queue
         self.ydoc = pycrdt.Doc()
         self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
-        self._client_group = YjsClientGroup()
+        self.awareness.observe(self.send_server_awareness)
+        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self.loop)
         self._message_queue = asyncio.Queue()
+        
+        # Start observer on the `ydoc` to ensure new updates are broadcast to
+        # all clients and saved to disk.
+        self.ydoc.observe(lambda event: self.write_sync_update(event.update))
 
         # Start background task that routes new messages in the message queue
         # to the appropriate handler method.
         self.loop.create_task(self._on_new_message())
-
-        # Start observer on the `ydoc` to ensure new updates are broadcast to
-        # all clients and saved to disk.
-        self.ydoc.observe(lambda event: self.write_sync_update(event.update))
     
 
     @property
@@ -124,7 +135,7 @@ class YRoom:
         - Sending a new SyncStep1 message immediately after.
         """
         # Mark client as desynced
-        new_client = self.clients.get(client_id, synced_only=False)
+        new_client = self.clients.get(client_id)
         self.clients.mark_desynced(client_id)
 
         # Compute SyncStep2 reply
@@ -146,7 +157,6 @@ class YRoom:
             # TODO: remove the assert once websocket is made required
             assert isinstance(new_client.websocket, WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message)
-            self.clients.mark_synced(client_id)
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing the SyncStep2 reply "
@@ -154,6 +164,8 @@ class YRoom:
             )
             self.log.exception(e)
             return
+        
+        self.clients.mark_synced(client_id)
         
         # Send SyncStep1 message
         try:
@@ -197,9 +209,10 @@ class YRoom:
         clients after this method is called via the `self.write_sync_update()`
         observer.
         """
-        # Ignore the message if client is desynced
+        # Remove client and kill websocket if received SyncUpdate when client is desynced
         if self._should_ignore_update(client_id, "SyncUpdate"):
-            return
+            self.log.error(f"Should not receive SyncUpdate message when double handshake is not completed for client '{client_id}' and room '{self.room_id}'")
+            self._client_group.remove(client_id)
 
         # Apply the SyncUpdate to the YDoc
         try:
@@ -235,10 +248,6 @@ class YRoom:
 
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
-        # Ignore the message if client is desynced
-        if self._should_ignore_update(client_id, "AwarenessUpdate"):
-            return
-
         # Apply the AwarenessUpdate message
         try:
             message_payload = message[1:]
@@ -263,7 +272,7 @@ class YRoom:
         more readable warnings.
         """
 
-        client = self.clients.get(client_id, synced_only=False)
+        client = self.clients.get(client_id)
         if not client.synced:
             self.log.warning(
                 f"Ignoring a {message_type} message from client "
@@ -293,7 +302,22 @@ class YRoom:
                     f"to client '{client.id}:'"
                 )
                 self.log.exception(e)
+                
+    def send_server_awareness(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
+        """
+        Callback to broadcast the server awareness to clients.
 
+        Arguments:
+            type: The change type.
+            changes: The awareness changes.
+        """
+        if type != "update" or changes[1] != "local":
+            return
+        
+        updated_clients = [v for value in changes[0].values() for v in value]
+        state = self.awareness.encode_awareness_update(updated_clients)
+        message = pycrdt.create_awareness_message(state)
+        self._broadcast_message(message, "AwarenessUpdate")
         
     def stop(self) -> None:
         # TODO: requires YRoomLoader implementation
