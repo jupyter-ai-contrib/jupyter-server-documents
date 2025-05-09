@@ -107,7 +107,11 @@ class YRoomFileAPI:
         """
         # Get the content of the file from the given file ID.
         path = self.get_path()
-        m = await self._contents_manager.get(path, type=self.file_type, format=self.file_format)
+        m = await ensure_async(self._contents_manager.get(
+            path,
+            type=self.file_type,
+            format=self.file_format
+        ))
         content = m['content']
 
         # Initialize YDoc & YAwareness
