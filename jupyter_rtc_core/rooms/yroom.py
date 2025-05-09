@@ -1,15 +1,20 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from logging import Logger
 import asyncio
 from ..websockets import YjsClientGroup
 
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
+from jupyter_ydoc import ydocs as jupyter_ydoc_classes
+from jupyter_ydoc.ybasedoc import YBaseDoc
 from tornado.websocket import WebSocketHandler
+from .yroom_file_api import YRoomFileAPI
 
 if TYPE_CHECKING:
     from typing import Literal, Tuple
+    from jupyter_server_fileid.manager import BaseFileIdManager
+    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
 class YRoom:
     """A Room to manage all client connection to one notebook file"""
@@ -29,25 +34,49 @@ class YRoom:
     """A message queue per room to keep websocket messages in order"""
 
 
-    def __init__(self, *, room_id: str, log: Logger, loop: asyncio.AbstractEventLoop):
+    def __init__(
+        self,
+        *,
+        room_id: str,
+        log: Logger,
+        loop: asyncio.AbstractEventLoop,
+        fileid_manager: BaseFileIdManager,
+        contents_manager: AsyncContentsManager | ContentsManager,
+    ):
         # Bind instance attributes
         self.log = log
         self.loop = loop
         self.room_id = room_id
 
-        # Initialize YDoc, YAwareness, YjsClientGroup, and message queue
+        # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
+        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self.loop)
         self.ydoc = pycrdt.Doc()
         self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
-        self.awareness.observe(self.send_server_awareness)
-        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self.loop)
-        self._message_queue = asyncio.Queue()
-        
-        # Start observer on the `ydoc` to ensure new updates are broadcast to
-        # all clients and saved to disk.
-        self.ydoc.observe(lambda event: self.write_sync_update(event.update))
+        self.jupyter_ydoc = JupyterYDocClass(ydoc=self.ydoc, awareness=self.awareness)
 
-        # Start background task that routes new messages in the message queue
-        # to the appropriate handler method.
+        # Initialize YRoomFileAPI and begin loading content
+        self.file_api = YRoomFileAPI(
+            room_id=self.room_id,
+            jupyter_ydoc=self.jupyter_ydoc,
+            log=self.log,
+            loop=self.loop,
+            fileid_manager=fileid_manager,
+            contents_manager=contents_manager
+        )
+        self.file_api.load_ydoc_content()
+        
+        # Start observers on `self.ydoc` and `self.awareness` to ensure new
+        # updates are broadcast to all clients and saved to disk.
+        self.awareness.observe(self.send_server_awareness)
+        self.ydoc.observe(lambda event: self.write_sync_update(event.update))
+        JupyterYDocClass = cast(
+            type[YBaseDoc],
+            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
+        )
+
+        # Initialize message queue and start background task that routes new
+        # messages in the message queue to the appropriate handler method.
+        self._message_queue = asyncio.Queue()
         self.loop.create_task(self._on_new_message())
     
 
@@ -91,6 +120,11 @@ class YRoom:
         message type & subtype, which are obtained from the first 2 bytes of the
         message.
         """
+        # Wait for content to be loaded before processing any messages in the
+        # message queue
+        await self.file_api.ydoc_content_loaded
+
+        # Begin processing messages from the message queue
         while True:
             try: 
                 client_id, message = await self._message_queue.get()
