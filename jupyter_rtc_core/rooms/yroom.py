@@ -52,6 +52,10 @@ class YRoom:
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self.loop)
         self.ydoc = pycrdt.Doc()
         self.awareness = pycrdt.Awareness(ydoc=self.ydoc)
+        JupyterYDocClass = cast(
+            type[YBaseDoc],
+            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
+        )
         self.jupyter_ydoc = JupyterYDocClass(ydoc=self.ydoc, awareness=self.awareness)
 
         # Initialize YRoomFileAPI and begin loading content
@@ -69,10 +73,6 @@ class YRoom:
         # updates are broadcast to all clients and saved to disk.
         self.awareness.observe(self.send_server_awareness)
         self.ydoc.observe(lambda event: self.write_sync_update(event.update))
-        JupyterYDocClass = cast(
-            type[YBaseDoc],
-            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
-        )
 
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
