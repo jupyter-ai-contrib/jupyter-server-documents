@@ -1,21 +1,23 @@
 import { CodeCell, CodeCellLayout } from '@jupyterlab/cells';
 import { NotebookPanel } from '@jupyterlab/notebook';
-import { KernelMessage } from '@jupyterlab/services'
+//import { KernelMessage } from '@jupyterlab/services'
+import { CellChange } from '@jupyter/ydoc'
 
 class YCodeCell extends CodeCell { 
- /**
-   * Construct a code cell widget.
-   */
+  /** CodeCell that replaces output area with noop IOPub handler */
   constructor(options: CodeCell.IOptions) {
     super({ layout: new CodeCellLayout(), ...options, placeholder: true });
-    this["_output"]["_onIOPub"] = (msg: KernelMessage.IIOPubMessage) => { 
+    /*this["_output"]["_onIOPub"] = (msg: KernelMessage.IIOPubMessage) => { 
         const log = { ...msg.content, output_type: msg.header.msg_type };
-        console.log(log)
-    } 
+        console.debug(log)
+    }*/ 
+    this.model.sharedModel.changed.connect((_, cellChange: CellChange) => {
+      console.log(cellChange)
+    })
   }
 }
 
-export class YNotebookContentFactory extends NotebookPanel.ContentFactory  { 
+export class YNotebookContentFactory extends NotebookPanel.ContentFactory  {   
   createCodeCell(options: CodeCell.IOptions): YCodeCell {
     return new YCodeCell(options).initializeState()
   }
