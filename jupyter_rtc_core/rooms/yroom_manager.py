@@ -13,9 +13,7 @@ class YRoomManager:
         self._rooms_by_id = {}
     
     def get_room(self, file_id: str) -> YRoom | None:
-        # TODO: needs YRoomLoader implementation
-        # Should initialize `YRoomLoader` and pass a reference of it when
-        # initializing the `YRoom`.
+        # TODO
         return None
         
     def delete_room(self, room: YRoom) -> None:
