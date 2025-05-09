@@ -98,19 +98,22 @@ class YjsClientGroup:
         """Removes a client from the group."""
         if client := self.desynced.pop(client_id, None) is None: 
             client = self.synced.pop(client_id, None)
-        if client: 
+        if client and client.websocket and client.websocket.ws_connection: 
             try:
                 client.websocket.close()
             except Exception as e:
                 self.log.exception(f"An exception occurred when remove client '{client_id}' for room '{self.room_id}': {e}")  
+    
     def get(self, client_id: str) -> YjsClient:
         """
         Gets a client from its ID.
         """
         if client_id in self.desynced: 
-            return self.desynced[client_id]
+            client = self.desynced[client_id]
         if client_id in self.synced:
-            return self.synced[client_id]
+            client = self.synced[client_id]
+        if client.websocket and client.websocket.ws_connection:
+            return client
         error_message = f"The client_id '{client_id}' is not found in client group in room '{self.room_id}'"
         self.log.error(error_message)
         raise Exception(error_message)
@@ -121,8 +124,8 @@ class YjsClientGroup:
         Set synced_only=False to also get desynced clients.
         """
         if synced_only: 
-            return list(self.synced.values())
-        return list(self.desynced.values())
+            return list(client for client in self.synced.values() if client.websocket and client.websocket.ws_connection)
+        return list(client for client in self.desynced.values() if client.websocket and client.websocket.ws_connection)
     
     def is_empty(self) -> bool:
         """Returns whether the client group is empty."""
@@ -134,6 +137,10 @@ class YjsClientGroup:
                 await asyncio.sleep(self._poll_interval_seconds)
                 for (client_id, client) in list(self.desynced.items()): 
                     if client.last_modified <= datetime.now(timezone.utc) - timedelta(seconds=self.desynced_timeout_seconds):
+                        self.log.warning(f"Remove client '{client_id}' for room '{self.room_id}' since client does not become synced after {self.desynced_timeout_seconds} seconds.")  
+                        self.remove(client_id)
+                for (client_id, client) in list(self.synced.items()): 
+                    if client.websocket is None or client.websocket.ws_connection is None:
                         self.log.warning(f"Remove client '{client_id}' for room '{self.room_id}' since client does not become synced after {self.desynced_timeout_seconds} seconds.")  
                         self.remove(client_id)
             except asyncio.CancelledError:
