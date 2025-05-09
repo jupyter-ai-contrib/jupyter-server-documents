@@ -12,7 +12,7 @@ class YRoomManager:
     def __init__(self):
         self._rooms_by_id = {}
     
-    def get_room(self, file_id: str) -> YRoom | None:
+    def get_room(self, room_id: str) -> YRoom | None:
         # TODO
         return None
         
