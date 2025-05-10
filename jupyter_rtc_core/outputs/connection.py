@@ -219,7 +219,9 @@ class RTCWebsocketConnection(ZMQChannelsWebsocketConnection):
                     'text/html': f'<a href="{output_url}">Output</a>'
                 },
                 "metadata": {
-                    "outputs_service": True
+                    "outputs_service": True,
+                    "output_url": output_url,
+                    "output_type": output["output_type"]
                 }
             })
         target_cell["outputs"].append(nb_output)

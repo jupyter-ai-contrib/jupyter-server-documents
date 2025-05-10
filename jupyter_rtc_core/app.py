@@ -1,4 +1,5 @@
 from jupyter_server.extension.application import ExtensionApp
+from traitlets.config import Config
 
 from .handlers import RouteHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
@@ -13,11 +14,10 @@ class RtcExtensionApp(ExtensionApp):
         # this can be deleted prior to initial release.
         (r"jupyter-rtc-core/get-example/?", RouteHandler),
         # global awareness websocket
-        #(r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
-        # ydoc websocket
-        #(r"api/collaboration/room/(.*)", YRoomWebsocket)
+        # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
+        # # ydoc websocket
+        # (r"api/collaboration/room/(.*)", YRoomWebsocket)
     ]
+    
 
-    def initialize(self):
-        super().initialize()
     
