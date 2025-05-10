@@ -21,14 +21,14 @@ from .kernel_client import AsyncKernelClient
 
 
 class NextGenKernelManager(AsyncKernelManager):
-
+    
     main_client = Instance(AsyncKernelClient, allow_none=True)
 
     client_class = DottedObjectName(
-        "jupyter_rtc_core.kernels.kernel_client.NextGenAsyncKernelClient"
+        "jupyter_rtc_core.kernels.kernel_client.DocumentAwareKernelClient"
     )
     
-    client_factory: Type = Type(klass="jupyter_rtc_core.kernels.kernel_client.NextGenAsyncKernelClient")
+    client_factory: Type = Type(klass="jupyter_rtc_core.kernels.kernel_client.DocumentAwareKernelClient")
 
     connection_attempts: int = Int(
         default_value=10,
@@ -177,15 +177,14 @@ class NextGenKernelManager(AsyncKernelManager):
             msg = session.serialize(msg)
             listener("iopub", msg)    
             
-    def execution_state_listener(self, channel_name, msg):
+    def execution_state_listener(self, channel_name: str, msg: list[bytes]):
         """Set the execution state by watching messages returned by the shell channel."""
         # Only continue if we're on the IOPub where the status is published.
         if channel_name != "iopub":
             return
         session = self.main_client.session        
-        _, smsg = session.feed_identities(msg)
         # Unpack the message 
-        deserialized_msg = session.deserialize(smsg, content=False)
+        deserialized_msg = session.deserialize(msg, content=False)
         if deserialized_msg["msg_type"] == "status":
             content = session.unpack(deserialized_msg["content"])
             execution_state = content["execution_state"]
