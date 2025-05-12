@@ -4,7 +4,7 @@ from pathlib import Path, PurePath
 import shutil
 
 
-from traitlets.config.configurable import LoggingConfigurable
+from traitlets.config import LoggingConfigurable
 from traitlets import (
     Any,
     Bool,

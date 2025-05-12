@@ -3,7 +3,8 @@ import json
 
 from pycrdt import Map
 
-from traitlets import LoggingConfigurable, Dict, Unicode
+from traitlets import Dict, Unicode
+from traitlets.config import LoggingConfigurable
 
 
 class OutputProcessor(LoggingConfigurable):
@@ -130,7 +131,7 @@ class OutputProcessor(LoggingConfigurable):
             notebook = await self.jupyter_server_ydoc.get_document(
                 path=path,
                 copy=False,
-                file_format='json
+                file_format='json',
                 content_type='notebook'
             )
         except: # what exception to catch?

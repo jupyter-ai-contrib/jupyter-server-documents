@@ -73,7 +73,7 @@ _cell_id_regex = rf"(?P<cell_id>{_uuid_regex})"
 # non-negative integers
 _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"
 
-handlers = [
+outputs_handlers = [
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/{_output_index_regex}.output", OutputsAPIHandler),
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]
