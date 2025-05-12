@@ -9,7 +9,6 @@ from datetime import timedelta, timezone
 import datetime
 from logging import Logger
 from typing import TYPE_CHECKING
-from dataclasses import dataclass
 import uuid
 import asyncio
 

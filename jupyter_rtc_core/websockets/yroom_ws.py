@@ -1,10 +1,11 @@
+from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
-from ..rooms import YRoom, YRoomManager
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
+    from ..rooms import YRoom, YRoomManager
 
 class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
