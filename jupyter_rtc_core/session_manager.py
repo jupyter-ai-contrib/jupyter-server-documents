@@ -59,6 +59,10 @@ class YDocSessionManager(SessionManager):
             kernel_name, 
             kernel_id
         )
+        if kernel_id is None:
+            kernel_id = output["kernel"]["id"]
+        
+        
         # NOTE: Question - is room_id equivalent to file ID? 
         # Connect this session's yroom to the kernel.
         yroom = self.get_yroom(path)
@@ -68,7 +72,7 @@ class YDocSessionManager(SessionManager):
         # kernel client instantiated _before_ trying to connect
         # the yroom.
         kernel_client = self.get_kernel_client(kernel_id)
-        kernel_client.add_yroom(yroom)
+        await kernel_client.add_yroom(yroom)
         return output
     
     async def delete_session(self, session_id):
@@ -77,7 +81,7 @@ class YDocSessionManager(SessionManager):
         """
         session = await self.get_session(session_id=session_id)
         kernel_id, path = session["kernel_id"], session["path"]
-        await super().delete_session(session_id)
         yroom = self.get_yroom(path)
         kernel_client = self.get_kernel_client(kernel_id)
         kernel_client.remove_yroom(yroom)
+        await super().delete_session(session_id)

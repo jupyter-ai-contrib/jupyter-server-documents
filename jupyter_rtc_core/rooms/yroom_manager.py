@@ -1,4 +1,7 @@
+from typing import Any, Dict, Optional
+from traitlets import HasTraits, Instance, default
 from __future__ import annotations
+
 from .yroom import YRoom
 from typing import TYPE_CHECKING
 
@@ -9,7 +12,7 @@ if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
-class YRoomManager:
+class YRoomManager(HasTraits):
     _rooms_by_id: dict[str, YRoom]
 
     def __init__(
@@ -27,7 +30,6 @@ class YRoomManager:
         self.log = log
 
         # Initialize dictionary of YRooms, keyed by room ID
-        self._rooms_by_id = {}
     
 
     @property

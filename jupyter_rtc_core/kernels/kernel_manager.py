@@ -183,19 +183,20 @@ class NextGenKernelManager(AsyncKernelManager):
         if channel_name != "iopub":
             return
         session = self.main_client.session        
+        _, smsg = session.feed_identities(msg)
         # Unpack the message 
-        deserialized_msg = session.deserialize(msg, content=False)
+        deserialized_msg = session.deserialize(smsg, content=False)
         if deserialized_msg["msg_type"] == "status":
             content = session.unpack(deserialized_msg["content"])
             execution_state = content["execution_state"]
             if execution_state == "starting":
                 # Don't broadcast, since this message is already going out.
-                self.set_state(LifecycleStates.STARTING, execution_state, broadcast=False)
+                self.set_state(LifecycleStates.STARTING, ExecutionStates.STARTING, broadcast=False)
             else:
                 parent = deserialized_msg.get("parent_header", {})
                 msg_id = parent.get("msg_id", "")
                 parent_channel = self.main_client.message_source_cache.get(msg_id, None)
                 if parent_channel and parent_channel == "shell":
                     # Don't broadcast, since this message is already going out.
-                    self.set_state(LifecycleStates.CONNECTED, execution_state, broadcast=False)
+                    self.set_state(LifecycleStates.CONNECTED, ExecutionStates(execution_state), broadcast=False)
             

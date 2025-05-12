@@ -33,7 +33,8 @@ class DocumentAwareKernelClient(AsyncKernelClient):
 
     # A set of YRooms that will intercept output and kernel
     # status messages.
-    _yrooms: t.Set[YRoom] = Set(YRoom, allow_none=True)
+    _yrooms: t.Set[YRoom] = Set(trait=Instance(YRoom), default_value=set())
+
 
     async def start_listening(self):
         """Start listening to messages coming from the kernel.
@@ -155,19 +156,20 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         to all listeners.
         """
         # Deserialze everything but the content.
-        dmsg: dict = self.session.deserialize(msg, content=False)
+        #dmsg: dict = self.session.deserialize(msg, content=False)
+
 
         # Intercept messages that are IOPub focused.
         if channel_name == "iopub":
-            message_returned = await self.handle_iopub_message(dmsg)
-            # If the message is not returned by the iopub handler, then
+            #message_returned = await self.handle_iopub_message(msg)
+            self.log.warn(f"If message is handle donot forward after adding output manager")
+            # TODO: If the message is not returned by the iopub handler, then
             # return here and do not forward to listeners.
-            if not message_returned:
-                return
+            # if not message_returned:
 
         await self.send_message_to_listeners(channel_name, msg)
 
-    async def handle_iopub_message(self, dmsg: dict) -> t.Optional[dict]:
+    async def handle_iopub_message(self, msg: dict) -> t.Optional[dict]:
         """
         Handle messages
         
@@ -184,12 +186,16 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         """
         # NOTE: Here's where we will inject the kernel state
         # into the awareness of a document.
+        #_, smsg = self.session.feed_identities(msg)
+        # Unpack the message 
+        dmsg = self.session.deserialize(msg, content=False)
         if dmsg["msg_type"] == "status":
             # Forward to all yrooms.
             for yroom in self._yrooms:
                 # NOTE: We need to create a real message here.
                 awareness_update_message = b""
-                yroom.add_message(awareness_update_message)
+                self.log.info(f"Update Awareness here: {dmsg}. YRoom: {yroom}")
+                #yroom.add_message(awareness_update_message)
             return
 
         # NOTE: Inject display data into ydoc.
@@ -197,7 +203,8 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             # Forward to all yrooms.
             for yroom in self._yrooms:
                 update_document_message = b""
-                yroom.add_message(update_document_message)
+                self.log.info(f"Update Document here: {dmsg}. Yroom: {yroom}")
+                #yroom.add_message(update_document_message)
             return
         # If the message isn't handled above, return it and it will
         # be forwarded to all listeners

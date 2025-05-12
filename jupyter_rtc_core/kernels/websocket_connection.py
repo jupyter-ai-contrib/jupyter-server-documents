@@ -2,10 +2,7 @@ from tornado.websocket import WebSocketClosedError
 from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
-<<<<<<< HEAD
 from .states import LifecycleStates
-=======
->>>>>>> f691aa4 ([WIP] Provide a YDoc-aware session manager and kernel client.)
 from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1, serialize_msg_to_ws_v1
 
 class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
