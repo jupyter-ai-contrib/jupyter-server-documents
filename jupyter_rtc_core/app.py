@@ -26,15 +26,18 @@ class RtcExtensionApp(ExtensionApp):
 
 
     def initialize_settings(self):
-        # Get YRoomManager arguments from server extension context
-        fileid_manager = self.settings["file_id_manager"]
+        # Get YRoomManager arguments from server extension context.
+        # We cannot access the 'file_id_manager' key immediately because server
+        # extensions initialize in alphabetical order. 'jupyter_rtc_core' <
+        # 'jupyter_server_fileid'.
+        get_fileid_manager = lambda: self.settings["file_id_manager"]
         contents_manager = self.serverapp.contents_manager
         loop = asyncio.get_event_loop_policy().get_event_loop()
         log = self.log
 
         # Initialize YRoomManager
         self.settings["yroom_manager"] = YRoomManager(
-            fileid_manager=fileid_manager,
+            get_fileid_manager=get_fileid_manager,
             contents_manager=contents_manager,
             loop=loop,
             log=log
