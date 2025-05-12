@@ -23,6 +23,7 @@ class YRoom:
     """Log object"""
     room_id: str
     """Room Id"""
+
     _jupyter_ydoc: YBaseDoc
     """JupyterYDoc"""
     _ydoc: pycrdt.Doc
@@ -35,6 +36,10 @@ class YRoom:
     """Client group to manage synced and desynced clients"""
     _message_queue: asyncio.Queue[Tuple[str, bytes]]
     """A message queue per room to keep websocket messages in order"""
+    _awareness_subscription: pycrdt.Subscription
+    """Subscription to awareness changes."""
+    _ydoc_subscription: pycrdt.Subscription
+    """Subscription to YDoc changes."""
 
 
     def __init__(
@@ -74,8 +79,12 @@ class YRoom:
         
         # Start observers on `self.ydoc` and `self.awareness` to ensure new
         # updates are broadcast to all clients and saved to disk.
-        self._awareness.observe(self.send_server_awareness)
-        self._ydoc.observe(lambda event: self.write_sync_update(event.update))
+        self._awareness_subscription = self._awareness.observe(
+            self.send_server_awareness
+        )
+        self._ydoc_subscription = self._ydoc.observe(
+            lambda event: self.write_sync_update(event.update)
+        )
 
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
@@ -368,6 +377,13 @@ class YRoom:
         self._broadcast_message(message, "AwarenessUpdate")
         
     def stop(self) -> None:
-        # TODO: requires YRoomLoader implementation
+        """
+        Stop the YRoom.
+
+        TODO: stop file API & stop the message processing loop
+        """
+        self._ydoc.unobserve(self._ydoc_subscription)
+        self._awareness.unobserve(self._awareness_subscription)
+
         return
 

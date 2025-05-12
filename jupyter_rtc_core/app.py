@@ -1,5 +1,6 @@
 from jupyter_server.extension.application import ExtensionApp
 from traitlets.config import Config
+import asyncio
 
 from .handlers import RouteHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
@@ -25,8 +26,19 @@ class RtcExtensionApp(ExtensionApp):
 
 
     def initialize_settings(self):
+        # Get YRoomManager arguments from server extension context
+        fileid_manager = self.settings["file_id_manager"]
+        contents_manager = self.serverapp.contents_manager
+        loop = asyncio.get_event_loop_policy().get_event_loop()
+        log = self.log
+
         # Initialize YRoomManager
-        self.settings["yroom_manager"] = YRoomManager()
+        self.settings["yroom_manager"] = YRoomManager(
+            fileid_manager=fileid_manager,
+            contents_manager=contents_manager,
+            loop=loop,
+            log=log
+        )
     
 
     def _link_jupyter_server_extension(self, server_app):
