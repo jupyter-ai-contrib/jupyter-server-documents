@@ -122,7 +122,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             raw_msg = await channel.socket.recv_multipart()
             # Drop identities and delimit from the message parts.
             _, fed_msg_list = self.session.feed_identities(raw_msg)
-            msg = fed_msg_list[1:]
+            msg = fed_msg_list
             try:
                 await self.handle_outgoing_message(channel_name, msg)
             except Exception as err:
@@ -155,21 +155,22 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         when appropriate. Then, it routes the message
         to all listeners.
         """
-        # Deserialze everything but the content.
-        #dmsg: dict = self.session.deserialize(msg, content=False)
-
 
         # Intercept messages that are IOPub focused.
         if channel_name == "iopub":
-            #message_returned = await self.handle_iopub_message(msg)
-            self.log.warn(f"If message is handle donot forward after adding output manager")
+            message_returned = await self.handle_iopub_message(msg)
             # TODO: If the message is not returned by the iopub handler, then
             # return here and do not forward to listeners.
-            # if not message_returned:
+            if not message_returned:
+                self.log.warn(f"If message is handled donot forward after adding output manager")
+                return
+
+        # Update the last activity.
+        #self.last_activity = self.session.msg_time
 
         await self.send_message_to_listeners(channel_name, msg)
 
-    async def handle_iopub_message(self, msg: dict) -> t.Optional[dict]:
+    async def handle_iopub_message(self, msg: list[bytes]) -> t.Optional[list[bytes]]:
         """
         Handle messages
         
@@ -186,29 +187,41 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         """
         # NOTE: Here's where we will inject the kernel state
         # into the awareness of a document.
-        #_, smsg = self.session.feed_identities(msg)
-        # Unpack the message 
-        dmsg = self.session.deserialize(msg, content=False)
+
+        try:
+            dmsg = self.session.deserialize(msg, content=False)
+        except Exception as e:
+            self.log.error(f"Error deserializing message: {e}")
+            raise ValueError
+    
         if dmsg["msg_type"] == "status":
             # Forward to all yrooms.
             for yroom in self._yrooms:
                 # NOTE: We need to create a real message here.
                 awareness_update_message = b""
-                self.log.info(f"Update Awareness here: {dmsg}. YRoom: {yroom}")
+                self.log.debug(f"Update Awareness here: {dmsg}. YRoom: {yroom}")
+                #self.log.debug(f"Getting YDoc: {await yroom.get_ydoc()}")
                 #yroom.add_message(awareness_update_message)
-            return
+            
+            # TODO: returning message temporarily to not break UI
+            return msg
+        
 
         # NOTE: Inject display data into ydoc.
         if dmsg["msg_type"] == "display_data":
             # Forward to all yrooms.
             for yroom in self._yrooms:
                 update_document_message = b""
-                self.log.info(f"Update Document here: {dmsg}. Yroom: {yroom}")
+                self.log.debug(f"Update Document here: {dmsg}. Yroom: {yroom}")
+                #self.log.debug(f"Getting YDoc: {await yroom.get_ydoc()}")
                 #yroom.add_message(update_document_message)
-            return
+            
+            # TODO: returning message temporarily to not break UI
+            return msg
+
         # If the message isn't handled above, return it and it will
         # be forwarded to all listeners
-        return dmsg
+        return msg
 
     async def add_yroom(self, yroom: YRoom):
         """

@@ -107,6 +107,8 @@ class NextGenKernelManager(AsyncKernelManager):
             
         if broadcast:
             # Broadcast this state change to all listeners
+            # Turn off state broadcasting temporarily to avoid
+            self._state_observers = None
             self.broadcast_state()
 
     async def start_kernel(self, *args, **kwargs):
@@ -175,17 +177,18 @@ class NextGenKernelManager(AsyncKernelManager):
             session = self.main_client.session
             msg = session.msg("status", {"execution_state": self.execution_state})
             msg = session.serialize(msg)
-            listener("iopub", msg)    
+            _, fed_msg_list = self.session.feed_identities(msg)
+            listener("iopub", fed_msg_list)    
             
     def execution_state_listener(self, channel_name: str, msg: list[bytes]):
         """Set the execution state by watching messages returned by the shell channel."""
         # Only continue if we're on the IOPub where the status is published.
         if channel_name != "iopub":
             return
+        
         session = self.main_client.session        
-        _, smsg = session.feed_identities(msg)
         # Unpack the message 
-        deserialized_msg = session.deserialize(smsg, content=False)
+        deserialized_msg = session.deserialize(msg, content=False)
         if deserialized_msg["msg_type"] == "status":
             content = session.unpack(deserialized_msg["content"])
             execution_state = content["execution_state"]

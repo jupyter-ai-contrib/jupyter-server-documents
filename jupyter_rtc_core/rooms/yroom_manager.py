@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
-class YRoomManager(HasTraits):
+class YRoomManager():
     _rooms_by_id: dict[str, YRoom]
 
     def __init__(
@@ -28,7 +28,6 @@ class YRoomManager(HasTraits):
         self.contents_manager = contents_manager
         self.loop = loop
         self.log = log
-
         # Initialize dictionary of YRooms, keyed by room ID
     
 

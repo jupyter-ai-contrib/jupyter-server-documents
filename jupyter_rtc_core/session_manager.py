@@ -73,6 +73,7 @@ class YDocSessionManager(SessionManager):
         # the yroom.
         kernel_client = self.get_kernel_client(kernel_id)
         await kernel_client.add_yroom(yroom)
+        self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
         return output
     
     async def delete_session(self, session_id):
