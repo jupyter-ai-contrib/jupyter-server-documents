@@ -3,6 +3,7 @@ from traitlets.config import Config
 
 from .handlers import RouteHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
+from .rooms import YRoomManager
 
 class RtcExtensionApp(ExtensionApp):
     name = "jupyter_rtc_core"
@@ -21,6 +22,11 @@ class RtcExtensionApp(ExtensionApp):
 
     def initialize(self):
         super().initialize()
+
+
+    def initialize_settings(self):
+        # Initialize YRoomManager
+        self.settings["yroom_manager"] = YRoomManager()
     
 
     def _link_jupyter_server_extension(self, server_app):
