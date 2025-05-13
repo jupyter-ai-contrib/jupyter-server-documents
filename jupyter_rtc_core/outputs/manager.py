@@ -119,15 +119,15 @@ class OutputsManager(LoggingConfigurable):
             placeholder = None
         return placeholder
 
-
-
-
-
-   
-    
     def clear(self, file_id, cell_id=None):
-        path = self._build_path(file_id, cell_id)
+        """Clear the state of the manager."""
+        if cell_id is None:
+            self._stream_count = {}
+            path = self._build_path(file_id)
+        else:
+            try:
+                del self._stream_count[cell_id]
+            except KeyError:
+                pass
+            path = self._build_path(file_id, cell_id)
         shutil.rmtree(path)
-
-
-
