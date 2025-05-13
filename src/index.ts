@@ -15,7 +15,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
   description: 'A JupyterLab extension that provides RTC capabilities.',
   autoStart: true,
   optional: [ISettingRegistry],
-  activate: (app: JupyterFrontEnd, settingRegistry: ISettingRegistry | null) => {
+  activate: (
+    app: JupyterFrontEnd,
+    settingRegistry: ISettingRegistry | null
+  ) => {
     console.log('JupyterLab extension @jupyter/rtc-core is activated!');
 
     if (settingRegistry) {
@@ -25,7 +28,10 @@ const plugin: JupyterFrontEndPlugin<void> = {
           console.log('@jupyter/rtc-core settings loaded:', settings.composite);
         })
         .catch(reason => {
-          console.error('Failed to load settings for @jupyter/rtc-core.', reason);
+          console.error(
+            'Failed to load settings for @jupyter/rtc-core.',
+            reason
+          );
         });
     }
 

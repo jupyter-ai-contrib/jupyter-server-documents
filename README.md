@@ -11,10 +11,10 @@ for the frontend extension.
 ## Try it out
 
 Run with the proper configuration
+
 ```
 jupyter lab --config jupyter_config.py
 ```
-
 
 ## Requirements
 
@@ -61,7 +61,6 @@ micromamba activate rtccore
 Activating an environment is required to access any Python packages installed in
 that environment. You should activate the environment before developing any
 changes to the `jupyter_rtc_core` package locally.
-
 
 ### Development install
 
@@ -115,7 +114,6 @@ Here is a summary of the commands to run after making changes:
 
 - Finally, refresh the JupyterLab page in the browser to load the new
   frontend assets and use the new backend.
-
 
 ### Building on change (frontend only)
 
