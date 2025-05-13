@@ -178,6 +178,7 @@ class YRoomFileAPI:
                 file_format = self.file_format
                 file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
 
+                # Save the YDoc via the ContentsManager
                 await ensure_async(self._contents_manager.save(
                     {
                         "format": file_format,
@@ -186,6 +187,10 @@ class YRoomFileAPI:
                     },
                     path
                 ))
+
+                # Mark 'dirty' as `False`. This hides the "unsaved changes" icon
+                # in the JupyterLab tab rendering this YDoc in the frontend.
+                self.jupyter_ydoc.dirty = False
             except Exception as e:
                 self.log.error("An exception occurred when saving JupyterYDoc.")
                 self.log.exception(e)

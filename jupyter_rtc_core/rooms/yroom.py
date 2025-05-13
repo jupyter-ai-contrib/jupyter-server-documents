@@ -312,13 +312,12 @@ class YRoom:
 
         This method can also be called manually.
         """
-        # Broadcast the message:
+        # Broadcast the message
         message = pycrdt.create_update_message(message_payload)
         self._broadcast_message(message, message_type="SyncUpdate")
 
-        # Save the file to disk.
-        # TODO: requires YRoomLoader implementation
-        return
+        # Save the file to disk
+        self.file_api.schedule_save()
 
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
