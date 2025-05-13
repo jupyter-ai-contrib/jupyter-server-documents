@@ -2,10 +2,14 @@ from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
 from typing import TYPE_CHECKING
+import asyncio
+from ..rooms import YRoomManager
+import logging
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
-    from ..rooms import YRoom, YRoomManager
+    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from ..rooms import YRoom
 
 class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
@@ -14,12 +18,26 @@ class YRoomWebsocket(WebSocketHandler):
 
     @property
     def yroom_manager(self) -> YRoomManager:
+        if "yroom_manager" not in self.settings:
+            self.settings["yroom_manager"] = YRoomManager(
+                fileid_manager=self.fileid_manager,
+                contents_manager=self.contents_manager,
+                loop=asyncio.get_event_loop_policy().get_event_loop(),
+                # TODO: change this. we should pass `self.log` from our
+                # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
+                log=logging.Logger("TEMP")
+
+            )
         return self.settings["yroom_manager"]
-    
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self.settings["file_id_manager"]
+    
+
+    @property
+    def contents_manager(self) -> AsyncContentsManager | ContentsManager:
+        return self.settings["contents_manager"]
 
 
     def prepare(self):
@@ -38,7 +56,7 @@ class YRoomWebsocket(WebSocketHandler):
             raise HTTPError(404, f"No file with ID '{fileid}'.")
     
 
-    def open(self):
+    def open(self, *_, **__):
         # Create the YRoom
         yroom = self.yroom_manager.get_room(self.room_id)
         if not yroom:
@@ -51,6 +69,7 @@ class YRoomWebsocket(WebSocketHandler):
 
     def on_message(self, message: bytes):
         # Route all messages to the YRoom for processing
+        print(message)
         self.yroom.add_message(self.client_id, message)
 
 

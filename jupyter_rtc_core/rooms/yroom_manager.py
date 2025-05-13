@@ -18,23 +18,18 @@ class YRoomManager():
     def __init__(
         self,
         *,
-        get_fileid_manager: Callable[[], BaseFileIdManager],
+        fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
         loop: asyncio.AbstractEventLoop,
         log: logging.Logger,
     ):
         # Bind instance attributes
-        self._get_fileid_manager = get_fileid_manager
+        self.fileid_manager = fileid_manager
         self.contents_manager = contents_manager
         self.loop = loop
         self.log = log
         self._rooms_by_id = {}
         # Initialize dictionary of YRooms, keyed by room ID
-    
-
-    @property
-    def fileid_manager(self) -> BaseFileIdManager:
-        return self._get_fileid_manager()
     
 
     def get_room(self, room_id: str) -> YRoom | None:

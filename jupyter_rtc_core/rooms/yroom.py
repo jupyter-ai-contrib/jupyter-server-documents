@@ -12,7 +12,7 @@ from tornado.websocket import WebSocketHandler
 from .yroom_file_api import YRoomFileAPI
 
 if TYPE_CHECKING:
-    from typing import Literal, Tuple
+    from typing import Literal, Tuple, Any
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -22,7 +22,11 @@ class YRoom:
     log: Logger
     """Log object"""
     room_id: str
-    """Room Id"""
+    """
+    The ID of the room. This is a composite ID following the format:
+
+    room_id := "{file_type}:{file_format}
+    """
 
     _jupyter_ydoc: YBaseDoc
     """JupyterYDoc"""
@@ -60,9 +64,10 @@ class YRoom:
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
+        _, file_type, _ = self.room_id.split(":")
         JupyterYDocClass = cast(
             type[YBaseDoc],
-            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
+            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
         )
         self.jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
 
@@ -307,11 +312,11 @@ class YRoom:
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
         # Apply the AwarenessUpdate message
         try:
-            message_payload = message[1:]
+            message_payload = pycrdt.read_message(message[1:])
             self._awareness.apply_awareness_update(message_payload, origin=self)
         except Exception as e:
             self.log.error(
-                "An exception occurred when applying an AwarenessUpdate"
+                "An exception occurred when applying an AwarenessUpdate "
                 f"message from client '{client_id}':"
             )
             self.log.exception(e)

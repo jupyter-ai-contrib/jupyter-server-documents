@@ -5,8 +5,7 @@ This file just contains interfaces to be filled out later.
 """
 
 from __future__ import annotations
-from datetime import timedelta, timezone
-import datetime
+from datetime import timedelta, timezone, datetime
 from logging import Logger
 from typing import TYPE_CHECKING
 import uuid
@@ -43,7 +42,7 @@ class YjsClient:
 
     @synced.setter
     def synced(self, v: bool):
-        self.synced = v
+        self._synced = v
         self.last_modified = datetime.now(timezone.utc)
 
 class YjsClientGroup:
@@ -67,7 +66,7 @@ class YjsClientGroup:
     """Log object"""
     loop: asyncio.AbstractEventLoop
     """Event loop"""
-    poll_interval_seconds: int
+    _poll_interval_seconds: int
     """The poll time interval used while auto removing desynced clients"""
     desynced_timeout_seconds: int
     """The max time period in seconds that a desynced client does not become synced before get auto removed from desynced dict"""
@@ -79,7 +78,7 @@ class YjsClientGroup:
         self.log = log
         self.loop = loop
         self.loop.create_task(self._clean_desynced())
-        self.poll_interval_seconds = poll_interval_seconds
+        self._poll_interval_seconds = poll_interval_seconds
         self.desynced_timeout_seconds = desynced_timeout_seconds
         
     def add(self, websocket: WebSocketHandler) -> str:
