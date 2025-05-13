@@ -35,10 +35,8 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
     def handle_outgoing_message(self, channel_name, msg):
         """Handle the ZMQ message."""
         try:
-            # ignore signature part of message
-            smsg = serialize_msg_to_ws_v1(msg[1:], channel_name)
-
-            self.websocket_handler.write_message(smsg, binary=True)
+            msg = serialize_msg_to_ws_v1(msg, channel_name)
+            self.websocket_handler.write_message(msg, binary=True)
         except WebSocketClosedError:
             self.log.warning("A ZMQ message arrived on a closed websocket channel.")
         except Exception as err:
