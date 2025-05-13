@@ -1,6 +1,3 @@
-# Copyright (c) Jupyter Development Team.
-# Distributed under the terms of the Modified BSD License.
-
 import json
 
 from tornado import web
@@ -23,7 +20,7 @@ class OutputsAPIHandler(APIHandler):
     @authorized
     async def get(self, file_id=None, cell_id=None, output_index=None):
         try:
-            output = self.outputs.get(file_id, cell_id, output_index)
+            output = self.outputs.get_output(file_id, cell_id, output_index)
         except (FileNotFoundError, KeyError):
             self.set_status(404)
             self.finish({"error": "Output not found."})
