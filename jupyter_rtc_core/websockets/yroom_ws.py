@@ -27,6 +27,10 @@ class YRoomWebsocket(WebSocketHandler):
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]
 
+        # TODO: remove this once globalawareness is implemented
+        if self.room_id == "JupyterLab:globalAwareness":
+            raise HTTPError(404)
+
         # Verify the file ID contained in the room ID points to a valid file.
         fileid = self.room_id.split(":")[-1]
         path = self.fileid_manager.get_path(fileid)

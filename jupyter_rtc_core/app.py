@@ -20,7 +20,7 @@ class RtcExtensionApp(ExtensionApp):
         # global awareness websocket
         # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
         # # ydoc websocket
-        # (r"api/collaboration/room/(.*)", YRoomWebsocket)
+        (r"api/collaboration/room/(.*)", YRoomWebsocket)
     ]
 
     yroom_manager_class = Type(
