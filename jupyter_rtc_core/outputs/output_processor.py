@@ -11,7 +11,7 @@ class OutputProcessor(LoggingConfigurable):
 
     _cell_ids = Dict(default_value={}) # a map from msg_id -> cell_id
     _cell_indices = Dict(default_value={}) # a map from cell_id -> cell index in notebook
-    _file_id = Unicode(default_value=None, allow_None=True)
+    _file_id = Unicode(default_value=None, allow_none=True)
 
     @property
     def settings(self):
@@ -83,19 +83,22 @@ class OutputProcessor(LoggingConfigurable):
         When output messages are send back to the frontend, this map is used
         to find the cell_id for a given parent msg_id.
         """
-        header = json.loads(msg[0])
-        msg_id = header["msg_id"]
-        msg_type = header["msg_type"]
-        metadata = json.loads(msg[2])
+        if channel != "shell":
+            return
+        header = json.loads(msg[0]) # TODO use session unpack
+        msg_type = header.get("msg_type")
+        if msg_type != "execute_request":
+            return
+        msg_id = header.get("msg_id")
+        metadata = json.loads(msg[2]) # TODO use session unpack
         cell_id = metadata.get("cellId")
         if cell_id is None:
             return
 
         existing_msg_id = self.get_msg_id(cell_id)
         if existing_msg_id != msg_id:  # cell is being re-run, clear output state
+            self.clear(cell_id)
             if self._file_id is not None:
-                self.log.info(f"Cell has been rerun, removing old outputs: {self._file_id} {cell_id}")
-                self.clear(cell_id)
                 self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
         self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
         self.set_cell_id(msg_id, cell_id)
