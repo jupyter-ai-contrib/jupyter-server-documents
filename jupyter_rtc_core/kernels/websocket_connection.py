@@ -14,7 +14,7 @@ from tornado.websocket import WebSocketClosedError
 from jupyter_server.services.kernels.connection.base import (
     BaseKernelWebsocketConnection,
 )
-from .states import LIFECYCLE_DEAD_STATES
+from .states import LifecycleStates
 from jupyter_server.services.kernels.connection.base import deserialize_msg_from_ws_v1, serialize_msg_to_ws_v1
 from jupyter_client.session import Session
 
