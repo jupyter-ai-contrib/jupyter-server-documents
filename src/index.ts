@@ -7,6 +7,14 @@ import { ISettingRegistry } from '@jupyterlab/settingregistry';
 
 import { requestAPI } from './handler';
 
+import {
+  rtcContentProvider,
+  yfile,
+  ynotebook,
+  logger,
+  notebookCellExecutor
+} from './docprovider';
+
 /**
  * Initialization data for the @jupyter/rtc-core extension.
  */
@@ -47,4 +55,13 @@ const plugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
-export default plugin;
+const plugins: JupyterFrontEndPlugin<unknown>[] = [
+  rtcContentProvider,
+  yfile,
+  ynotebook,
+  logger,
+  notebookCellExecutor,
+  plugin
+];
+
+export default plugins;

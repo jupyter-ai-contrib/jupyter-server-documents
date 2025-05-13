@@ -127,3 +127,6 @@ dmypy.json
 # Ignore files used to test in real-time
 untitled*
 Untitled*
+
+.vscode/
+playground/
