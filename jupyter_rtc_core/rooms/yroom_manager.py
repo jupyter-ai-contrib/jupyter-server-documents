@@ -28,6 +28,7 @@ class YRoomManager():
         self.contents_manager = contents_manager
         self.loop = loop
         self.log = log
+        self._rooms_by_id = {}
         # Initialize dictionary of YRooms, keyed by room ID
     
 
