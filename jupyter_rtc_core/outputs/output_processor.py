@@ -99,7 +99,7 @@ class OutputProcessor(LoggingConfigurable):
         metadata = json.loads(msg[2]) # TODO use session unpack
         cell_id = metadata.get("cellId")
         if cell_id is None:
-            return
+            return # cellId is optional, so this is valid
 
         existing_msg_id = self.get_msg_id(cell_id)
         if existing_msg_id != msg_id:  # cell is being re-run, clear output state
@@ -120,6 +120,7 @@ class OutputProcessor(LoggingConfigurable):
         content = dmsg["content"]
         cell_id = self.get_cell_id(msg_id)
         if cell_id is None:
+            # This is valid as cell_id is optional
             return
         asyncio.create_task(self.output_task(msg_type, cell_id, content))
         return None # Don't allow the original message to propagate to the frontend
@@ -128,7 +129,7 @@ class OutputProcessor(LoggingConfigurable):
         """A coroutine to handle output messages."""
         try:
             kernel_session = await self.session_manager.get_session(kernel_id=self.kernel_id)
-        except: # what exception to catch?
+        except: # TODO: what exception to catch and log?
             return
         else:
             path = kernel_session["path"]
@@ -144,12 +145,13 @@ class OutputProcessor(LoggingConfigurable):
                 file_format='json',
                 content_type='notebook'
             )
-        except: # what exception to catch?
+        except: # TODO: what exception to catch and log?
             return
         cells = notebook.ycells
 
         cell_index, target_cell = self.find_cell(cell_id, cells)
         if target_cell is None:
+            # This is valid as cell_id is optional
             return
 
         # Convert from the message spec to the nbformat output structure
