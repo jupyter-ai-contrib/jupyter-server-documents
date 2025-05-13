@@ -159,28 +159,34 @@ class YRoom:
         while True:
             try: 
                 client_id, message = await self._message_queue.get()
-                self.log.info(f"HANDLING NEW MESSAGE FROM '{client_id}'")
-                self.log.info(f"Message: {message}")
             except asyncio.QueueShutDown:
                 break
         
             # Handle Awareness messages
             message_type = message[0]
             if message_type == YMessageType.AWARENESS:
+                self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
                 self.handle_awareness_update(client_id, message)
+                self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
                 continue
             
             # Handle Sync messages
             assert message_type == YMessageType.SYNC
             message_subtype = message[1] if len(message) >= 2 else None
             if message_subtype == YSyncMessageSubtype.SYNC_STEP1:
+                self.log.info(f"Received SS1 from '{client_id}'.")
                 self.handle_sync_step1(client_id, message)
+                self.log.info(f"Handled SS1 from '{client_id}'.")
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_STEP2:
+                self.log.info(f"Received SS2 from '{client_id}'.")
                 self.handle_sync_step2(client_id, message)
+                self.log.info(f"Handled SS2 from '{client_id}'.")
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
+                self.log.info(f"Received SyncUpdate from '{client_id}'.")
                 self.handle_sync_update(client_id, message)
+                self.log.info(f"Handled SyncUpdate from '{client_id}'.")
                 continue
             else:
                 self.log.warning(
@@ -201,8 +207,6 @@ class YRoom:
         - Sending the reply to the client over WS, and
         - Sending a new SyncStep1 message immediately after.
         """
-        self.log.info(f"Handling SS1 message from client '{client_id}'.")
-
         # Mark client as desynced
         new_client = self.clients.get(client_id)
         self.clients.mark_desynced(client_id)
@@ -226,6 +230,7 @@ class YRoom:
             # TODO: remove the assert once websocket is made required
             assert isinstance(new_client.websocket, WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message, binary=True)
+            self.log.info(f"Sent SS2 reply to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing the SyncStep2 reply "
@@ -235,21 +240,19 @@ class YRoom:
             return
         
         self.clients.mark_synced(client_id)
-        self.log.info(f"Sent SS2 reply to client '{client_id}'.")
         
         # Send SyncStep1 message
         try:
             assert isinstance(new_client.websocket, WebSocketHandler)
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
             new_client.websocket.write_message(sync_step1_message, binary=True)
+            self.log.info(f"Sent SS1 message to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing a SyncStep1 message "
                 f"to newly-synced client '{new_client.id}':"
             )
             self.log.exception(e)
-        self.log.info(f"Sent SS1 message to client '{client_id}'.")
-        self.log.info(f"Message: {sync_step1_message}")
 
 
     def handle_sync_step2(self, client_id: str, message: bytes) -> None:
@@ -261,7 +264,6 @@ class YRoom:
         clients after this method is called via the `self.write_sync_update()`
         observer.
         """
-        self.log.info("HANDLING SS2 MESSAGE")
         try:
             message_payload = message[1:]
             pycrdt.handle_sync_message(message_payload, self._ydoc)
@@ -282,7 +284,6 @@ class YRoom:
         clients after this method is called via the `self.write_sync_update()`
         observer.
         """
-        self.log.info("HANDLING SYNCUPDATE")
         # Remove client and kill websocket if received SyncUpdate when client is desynced
         if self._should_ignore_update(client_id, "SyncUpdate"):
             self.log.error(f"Should not receive SyncUpdate message when double handshake is not completed for client '{client_id}' and room '{self.room_id}'")
@@ -321,7 +322,6 @@ class YRoom:
 
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
-        self.log.info("HANDLING AWARENESS UPDATE")
         # Apply the AwarenessUpdate message
         try:
             message_payload = pycrdt.read_message(message[1:])

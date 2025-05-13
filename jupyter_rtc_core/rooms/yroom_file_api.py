@@ -139,7 +139,6 @@ class YRoomFileAPI:
         self._ydoc_content_loaded.set()
         self._ydoc_content_loading = False
         self.log.info(f"Loaded content for room ID '{self.room_id}'.")
-        self.log.info(f"Content: {self.jupyter_ydoc.source}")
 
     
     def schedule_save(self) -> None:
