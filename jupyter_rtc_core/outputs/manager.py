@@ -42,7 +42,7 @@ class OutputsManager(LoggingConfigurable):
             path = path / f"{output_index}.output"
         return path
     
-    def get(self, file_id, cell_id, output_index):
+    def get_output(self, file_id, cell_id, output_index):
         """Get an outputs by file_id, cell_id, and output_index."""
         self.log.info(f"OutputsManager.get: {file_id} {cell_id} {output_index}")
         path = self._build_path(file_id, cell_id, output_index)
