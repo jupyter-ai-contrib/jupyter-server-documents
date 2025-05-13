@@ -1,6 +1,6 @@
+from __future__ import annotations
 from typing import Any, Dict, Optional
 from traitlets import HasTraits, Instance, default
-from __future__ import annotations
 
 from .yroom import YRoom
 from typing import TYPE_CHECKING
