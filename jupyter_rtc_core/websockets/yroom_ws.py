@@ -42,7 +42,8 @@ class YRoomWebsocket(WebSocketHandler):
 
         # TODO: remove this once globalawareness is implemented
         if self.room_id == "JupyterLab:globalAwareness":
-            raise HTTPError(404)
+            self.close(1011)
+            return
 
         # Verify the file ID contained in the room ID points to a valid file.
         fileid = self.room_id.split(":")[-1]
@@ -52,6 +53,11 @@ class YRoomWebsocket(WebSocketHandler):
     
 
     def open(self, *_, **__):
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            self.close(1011)
+            return
+
         # Create the YRoom
         yroom = self.yroom_manager.get_room(self.room_id)
         if not yroom:
@@ -63,10 +69,18 @@ class YRoomWebsocket(WebSocketHandler):
 
 
     def on_message(self, message: bytes):
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            return
+
         # Route all messages to the YRoom for processing
         self.yroom.add_message(self.client_id, message)
 
 
     def on_close(self):
-        self.log.info("WEBSOCKET CLOSED")
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            return
+
+        self.log.info(f"Closed Websocket to client '{self.client_id}'.")
         self.yroom.clients.remove(self.client_id)
