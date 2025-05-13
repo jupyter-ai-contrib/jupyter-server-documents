@@ -3,7 +3,7 @@ import json
 
 from pycrdt import Map
 
-from traitlets import Dict, Unicode
+from traitlets import Dict, Unicode, Bool
 from traitlets.config import LoggingConfigurable
 
 
@@ -12,6 +12,12 @@ class OutputProcessor(LoggingConfigurable):
     _cell_ids = Dict(default_value={}) # a map from msg_id -> cell_id
     _cell_indices = Dict(default_value={}) # a map from cell_id -> cell index in notebook
     _file_id = Unicode(default_value=None, allow_none=True)
+
+    use_outputs_service = Bool(
+        default_value=True,
+        config=True,
+        help="Should outputs be routed to the outputs service to minimize the in memory ydoc size."
+    )
 
     @property
     def settings(self):
@@ -99,7 +105,8 @@ class OutputProcessor(LoggingConfigurable):
         if existing_msg_id != msg_id:  # cell is being re-run, clear output state
             self.clear(cell_id)
             if self._file_id is not None:
-                self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
+                if self.use_outputs_service:
+                    self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
         self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
         self.set_cell_id(msg_id, cell_id)
 
@@ -146,18 +153,13 @@ class OutputProcessor(LoggingConfigurable):
             return
 
         # Convert from the message spec to the nbformat output structure
-        output = self.transform_output(msg_type, content, ydoc=False)
-        output_url = self.outputs_manager.write(file_id, cell_id, output)
-        nb_output = Map({
-                "output_type": "display_data",
-                "data": {
-                    'text/html': f'<a href="{output_url}">Output</a>'
-                },
-                "metadata": {
-                    "outputs_service": True
-                }
-            })
-        target_cell["outputs"].append(nb_output)
+        if self.use_outputs_service:
+            output = self.transform_output(msg_type, content, ydoc=False)
+            output = self.outputs_manager.write(file_id, cell_id, output)
+        else:
+            output = self.transform_output(msg_type, content, ydoc=True)
+        if output is not None:
+            target_cell["outputs"].append(output)
 
     def find_cell(self, cell_id, cells):
         """Find a cell with a given cell_id in the list of cells.
