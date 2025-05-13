@@ -77,7 +77,7 @@ class YjsClientGroup:
         self.desynced: dict[str, YjsClient] = {}
         self.log = log
         self.loop = loop
-        self.loop.create_task(self._clean_desynced())
+        # self.loop.create_task(self._clean_desynced())
         self._poll_interval_seconds = poll_interval_seconds
         self.desynced_timeout_seconds = desynced_timeout_seconds
         

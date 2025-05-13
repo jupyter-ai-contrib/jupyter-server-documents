@@ -33,6 +33,7 @@ class YRoomFileAPI:
 
     # See `filemanager.py` in `jupyter_server` for references on supported file
     # formats & file types.
+    room_id: str
     file_format: Literal["text", "base64"]
     file_type: Literal["file", "notebook"]
     file_id: str
@@ -57,6 +58,7 @@ class YRoomFileAPI:
         loop: asyncio.AbstractEventLoop
     ):
         # Bind instance attributes
+        self.room_id = room_id
         self.file_format, self.file_type, self.file_id = room_id.split(":")
         self.jupyter_ydoc = jupyter_ydoc
         self.log = log
@@ -113,6 +115,8 @@ class YRoomFileAPI:
         # Otherwise, set loading to `True` and start the loading task.
         if self._ydoc_content_loaded.is_set() or self._ydoc_content_loading:
             return
+        
+        self.log.info(f"Loading content for room ID '{self.room_id}'.")
         self._ydoc_content_loading = True
         self._loop.create_task(self._load_ydoc_content())
 
@@ -134,6 +138,8 @@ class YRoomFileAPI:
         # Also set loading to `False` for consistency
         self._ydoc_content_loaded.set()
         self._ydoc_content_loading = False
+        self.log.info(f"Loaded content for room ID '{self.room_id}'.")
+        self.log.info(f"Content: {self.jupyter_ydoc.source}")
 
     
     def schedule_save(self) -> None:

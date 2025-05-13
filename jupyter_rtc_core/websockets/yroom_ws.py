@@ -15,20 +15,15 @@ class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
     room_id: str
     client_id: str
+    # TODO: change this. we should pass `self.log` from our
+    # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
+    log = logging.Logger("TEMP")
+
 
     @property
     def yroom_manager(self) -> YRoomManager:
-        if "yroom_manager" not in self.settings:
-            self.settings["yroom_manager"] = YRoomManager(
-                fileid_manager=self.fileid_manager,
-                contents_manager=self.contents_manager,
-                loop=asyncio.get_event_loop_policy().get_event_loop(),
-                # TODO: change this. we should pass `self.log` from our
-                # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
-                log=logging.Logger("TEMP")
-
-            )
         return self.settings["yroom_manager"]
+
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
@@ -69,9 +64,9 @@ class YRoomWebsocket(WebSocketHandler):
 
     def on_message(self, message: bytes):
         # Route all messages to the YRoom for processing
-        print(message)
         self.yroom.add_message(self.client_id, message)
 
 
     def on_close(self):
+        self.log.info("WEBSOCKET CLOSED")
         self.yroom.clients.remove(self.client_id)

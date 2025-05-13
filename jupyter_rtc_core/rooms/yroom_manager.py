@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import asyncio
     import logging
-    from typing import Callable
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -18,19 +17,24 @@ class YRoomManager():
     def __init__(
         self,
         *,
-        fileid_manager: BaseFileIdManager,
+        get_fileid_manager: callable[[], BaseFileIdManager],
         contents_manager: AsyncContentsManager | ContentsManager,
         loop: asyncio.AbstractEventLoop,
         log: logging.Logger,
     ):
         # Bind instance attributes
-        self.fileid_manager = fileid_manager
+        self._get_fileid_manager = get_fileid_manager
         self.contents_manager = contents_manager
         self.loop = loop
         self.log = log
         self._rooms_by_id = {}
         # Initialize dictionary of YRooms, keyed by room ID
     
+
+    @property
+    def fileid_manager(self) -> BaseFileIdManager:
+        return self._get_fileid_manager()
+
 
     def get_room(self, room_id: str) -> YRoom | None:
         """
@@ -44,6 +48,7 @@ class YRoomManager():
         
         # Otherwise, create a new room
         try:
+            self.log.info(f"Initializing room '{room_id}'.")
             yroom = YRoom(
                 room_id=room_id,
                 log=self.log,
