@@ -66,11 +66,14 @@ class YDocSessionManager(SessionManager):
         )
         if kernel_id is None:
             kernel_id = output["kernel"]["id"]
-            
 
-        
         # Connect this session's yroom to the kernel.
         if type == "notebook":
+            # If name or path is None, we cannot map to a yroom,
+            # so just move on.
+            if name is None or path is None:
+                self.log.debug("`name` or `path` was not given, so a yroom was not set up for this session.")
+                return output
             # When JupyterLab creates a session, it uses a fake path
             # which is the relative path + UUID, i.e. the notebook
             # name is incorrect temporarily. It later makes multiple
