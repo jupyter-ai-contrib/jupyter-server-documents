@@ -2,30 +2,48 @@ from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
 from typing import TYPE_CHECKING
+import asyncio
+from ..rooms import YRoomManager
+import logging
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
-    from ..rooms import YRoom, YRoomManager
+    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from ..rooms import YRoom
 
 class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
     room_id: str
     client_id: str
+    # TODO: change this. we should pass `self.log` from our
+    # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
+    log = logging.Logger("TEMP")
+
 
     @property
     def yroom_manager(self) -> YRoomManager:
         return self.settings["yroom_manager"]
-    
+
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self.settings["file_id_manager"]
+    
+
+    @property
+    def contents_manager(self) -> AsyncContentsManager | ContentsManager:
+        return self.settings["contents_manager"]
 
 
     def prepare(self):
         # Bind `room_id` attribute
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]
+
+        # TODO: remove this once globalawareness is implemented
+        if self.room_id == "JupyterLab:globalAwareness":
+            self.close(1011)
+            return
 
         # Verify the file ID contained in the room ID points to a valid file.
         fileid = self.room_id.split(":")[-1]
@@ -34,7 +52,12 @@ class YRoomWebsocket(WebSocketHandler):
             raise HTTPError(404, f"No file with ID '{fileid}'.")
     
 
-    def open(self):
+    def open(self, *_, **__):
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            self.close(1011)
+            return
+
         # Create the YRoom
         yroom = self.yroom_manager.get_room(self.room_id)
         if not yroom:
@@ -46,9 +69,18 @@ class YRoomWebsocket(WebSocketHandler):
 
 
     def on_message(self, message: bytes):
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            return
+
         # Route all messages to the YRoom for processing
         self.yroom.add_message(self.client_id, message)
 
 
     def on_close(self):
+        # TODO: remove this later
+        if self.room_id == "JupyterLab:globalAwareness":
+            return
+
+        self.log.info(f"Closed Websocket to client '{self.client_id}'.")
         self.yroom.clients.remove(self.client_id)

@@ -12,7 +12,7 @@ from tornado.websocket import WebSocketHandler
 from .yroom_file_api import YRoomFileAPI
 
 if TYPE_CHECKING:
-    from typing import Literal, Tuple
+    from typing import Literal, Tuple, Any
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -22,7 +22,11 @@ class YRoom:
     log: Logger
     """Log object"""
     room_id: str
-    """Room Id"""
+    """
+    The ID of the room. This is a composite ID following the format:
+
+    room_id := "{file_type}:{file_format}:{file_id}"
+    """
 
     _jupyter_ydoc: YBaseDoc
     """JupyterYDoc"""
@@ -60,9 +64,10 @@ class YRoom:
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
+        _, file_type, _ = self.room_id.split(":")
         JupyterYDocClass = cast(
             type[YBaseDoc],
-            jupyter_ydoc_classes.get(self.file_type, jupyter_ydoc_classes["file"])
+            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
         )
         self.jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
 
@@ -90,6 +95,9 @@ class YRoom:
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
         self._loop.create_task(self._on_new_message())
+
+        # Log notification that room is ready
+        self.log.info(f"Room '{self.room_id}' initialized.")
     
 
     @property
@@ -157,20 +165,28 @@ class YRoom:
             # Handle Awareness messages
             message_type = message[0]
             if message_type == YMessageType.AWARENESS:
-                self.handle_awareness_update(client_id, message[1:])
+                self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
+                self.handle_awareness_update(client_id, message)
+                self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
                 continue
             
             # Handle Sync messages
             assert message_type == YMessageType.SYNC
             message_subtype = message[1] if len(message) >= 2 else None
             if message_subtype == YSyncMessageSubtype.SYNC_STEP1:
+                self.log.info(f"Received SS1 from '{client_id}'.")
                 self.handle_sync_step1(client_id, message)
+                self.log.info(f"Handled SS1 from '{client_id}'.")
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_STEP2:
+                self.log.info(f"Received SS2 from '{client_id}'.")
                 self.handle_sync_step2(client_id, message)
+                self.log.info(f"Handled SS2 from '{client_id}'.")
                 continue
             elif message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
+                self.log.info(f"Received SyncUpdate from '{client_id}'.")
                 self.handle_sync_update(client_id, message)
+                self.log.info(f"Handled SyncUpdate from '{client_id}'.")
                 continue
             else:
                 self.log.warning(
@@ -213,7 +229,8 @@ class YRoom:
         try:
             # TODO: remove the assert once websocket is made required
             assert isinstance(new_client.websocket, WebSocketHandler)
-            new_client.websocket.write_message(sync_step2_message)
+            new_client.websocket.write_message(sync_step2_message, binary=True)
+            self.log.info(f"Sent SS2 reply to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing the SyncStep2 reply "
@@ -228,7 +245,8 @@ class YRoom:
         try:
             assert isinstance(new_client.websocket, WebSocketHandler)
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
-            new_client.websocket.write_message(sync_step1_message)
+            new_client.websocket.write_message(sync_step1_message, binary=True)
+            self.log.info(f"Sent SS1 message to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing a SyncStep1 message "
@@ -295,23 +313,22 @@ class YRoom:
 
         This method can also be called manually.
         """
-        # Broadcast the message:
+        # Broadcast the message
         message = pycrdt.create_update_message(message_payload)
         self._broadcast_message(message, message_type="SyncUpdate")
 
-        # Save the file to disk.
-        # TODO: requires YRoomLoader implementation
-        return
+        # Save the file to disk
+        self.file_api.schedule_save()
 
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
         # Apply the AwarenessUpdate message
         try:
-            message_payload = message[1:]
+            message_payload = pycrdt.read_message(message[1:])
             self._awareness.apply_awareness_update(message_payload, origin=self)
         except Exception as e:
             self.log.error(
-                "An exception occurred when applying an AwarenessUpdate"
+                "An exception occurred when applying an AwarenessUpdate "
                 f"message from client '{client_id}':"
             )
             self.log.exception(e)
@@ -351,7 +368,7 @@ class YRoom:
             try:
                 # TODO: remove this assertion once websocket is made required
                 assert isinstance(client.websocket, WebSocketHandler)
-                client.websocket.write_message(message)
+                client.websocket.write_message(message, binary=True)
             except Exception as e:
                 self.log.warning(
                     f"An exception occurred when broadcasting a "

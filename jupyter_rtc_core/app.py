@@ -2,9 +2,8 @@ from jupyter_server.extension.application import ExtensionApp
 from traitlets.config import Config
 import asyncio
 
-from traitlets import Instance
-from traitlets import Type
-from .handlers import RouteHandler
+from traitlets import Instance, Type
+from .handlers import RouteHandler, YRoomSessionHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 
@@ -20,7 +19,9 @@ class RtcExtensionApp(ExtensionApp):
         # global awareness websocket
         # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
         # # ydoc websocket
-        # (r"api/collaboration/room/(.*)", YRoomWebsocket)
+        (r"api/collaboration/room/(.*)", YRoomWebsocket),
+        # handler that just adds compatibility with Jupyter Collaboration's frontend
+        (r"api/collaboration/session/(.*)", YRoomSessionHandler)
     ]
 
     yroom_manager_class = Type(
@@ -44,7 +45,8 @@ class RtcExtensionApp(ExtensionApp):
         # We cannot access the 'file_id_manager' key immediately because server
         # extensions initialize in alphabetical order. 'jupyter_rtc_core' <
         # 'jupyter_server_fileid'.
-        get_fileid_manager = lambda: self.settings["file_id_manager"]
+        def get_fileid_manager():
+            return self.serverapp.web_app.settings["file_id_manager"]
         contents_manager = self.serverapp.contents_manager
         loop = asyncio.get_event_loop_policy().get_event_loop()
         log = self.log
@@ -56,6 +58,7 @@ class RtcExtensionApp(ExtensionApp):
             loop=loop,
             log=log
         )
+        pass
     
 
     def _link_jupyter_server_extension(self, server_app):

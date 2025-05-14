@@ -1,6 +1,6 @@
+from __future__ import annotations
 from typing import Any, Dict, Optional
 from traitlets import HasTraits, Instance, default
-from __future__ import annotations
 
 from .yroom import YRoom
 from typing import TYPE_CHECKING
@@ -8,7 +8,6 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     import asyncio
     import logging
-    from typing import Callable
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -18,7 +17,7 @@ class YRoomManager():
     def __init__(
         self,
         *,
-        get_fileid_manager: Callable[[], BaseFileIdManager],
+        get_fileid_manager: callable[[], BaseFileIdManager],
         contents_manager: AsyncContentsManager | ContentsManager,
         loop: asyncio.AbstractEventLoop,
         log: logging.Logger,
@@ -35,7 +34,7 @@ class YRoomManager():
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self._get_fileid_manager()
-    
+
 
     def get_room(self, room_id: str) -> YRoom | None:
         """
@@ -49,6 +48,7 @@ class YRoomManager():
         
         # Otherwise, create a new room
         try:
+            self.log.info(f"Initializing room '{room_id}'.")
             yroom = YRoom(
                 room_id=room_id,
                 log=self.log,
