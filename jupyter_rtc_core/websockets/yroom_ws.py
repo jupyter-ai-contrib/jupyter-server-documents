@@ -67,6 +67,9 @@ class YRoomWebsocket(WebSocketHandler):
         # Add self as a client to the YRoom
         self.client_id = self.yroom.clients.add(self)
 
+        #Tell the room to send the ydoc version
+        self.yroom.send_ydoc_version(self.client_id)
+
 
     def on_message(self, message: bytes):
         # TODO: remove this later

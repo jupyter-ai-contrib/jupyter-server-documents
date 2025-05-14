@@ -1,11 +1,13 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
-from typing import TYPE_CHECKING, cast
-from logging import Logger
 import asyncio
+from enum import IntEnum
+from logging import Logger
+from typing import TYPE_CHECKING, cast
+from uuid import uuid4
 from ..websockets import YjsClientGroup
 
 import pycrdt
-from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
+from pycrdt import YSyncMessageType as YSyncMessageSubtype
 from jupyter_ydoc import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from tornado.websocket import WebSocketHandler
@@ -15,6 +17,14 @@ if TYPE_CHECKING:
     from typing import Literal, Tuple, Any
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+
+
+class YMessageType(IntEnum):
+    """Define a new YMessageType enum that include a YDOC_VERSION."""
+    SYNC = 0
+    AWARENESS = 1
+    YDOC_VERSION: 2
+
 
 class YRoom:
     """A Room to manage all client connection to one notebook file"""
@@ -44,6 +54,8 @@ class YRoom:
     """Subscription to awareness changes."""
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
+    _ydoc_version: str
+    """A unique version number for this ydoc."""
 
 
     def __init__(
@@ -63,6 +75,7 @@ class YRoom:
         # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
+        self._ydoc_version = bytes(str(uuid4()), encoding='utf-8')
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
         _, file_type, _ = self.room_id.split(":")
         JupyterYDocClass = cast(
@@ -392,7 +405,34 @@ class YRoom:
         state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
         self._broadcast_message(message, "AwarenessUpdate")
+
+    def send_ydoc_version(self, client_id: str):
+        """Send the ydoc version to the client.
         
+        If the client has a different ydoc version, it should delete its ydoc,
+        create a new one, and save the new ydoc version. The server must send
+        the ydoc version to new clients before the sync1/sync2 handshake, but
+        can also send it at any time. Clients must initiate sync1/sync2 anytime
+        they receive a ydoc version message.
+        """
+        new_client = self.clients.get(client_id)
+        self.clients.mark_desynced(client_id)
+
+        message = YMessageType.YDOC_VERSION + self._ydoc_version
+
+        try:
+            # TODO: remove the assert once websocket is made required
+            assert isinstance(new_client.websocket, WebSocketHandler)
+            new_client.websocket.write_message(message, binary=True)
+            self.log.info(f"Sent YDOC_VERSION to client '{client_id}'.")
+        except Exception as e:
+            self.log.error(
+                "An exception occurred when writing the YDOC_VERSION "
+                f"to new client '{new_client.id}':"
+            )
+            self.log.exception(e)
+            return
+
     def stop(self) -> None:
         """
         Stop the YRoom.
