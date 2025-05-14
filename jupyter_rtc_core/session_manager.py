@@ -35,12 +35,16 @@ class YDocSessionManager(SessionManager):
         kernel_client = kernel_manager.main_client
         return kernel_client
 
-    def get_yroom(self, path) -> YRoom:
+    # The `type` argument here is for future proofing this API. 
+    # Today, only notebooks have ydocs with kernels connected. 
+    # In the future, we will include consoles here.
+    def get_yroom(self, path, type) -> YRoom:
         """Get the yroom for a given path."""
-        file_id = self.file_id_manager.get_id(path)
-        yroom = self.yroom_manager.get_room(file_id)
-        return yroom 
-    
+        file_id = self.file_id_manager.index(path)
+        room_id = f"json:notebook:{file_id}"
+        yroom = self.yroom_manager.get_room(room_id)
+        return yroom
+
     async def create_session(
         self,
         path: Optional[str] = None,
@@ -53,27 +57,28 @@ class YDocSessionManager(SessionManager):
         After creating a session, connects the yroom to the kernel client.
         """
         output = await super().create_session(
-            path, 
+            path,
             name,
             type,
-            kernel_name, 
+            kernel_name,
             kernel_id
         )
         if kernel_id is None:
             kernel_id = output["kernel"]["id"]
         
-        
-        # NOTE: Question - is room_id equivalent to file ID? 
         # Connect this session's yroom to the kernel.
-        yroom = self.get_yroom(path)
-        # TODO: we likely have a race condition here... need to 
-        # think about it more. Currently, the kernel client gets
-        # created after the kernel starts fully. We need the 
-        # kernel client instantiated _before_ trying to connect
-        # the yroom.
-        kernel_client = self.get_kernel_client(kernel_id)
-        await kernel_client.add_yroom(yroom)
-        self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
+        if type == "notebook": 
+            yroom = self.get_yroom(path, type)
+            # TODO: we likely have a race condition here... need to 
+            # think about it more. Currently, the kernel client gets
+            # created after the kernel starts fully. We need the 
+            # kernel client instantiated _before_ trying to connect
+            # the yroom.
+            kernel_client = self.get_kernel_client(kernel_id)
+            await kernel_client.add_yroom(yroom)
+            self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
+        else:
+            self.log.debug(f"Document type {type} is not supported by YRoom.")
         return output
     
     async def delete_session(self, session_id):
