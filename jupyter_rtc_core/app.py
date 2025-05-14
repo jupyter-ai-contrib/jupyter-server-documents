@@ -6,6 +6,7 @@ from traitlets import Instance, Type
 from .handlers import RouteHandler, FileIDIndexHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
+from .outputs import OutputsManager, outputs_handlers
 
 class RtcExtensionApp(ExtensionApp):
     name = "jupyter_rtc_core"
@@ -25,6 +26,9 @@ class RtcExtensionApp(ExtensionApp):
         (r"api/fileid/index", FileIDIndexHandler)
     ]
     
+    for handler in outputs_handlers:
+        handlers.append(handler)
+
     yroom_manager_class = Type(
         klass=YRoomManager,
         help="""YRoom Manager Class.""",
@@ -34,6 +38,18 @@ class RtcExtensionApp(ExtensionApp):
     @property
     def yroom_manager(self) -> YRoomManager | None:
         return self.settings.get("yroom_manager", None)
+
+    outputs_manager_class = Type(
+        klass=OutputsManager,
+        help="Outputs manager class.",
+        default_value=OutputsManager
+    ).tag(config=True)
+
+    outputs_manager = Instance(
+        klass=OutputsManager,
+        help="An instance of the OutputsManager",
+        allow_none=True
+    ).tag(config=True)
 
     def initialize(self):
         super().initialize()
@@ -56,8 +72,11 @@ class RtcExtensionApp(ExtensionApp):
             loop=loop,
             log=log
         )
+        
+        # Initialize OutputsManager
+        self.outputs_manager = self.outputs_manager_class(config=self.config)
+        self.settings["outputs_manager"] = self.outputs_manager
     
-
     def _link_jupyter_server_extension(self, server_app):
         """Setup custom config needed by this extension."""
         c = Config()

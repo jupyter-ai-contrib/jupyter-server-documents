@@ -7,17 +7,10 @@ from pycrdt import Map
 
 from traitlets.config import LoggingConfigurable
 from traitlets import (
-    Any,
-    Bool,
     Dict,
     Instance,
-    List,
-    TraitError,
-    Type,
-    Unicode,
     Int,
-    default,
-    validate,
+    default
 )
 
 from jupyter_core.paths import jupyter_runtime_dir
