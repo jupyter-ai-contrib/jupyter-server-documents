@@ -1,5 +1,6 @@
 import typing
 import asyncio
+from datetime import datetime
 from traitlets import default
 from traitlets import Instance
 from traitlets import Int
@@ -141,6 +142,7 @@ class NextGenKernelManager(AsyncKernelManager):
         self.set_state(LifecycleStates.CONNECTING, ExecutionStates.BUSY)
         # Use the new API for getting a client.
         self.main_client = self.client()
+        self.last_activity = datetime.utcnow()
         # Track execution state by watching all messages that come through
         # the kernel client.
         self.main_client.add_listener(self.execution_state_listener)
@@ -183,6 +185,7 @@ class NextGenKernelManager(AsyncKernelManager):
     def execution_state_listener(self, channel_name: str, msg: list[bytes]):
         """Set the execution state by watching messages returned by the shell channel."""
         # Only continue if we're on the IOPub where the status is published.
+        self.last_activity = datetime.utcnow()
         if channel_name != "iopub":
             return
         

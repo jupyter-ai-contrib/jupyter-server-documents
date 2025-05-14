@@ -34,7 +34,7 @@ class YRoomFileAPI:
     # See `filemanager.py` in `jupyter_server` for references on supported file
     # formats & file types.
     room_id: str
-    file_format: Literal["text", "base64"]
+    file_format: Literal["text", "base64", "json"]
     file_type: Literal["file", "notebook"]
     file_id: str
     log: logging.Logger
@@ -173,6 +173,7 @@ class YRoomFileAPI:
             try:
                 assert self.jupyter_ydoc
                 path = self.get_path()
+                self.log.info(f"Saving content for room ID '{self.room_id}'. {path}. {self.file_format} {self.file_type}")
                 content = self.jupyter_ydoc.source
                 file_format = self.file_format
                 file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"

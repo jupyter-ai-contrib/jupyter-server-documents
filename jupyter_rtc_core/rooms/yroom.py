@@ -64,7 +64,7 @@ class YRoom:
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
-        _, file_type, _ = self.room_id.split(":")
+        file_type, _, _ = self.room_id.split(":")
         JupyterYDocClass = cast(
             type[YBaseDoc],
             jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])

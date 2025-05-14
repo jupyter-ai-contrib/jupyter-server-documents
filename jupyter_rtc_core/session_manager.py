@@ -35,11 +35,17 @@ class YDocSessionManager(SessionManager):
         kernel_client = kernel_manager.main_client
         return kernel_client
 
-    def get_yroom(self, path) -> YRoom:
+    def get_yroom(self, path, type) -> YRoom:
         """Get the yroom for a given path."""
         file_id = self.file_id_manager.get_id(path)
-        yroom = self.yroom_manager.get_room(file_id)
+        room_id = self.build_notebook_room_id(file_id, type)
+        self.log.info(f"Getting yroom for file {room_id}")
+        yroom = self.yroom_manager.get_room(room_id)
         return yroom 
+    
+    def build_notebook_room_id(self, file_id, file_type) -> str:
+        # TOOD: extract/how to construct file format?
+        return f"{file_type}:notebook:{file_id}"
     
     async def create_session(
         self,
@@ -52,6 +58,8 @@ class YDocSessionManager(SessionManager):
         """
         After creating a session, connects the yroom to the kernel client.
         """
+        self.log.info(f"Creating session for path {path}, kernel_id {kernel_id}")
+        path = "Untitled.ipynb"
         output = await super().create_session(
             path, 
             name,
@@ -65,7 +73,7 @@ class YDocSessionManager(SessionManager):
         
         # NOTE: Question - is room_id equivalent to file ID? 
         # Connect this session's yroom to the kernel.
-        yroom = self.get_yroom(path)
+        yroom = self.get_yroom(path=path, type=type)
         # TODO: we likely have a race condition here... need to 
         # think about it more. Currently, the kernel client gets
         # created after the kernel starts fully. We need the 

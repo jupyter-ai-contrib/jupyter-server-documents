@@ -199,7 +199,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             for yroom in self._yrooms:
                 # NOTE: We need to create a real message here.
                 awareness_update_message = b""
-                self.log.debug(f"Update Awareness here: {dmsg}. YRoom: {yroom}")
+                self.log.info(f"Update Awareness here: {dmsg}. YRoom: {yroom}")
                 #self.log.debug(f"Getting YDoc: {await yroom.get_ydoc()}")
                 #yroom.add_message(awareness_update_message)
             
