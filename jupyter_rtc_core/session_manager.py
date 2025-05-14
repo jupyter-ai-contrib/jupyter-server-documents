@@ -86,8 +86,8 @@ class YDocSessionManager(SessionManager):
         Deletes the session and disconnects the yroom from the kernel client.
         """
         session = await self.get_session(session_id=session_id)
-        kernel_id, path, type = session["kernel_id"], session["path"], session["type"]
+        kernel_id, path, type = session["kernel"]["id"], session["path"], session["type"]
         yroom = self.get_yroom(path, type)
         kernel_client = self.get_kernel_client(kernel_id)
-        kernel_client.remove_yroom(yroom)
+        await kernel_client.remove_yroom(yroom)
         await super().delete_session(session_id)
