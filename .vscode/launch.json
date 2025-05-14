@@ -1,0 +1,59 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "jlab backend",
+      "type": "debugpy",
+      "request": "launch",
+      "args": [
+        "--no-browser",
+        "--NotebookApp.token=''",
+        "--port=9999"
+      ],
+      "cwd": "${workspaceFolder}/playground",
+      "justMyCode": false,
+      "module": "jupyterlab.labapp",
+      "presentation": {
+        "hidden": true
+      }
+    },
+    {
+      "name": "jlab backend (watch)",
+      "type": "debugpy",
+      "request": "launch",
+      "args": [
+        "--watch",
+        "--no-browser",
+        "--NotebookApp.token=''",
+        "--port=9999"
+      ],
+      "justMyCode": false,
+      "module": "jupyterlab.labapp",
+      "presentation": {
+        "hidden": true
+      }
+    },
+    {
+      "name": "jlab frontend",
+      "type": "chrome",
+      "request": "launch",
+      "timeout": 180000,
+      "url": "http://localhost:9999",
+      // set webroot to the parent dir of your project's top level package.json
+      "webRoot": "${workspaceFolder}",
+      "presentation": {
+        "hidden": true
+      }
+    }
+  ],
+  "compounds": [
+    {
+      "name": "jlab debug",
+      "configurations": ["jlab backend", "jlab frontend"]
+    },
+    {
+      "name": "jlab debug (watch)",
+      "configurations": ["jlab backend (watch)", "jlab frontend"]
+    }
+  ]
+}
