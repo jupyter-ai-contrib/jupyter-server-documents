@@ -23,7 +23,7 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
         self.kernel_manager.broadcast_state()
         self.log.info("Kernel websocket is now listening to kernel.")
 
-    async def disconnect(self):
+    def disconnect(self):
         self.kernel_manager.main_client.remove_listener(self.handle_outgoing_message)
 
     def handle_incoming_message(self, incoming_msg):
