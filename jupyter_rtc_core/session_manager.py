@@ -37,8 +37,6 @@ class YDocSessionManager(SessionManager):
 
     def get_yroom(self, path) -> YRoom:
         """Get the yroom for a given path."""
-        print("DO WE SEE THIS?")
-        print(path)
         file_id = self.file_id_manager.index(path)
         room_id = f"json:notebook:{file_id}"
         yroom = self.yroom_manager.get_room(room_id)

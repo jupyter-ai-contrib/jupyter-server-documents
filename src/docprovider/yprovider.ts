@@ -93,28 +93,13 @@ export class WebSocketProvider implements IDocumentProvider {
   }
 
   private async _connect(): Promise<void> {
+    // Fetch file ID from the file ID service.
     let resp = await requestAPI(
       "api/fileid/index?path=" + this._path, 
       {
         method: "POST"
       }
     )
-    // let resp: any; 
-    // console.log(this._path);
-    // while (true) {
-    //   try { 
-    //     resp = await requestAPI(
-    //       "api/fileid/id?path=" + this._path
-    //     )
-    //     console.log(resp)
-    //     break;
-    //   } catch {
-    //     console.log("Didn't see a file ID; trying again.")
-    //   }
-    //   // Wait 1 second to try again
-    //   await new Promise(f => setTimeout(f, 5000));
-    // }
-
     const fileId = resp["id"];
 
     this._yWebsocketProvider = new YWebsocketProvider(
