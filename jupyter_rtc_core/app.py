@@ -3,7 +3,7 @@ from traitlets.config import Config
 import asyncio
 
 from traitlets import Instance, Type
-from .handlers import RouteHandler, YRoomSessionHandler
+from .handlers import RouteHandler, YRoomSessionHandler, FileIDIndexHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 
@@ -21,9 +21,10 @@ class RtcExtensionApp(ExtensionApp):
         # # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
         # handler that just adds compatibility with Jupyter Collaboration's frontend
-        (r"api/collaboration/session/(.*)", YRoomSessionHandler)
+        (r"api/collaboration/session/(.*)", YRoomSessionHandler),
+        (r"api/fileid/index", FileIDIndexHandler)
     ]
-
+    
     yroom_manager_class = Type(
         klass=YRoomManager,
         help="""YRoom Manager Class.""",
