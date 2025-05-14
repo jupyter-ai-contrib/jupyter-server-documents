@@ -1,3 +1,4 @@
+import os
 from typing import Optional, Any
 from jupyter_server.services.sessions.sessionmanager import SessionManager, KernelName, ModelName
 from jupyter_server.serverapp import ServerApp
@@ -65,10 +66,20 @@ class YDocSessionManager(SessionManager):
         )
         if kernel_id is None:
             kernel_id = output["kernel"]["id"]
+            
+
         
         # Connect this session's yroom to the kernel.
-        if type == "notebook": 
-            yroom = self.get_yroom(path, type)
+        if type == "notebook":
+            # When JupyterLab creates a session, it uses a fake path
+            # which is the relative path + UUID, i.e. the notebook
+            # name is incorrect temporarily. It later makes multiple
+            # updates to the session to correct the path.
+            # 
+            # Here, we create the true path to store in the fileID service
+            # by dropping the UUID and appending the file name.
+            real_path = os.path.join(os.path.split(path)[0], name)
+            yroom = self.get_yroom(real_path, type)
             # TODO: we likely have a race condition here... need to 
             # think about it more. Currently, the kernel client gets
             # created after the kernel starts fully. We need the 

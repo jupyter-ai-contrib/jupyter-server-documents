@@ -3,7 +3,7 @@ from traitlets.config import Config
 import asyncio
 
 from traitlets import Instance, Type
-from .handlers import RouteHandler, YRoomSessionHandler, FileIDIndexHandler
+from .handlers import RouteHandler, FileIDIndexHandler
 from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 
