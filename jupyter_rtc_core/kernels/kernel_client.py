@@ -182,7 +182,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         ------- 
         Returns the message if it should be forwarded to listeners. Otherwise,
         returns `None` and keeps (i.e. intercepts) the message from going
-        to listenres.
+        to listeners.
         """
         # NOTE: Here's where we will inject the kernel state
         # into the awareness of a document.
@@ -200,7 +200,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                 update_document_message = b""
                 # yroom.add_message(update_document_message)
 
-            # TODO: returning message temporarily to not break UI
+        # TODO: returning message temporarily to not break UI
         # If the message isn't handled above, return it and it will
         # be forwarded to all listeners
         return msg
