@@ -35,7 +35,10 @@ class YDocSessionManager(SessionManager):
         kernel_client = kernel_manager.main_client
         return kernel_client
 
-    def get_yroom(self, path) -> YRoom:
+    # The `type` argument here is for future proofing this API. 
+    # Today, only notebooks have ydocs with kernels connected. 
+    # In the future, we will include consoles here.
+    def get_yroom(self, path, type) -> YRoom:
         """Get the yroom for a given path."""
         file_id = self.file_id_manager.index(path)
         room_id = f"json:notebook:{file_id}"
@@ -65,7 +68,7 @@ class YDocSessionManager(SessionManager):
         
         # Connect this session's yroom to the kernel.
         if type == "notebook": 
-            yroom = self.get_yroom(path)
+            yroom = self.get_yroom(path, type)
             # TODO: we likely have a race condition here... need to 
             # think about it more. Currently, the kernel client gets
             # created after the kernel starts fully. We need the 
