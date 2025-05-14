@@ -63,7 +63,6 @@ class YDocSessionManager(SessionManager):
         if kernel_id is None:
             kernel_id = output["kernel"]["id"]
         
-        # NOTE: Question - is room_id equivalent to file ID? 
         # Connect this session's yroom to the kernel.
         if type == "notebook": 
             yroom = self.get_yroom(path)
@@ -75,6 +74,8 @@ class YDocSessionManager(SessionManager):
             kernel_client = self.get_kernel_client(kernel_id)
             await kernel_client.add_yroom(yroom)
             self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
+        else:
+            self.log.debug(f"Document type {type} is not supported by YRoom.")
         return output
     
     async def delete_session(self, session_id):
