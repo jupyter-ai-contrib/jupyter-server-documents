@@ -7,7 +7,6 @@ import { IDocumentProvider } from '@jupyter/collaborative-drive';
 import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
-
 import { PromiseDelegate } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
 
@@ -15,8 +14,7 @@ import { DocumentChange, YDocument } from '@jupyter/ydoc';
 
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
-
-import { requestDocSession } from './requests';
+import { requestAPI } from './requests';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -95,19 +93,37 @@ export class WebSocketProvider implements IDocumentProvider {
   }
 
   private async _connect(): Promise<void> {
-    const session = await requestDocSession(
-      this._format,
-      this._contentType,
-      this._path
-    );
+    let resp = await requestAPI(
+      "api/fileid/index?path=" + this._path, 
+      {
+        method: "POST"
+      }
+    )
+    // let resp: any; 
+    // console.log(this._path);
+    // while (true) {
+    //   try { 
+    //     resp = await requestAPI(
+    //       "api/fileid/id?path=" + this._path
+    //     )
+    //     console.log(resp)
+    //     break;
+    //   } catch {
+    //     console.log("Didn't see a file ID; trying again.")
+    //   }
+    //   // Wait 1 second to try again
+    //   await new Promise(f => setTimeout(f, 5000));
+    // }
+
+    const fileId = resp["id"];
 
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
-      `${session.format}:${session.type}:${session.fileId}`,
+      `${this._format}:${this._contentType}:${fileId}`,
       this._sharedModel.ydoc,
       {
         disableBc: true,
-        params: { sessionId: session.sessionId },
+        // params: { sessionId: session.sessionId },
         awareness: this._awareness
       }
     );

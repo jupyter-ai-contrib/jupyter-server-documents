@@ -143,6 +143,8 @@ export class RtcContentProvider
     if (typeof options.format !== 'string') {
       return;
     }
+    
+
     try {
       const provider = new WebSocketProvider({
         url: URLExt.join(this._serverSettings.wsUrl, DOCUMENT_PROVIDER_URL),

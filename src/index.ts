@@ -11,8 +11,7 @@ import {
   rtcContentProvider,
   yfile,
   ynotebook,
-  logger,
-  notebookCellExecutor
+  logger
 } from './docprovider';
 
 import { IStateDB, StateDB } from '@jupyterlab/statedb';
@@ -109,7 +108,6 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   yfile,
   ynotebook,
   logger,
-  notebookCellExecutor,
   rtcGlobalAwarenessPlugin,
   plugin
 ];

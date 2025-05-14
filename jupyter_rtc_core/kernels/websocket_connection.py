@@ -35,6 +35,9 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
     def handle_outgoing_message(self, channel_name, msg):
         """Handle the ZMQ message."""
         try:
+            # Remove signature from message to be compatible with Jupyter Server.
+            # See here: https://github.com/jupyter-server/jupyter_server/blob/4ee6e1ddc058f87b2c5699cd6b9caf780a013044/jupyter_server/services/kernels/connection/channels.py#L504
+            msg = msg[1:]
             msg = serialize_msg_to_ws_v1(msg, channel_name)
             self.websocket_handler.write_message(msg, binary=True)
         except WebSocketClosedError:

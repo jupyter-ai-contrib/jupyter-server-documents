@@ -20,8 +20,8 @@ class RtcExtensionApp(ExtensionApp):
         # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
         # # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
-        # handler that just adds compatibility with Jupyter Collaboration's frontend
-        (r"api/collaboration/session/(.*)", YRoomSessionHandler),
+        # # handler that just adds compatibility with Jupyter Collaboration's frontend
+        # (r"api/collaboration/session/(.*)", YRoomSessionHandler),
         (r"api/fileid/index", FileIDIndexHandler)
     ]
     
