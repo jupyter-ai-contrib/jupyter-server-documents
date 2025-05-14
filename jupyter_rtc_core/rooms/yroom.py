@@ -85,16 +85,16 @@ class YRoom:
         # Start observers on `self.ydoc` and `self.awareness` to ensure new
         # updates are broadcast to all clients and saved to disk.
         self._awareness_subscription = self._awareness.observe(
-            self.send_server_awareness
+            self._on_awareness_update
         )
         self._ydoc_subscription = self._ydoc.observe(
-            lambda event: self.write_sync_update(event.update)
+            lambda event: self._on_ydoc_update(event.update)
         )
 
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
-        self._loop.create_task(self._on_new_message())
+        self._loop.create_task(self._process_message_queue())
 
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
@@ -144,7 +144,7 @@ class YRoom:
         self._message_queue.put_nowait((client_id, message))
     
 
-    async def _on_new_message(self) -> None:
+    async def _process_message_queue(self) -> None:
         """
         Async method that only runs when a new message arrives in the message
         queue. This method routes the message to a handler method based on the
@@ -281,7 +281,7 @@ class YRoom:
         Handles incoming SyncUpdate messages by applying the update to the YDoc.
 
         A SyncUpdate message will automatically be broadcast to all synced
-        clients after this method is called via the `self.write_sync_update()`
+        clients after this method is called via the `self._on_ydoc_update()`
         observer.
         """
         # Remove client and kill websocket if received SyncUpdate when client is desynced
@@ -302,7 +302,7 @@ class YRoom:
             return
         
 
-    def write_sync_update(self, message_payload: bytes, client_id: str | None = None) -> None:
+    def _on_ydoc_update(self, message_payload: bytes, client_id: str | None = None) -> None:
         """
         This method is an observer on `self.ydoc` which:
 
@@ -377,9 +377,10 @@ class YRoom:
                 )
                 self.log.exception(e)
                 
-    def send_server_awareness(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
+    def _on_awareness_update(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
         """
-        Callback to broadcast the server awareness to clients.
+        Observer on `self.awareness` that broadcasts AwarenessUpdate messages to
+        all clients on update.
 
         Arguments:
             type: The change type.
@@ -393,14 +394,22 @@ class YRoom:
         message = pycrdt.create_awareness_message(state)
         self._broadcast_message(message, "AwarenessUpdate")
         
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """
-        Stop the YRoom.
-
-        TODO: stop file API & stop the message processing loop
+        Stops the YRoom gracefully.
         """
+        # First, disconnect all clients by stopping the client group.
+        self.clients.stop()
+        
+        # Remove all observers, as updates no longer need to be broadcast
         self._ydoc.unobserve(self._ydoc_subscription)
         self._awareness.unobserve(self._awareness_subscription)
 
-        return
+        # Finish processing all messages, then stop the queue to end the
+        # `_process_message_queue()` background task.
+        await self._message_queue.join()
+        self._message_queue.shutdown(immediate=True)
 
+        # Finally, stop FileAPI and return. This saves the final content of the
+        # JupyterYDoc in the process.
+        await self.file_api.stop()

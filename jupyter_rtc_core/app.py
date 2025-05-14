@@ -31,12 +31,9 @@ class RtcExtensionApp(ExtensionApp):
         default_value=YRoomManager,
     ).tag(config=True)
 
-    yroom_manager = Instance(
-        klass=YRoomManager,
-        help="An instance of the YRoom Manager.",
-        allow_none=True
-    ).tag(config=True)
-
+    @property
+    def yroom_manager(self) -> YRoomManager | None:
+        return self.settings.get("yroom_manager", None)
 
     def initialize(self):
         super().initialize()
@@ -71,3 +68,9 @@ class RtcExtensionApp(ExtensionApp):
         c.ServerApp.session_manager_class = "jupyter_rtc_core.session_manager.YDocSessionManager"
         server_app.update_config(c)
         super()._link_jupyter_server_extension(server_app)
+    
+    async def stop_extension(self):
+        self.log.info("Stopping `jupyter_rtc_core` server extension.")
+        if self.yroom_manager:
+            await self.yroom_manager.stop()
+        

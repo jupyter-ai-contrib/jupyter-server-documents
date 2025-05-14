@@ -1,6 +1,4 @@
 from __future__ import annotations
-from typing import Any, Dict, Optional
-from traitlets import HasTraits, Instance, default
 
 from .yroom import YRoom
 from typing import TYPE_CHECKING
@@ -27,8 +25,9 @@ class YRoomManager():
         self.contents_manager = contents_manager
         self.loop = loop
         self.log = log
-        self._rooms_by_id = {}
+
         # Initialize dictionary of YRooms, keyed by room ID
+        self._rooms_by_id = {}
     
 
     @property
@@ -66,16 +65,23 @@ class YRoomManager():
             return None
         
         
-    def delete_room(self, room_id: str) -> None:
+    async def delete_room(self, room_id: str) -> None:
         """
-        Deletes a YRoom given a room ID.
-        
-        TODO: finish implementing YRoom.stop(), and delete empty rooms w/ no
-        live kernels automatically in a background task.
+        Gracefully deletes a YRoom given a room ID. This stops the YRoom first,
+        which finishes applying all updates & saves the content automatically.
         """
         yroom = self._rooms_by_id.get(room_id, None)
         if not yroom:
             return
         
-        yroom.stop()
+        await yroom.stop()
         del self._rooms_by_id[room_id]
+    
+
+    async def stop(self) -> None:
+        """
+        Gracefully deletes each `YRoom`. See `delete_room()` for more info.
+        """
+        for room_id in self._rooms_by_id.keys():
+            await self.delete_room(room_id)
+        
