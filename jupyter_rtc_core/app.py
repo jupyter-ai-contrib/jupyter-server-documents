@@ -26,6 +26,9 @@ class RtcExtensionApp(ExtensionApp):
         (r"api/fileid/index", FileIDIndexHandler),
         *outputs_handlers
     ]
+    
+    for handler in outputs_handlers:
+        handlers.append(handler)
 
     yroom_manager_class = Type(
         klass=YRoomManager,
@@ -42,6 +45,14 @@ class RtcExtensionApp(ExtensionApp):
         help="Outputs manager class.",
         default_value=OutputsManager
     ).tag(config=True)
+
+
+    outputs_manager_class = Type(
+        klass=OutputsManager,
+        help="Outputs manager class.",
+        default_value=OutputsManager
+    ).tag(config=True)
+
 
     outputs_manager = Instance(
         klass=OutputsManager,
