@@ -107,7 +107,6 @@ class NextGenKernelManager(AsyncKernelManager):
             
         if broadcast:
             # Broadcast this state change to all listeners
-            # Turn off state broadcasting temporarily to avoid
             self._state_observers = None
             self.broadcast_state()
 
@@ -202,4 +201,14 @@ class NextGenKernelManager(AsyncKernelManager):
                 if parent_channel and parent_channel == "shell":
                     # Don't broadcast, since this message is already going out.
                     self.set_state(LifecycleStates.CONNECTED, ExecutionStates(execution_state), broadcast=False)
+
+            kernel_status = {
+                "execution_state": self.execution_state,
+                "lifecycle_state": self.lifecycle_state
+            }
+            self.log.debug(f"Sending kernel status awareness {kernel_status}")
+            self.main_client.send_kernel_awareness(kernel_status)
+            self.log.debug(f"Sent kernel status awareness {kernel_status}")
+
+
             

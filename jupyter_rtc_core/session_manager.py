@@ -9,7 +9,7 @@ from jupyter_rtc_core.kernels.kernel_client import DocumentAwareKernelClient
 
 
 class YDocSessionManager(SessionManager): 
-    """A Jupyter Server Session Manager that's connects YDocuments
+    """A Jupyter Server Session Manager that connects YDocuments
     to Kernel Clients.
     """
     
