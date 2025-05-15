@@ -12,6 +12,7 @@ from jupyter_client.asynchronous.client import AsyncKernelClient
 from .utils import LRUCache
 from jupyter_rtc_core.rooms.yroom import YRoom
 from jupyter_rtc_core.outputs import OutputProcessor
+from jupyter_server.utils import ensure_async
 
 
 class DocumentAwareKernelClient(AsyncKernelClient): 
@@ -157,7 +158,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                     logs (instead of raises) exceptions.
                     """
                     try:
-                        listener_to_wrap(channel_name, msg)
+                        await ensure_async(listener_to_wrap(channel_name, msg))
                     except Exception as err:
                         self.log.error(err)
 
@@ -171,18 +172,17 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         when appropriate. Then, it routes the message
         to all listeners.
         """
-
         # Intercept messages that are IOPub focused.
         if channel_name == "iopub":
             message_returned = await self.handle_iopub_message(msg)
             # If the message is not returned by the iopub handler, then
             # return here and do not forward to listeners.
             if not message_returned:
+                self.log.warn(f"If message is handled do not forward after adding output manager")
                 return
 
         # Update the last activity.
         # self.last_activity = self.session.msg_time
-
         await self.send_message_to_listeners(channel_name, msg)
 
     async def handle_iopub_message(self, msg: list[bytes]) -> t.Optional[list[bytes]]:

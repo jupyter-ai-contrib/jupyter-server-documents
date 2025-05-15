@@ -428,7 +428,7 @@ class YRoom:
         Arguments:
             type: The change type.
             changes: The awareness changes.
-        """
+        """        
         if type != "update" or changes[1] != "local":
             return
         

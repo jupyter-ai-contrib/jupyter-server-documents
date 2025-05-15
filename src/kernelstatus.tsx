@@ -16,8 +16,6 @@ import {
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { Session } from '@jupyterlab/services';
 
-const EXECUTION_STATE_KEY = "executionState";
-
 /**
  * A pure functional component for rendering kernel status.
  */
@@ -133,11 +131,15 @@ export namespace AwarenessKernelStatus {
       let panel = (widget as NotebookPanel);
       const stateChanged = () => {
         if (this) {
-          let fullState = panel?.model?.sharedModel.awareness.getLocalState();
-          if (fullState) {
-            let currentState = fullState[EXECUTION_STATE_KEY];
-            (this as any)._kernelStatus = currentState;
-            (this as any).stateChanged.emit(void 0);
+          let awarenessStates = panel?.model?.sharedModel.awareness.getStates();
+          if (awarenessStates) {
+            for (let [_, clientState] of awarenessStates) {
+              if ('kernel' in clientState) {
+                (this as any)._kernelStatus = clientState['kernel']['execution_state'];
+                (this as any).stateChanged.emit(void 0);
+                return;
+              }
+            }
           }
         }
       };

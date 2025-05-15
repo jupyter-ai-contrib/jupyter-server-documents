@@ -13,10 +13,6 @@ import {
   ExecutionIndicatorComponent, 
   ExecutionIndicator as E,
 } from '@jupyterlab/notebook';
-import { Poll } from '@lumino/polling';
-
-
-const EXECUTION_STATE_KEY = "executionState";
 
 
 /**
@@ -77,22 +73,7 @@ export namespace AwarenessExecutionIndicator {
       if (!nb) {
         return;
       }
-      (this as any)._currentNotebook = nb;
-      // Artificially toggle the execution state.
-      new Poll({
-        auto: true,
-        factory: () => {
-          let fullState = nb?.model?.sharedModel.awareness.getLocalState();
-          let state = 'idle'
-          if (fullState && fullState[EXECUTION_STATE_KEY] === "idle") {
-            state = 'busy'
-          }
-          nb?.model?.sharedModel.awareness.setLocalState({ executionState: state}) 
-          return Promise.resolve()
-        },
-        frequency: { interval: 2000, backoff: false }
-      });
-  
+      (this as any)._currentNotebook = nb;  
       (this as any)._notebookExecutionProgress.set(nb, {
         executionStatus: 'idle',
         kernelStatus: 'idle',
@@ -107,13 +88,17 @@ export namespace AwarenessExecutionIndicator {
   
       const contextStatusChanged = (ctx: ISessionContext) => {
         if (state) {
-          let fullState = nb?.model?.sharedModel.awareness.getLocalState();
-          if (fullState) {
-            let currentState = fullState[EXECUTION_STATE_KEY];
-            state.kernelStatus = currentState;
+          let awarenessStates = nb?.model?.sharedModel.awareness.getStates();
+          if (awarenessStates) {
+            for (let [_, clientState] of awarenessStates) {
+              if ('kernel' in clientState) {
+                state.kernelStatus = clientState['kernel']['execution_state'];
+                this.stateChanged.emit(void 0);
+                return;
+              }
+            }
           }
         }
-        this.stateChanged.emit(void 0);
       };
       
       nb?.model?.sharedModel.awareness.on('change', contextStatusChanged);

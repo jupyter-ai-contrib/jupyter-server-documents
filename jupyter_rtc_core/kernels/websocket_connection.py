@@ -20,7 +20,7 @@ class NextGenKernelWebsocketConnection(BaseKernelWebsocketConnection):
         asyncio task happening in parallel.
         """
         self.kernel_manager.main_client.add_listener(self.handle_outgoing_message)
-        self.kernel_manager.broadcast_state()
+        await self.kernel_manager.broadcast_state()
         self.log.info("Kernel websocket is now listening to kernel.")
 
     def disconnect(self):
