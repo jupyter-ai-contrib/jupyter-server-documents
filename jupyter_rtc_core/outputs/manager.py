@@ -99,7 +99,7 @@ class OutputsManager(LoggingConfigurable):
         # Now create the placeholder output
         if count < self.stream_limit:
             # Return the original if we haven't reached the limit
-            placeholder = Map(output)
+            placeholder = Map({})
         elif count == self.stream_limit:
             # Return a link to the full stream output
             placeholder = Map({
