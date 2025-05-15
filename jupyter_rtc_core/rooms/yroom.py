@@ -340,8 +340,8 @@ class YRoom:
         persisted, so changes to the `state` key should be ignored. Otherwise,
         an infinite loop of saves will result, as saving sets `dirty = False`.
 
-        This observer is separate because because `pycrdt.Doc.observe()` does
-        not pass `updated_key` to `self._on_ydoc_update()`.
+        This observer is separate because `pycrdt.Doc.observe()` does not pass
+        `updated_key` to `self._on_ydoc_update()`.
         """
         if updated_key != "state":
             self.file_api.schedule_save()
