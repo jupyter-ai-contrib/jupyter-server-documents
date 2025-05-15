@@ -21,7 +21,8 @@ class OutputProcessor(LoggingConfigurable):
     @property
     def settings(self):
         """A shortcut for the Tornado web app settings."""
-        return self.parent.parent.webapp.settings
+        #      self.KernelClient.KernelManager.AsyncMultiKernelManager.ServerApp
+        return self.parent.parent.parent.web_app.settings
 
     @property
     def kernel_client(self):
