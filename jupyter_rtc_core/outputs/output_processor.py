@@ -132,7 +132,6 @@ class OutputProcessor(LoggingConfigurable):
         msg_id = dmsg["parent_header"]["msg_id"]
         content = self.parent.session.unpack(dmsg["content"])
         cell_id = self.get_cell_id(msg_id)
-        self.log.info(f"cell_id: {cell_id}")
         if cell_id is None:
             # This is valid as cell_id is optional
             return dmsg
@@ -141,7 +140,6 @@ class OutputProcessor(LoggingConfigurable):
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
-        self.log.info(f"output_task: {msg_type} {cell_id}")
         try:
             # TODO: The session manager may have multiple notebooks connected to the kernel
             # but currently get_session only returns the first. We need to fix this and
@@ -155,7 +153,6 @@ class OutputProcessor(LoggingConfigurable):
             path = kernel_session["path"]
 
         file_id = self.file_id_manager.get_id(path)
-        self.log.info(f"Output for file_id, cell_id: {file_id} {cell_id}")
         if file_id is None:
             self.log.error(f"Could not find file_id for path: {path}")
             return

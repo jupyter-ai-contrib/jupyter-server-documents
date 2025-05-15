@@ -26,9 +26,6 @@ class RtcExtensionApp(ExtensionApp):
         (r"api/fileid/index", FileIDIndexHandler),
         *outputs_handlers
     ]
-    
-    for handler in outputs_handlers:
-        handlers.append(handler)
 
     yroom_manager_class = Type(
         klass=YRoomManager,
