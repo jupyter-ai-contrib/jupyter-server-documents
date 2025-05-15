@@ -23,11 +23,9 @@ class RtcExtensionApp(ExtensionApp):
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
         # # handler that just adds compatibility with Jupyter Collaboration's frontend
         # (r"api/collaboration/session/(.*)", YRoomSessionHandler),
-        (r"api/fileid/index", FileIDIndexHandler)
+        (r"api/fileid/index", FileIDIndexHandler),
+        *outputs_handlers
     ]
-    
-    for handler in outputs_handlers:
-        handlers.append(handler)
 
     yroom_manager_class = Type(
         klass=YRoomManager,

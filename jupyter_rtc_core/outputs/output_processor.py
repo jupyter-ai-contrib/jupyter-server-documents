@@ -22,7 +22,7 @@ class OutputProcessor(LoggingConfigurable):
     def settings(self):
         """A shortcut for the Tornado web app settings."""
         #      self.KernelClient.KernelManager.AsyncMultiKernelManager.ServerApp
-        return self.parent.parent.parent.web_app.settings
+        return self.parent.parent.parent.parent.web_app.settings
 
     @property
     def kernel_client(self):
@@ -45,9 +45,9 @@ class OutputProcessor(LoggingConfigurable):
         return self.settings["file_id_manager"]
     
     @property
-    def jupyter_server_ydoc(self):
+    def yroom_manager(self):
         """A shortcut for the jupyter server ydoc manager."""
-        return self.settings["jupyter_server_ydoc"]
+        return self.settings["yroom_manager"]
 
     def clear(self, cell_id=None):
         """Clear the state of the output processor.
@@ -126,17 +126,12 @@ class OutputProcessor(LoggingConfigurable):
         The content has not been deserialized yet as we need to verify we
         should process it.
         """
-        self.log.info("Process outgoing message")
         msg_type = dmsg["header"]["msg_type"]
-        self.log.info(f"msg_type: {msg_type}")
         if msg_type not in ("stream", "display_data", "execute_result", "error"):
             return dmsg
         msg_id = dmsg["parent_header"]["msg_id"]
-        self.log.info(f"msg_type: {msg_type}")
         content = self.parent.session.unpack(dmsg["content"])
-        self.log.info(f"content: {content}")
         cell_id = self.get_cell_id(msg_id)
-        self.log.info(f"cell_id: {cell_id}")
         if cell_id is None:
             # This is valid as cell_id is optional
             return dmsg
@@ -145,9 +140,11 @@ class OutputProcessor(LoggingConfigurable):
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
-        self.log.info(f"output_task: {msg_type} {cell_id}")
         try:
-            kernel_session = await self.session_manager.get_session(kernel_id=self.kernel_id)
+            # TODO: The session manager may have multiple notebooks connected to the kernel
+            # but currently get_session only returns the first. We need to fix this and
+            # find the notebook with the right cell_id.
+            kernel_session = await self.session_manager.get_session(kernel_id=self.parent.parent.kernel_id)
         except Exception as e:
             self.log.error(f"An exception occurred when processing output for cell {cell_id}")
             self.log.exception(e)
@@ -156,28 +153,10 @@ class OutputProcessor(LoggingConfigurable):
             path = kernel_session["path"]
 
         file_id = self.file_id_manager.get_id(path)
-        self.log.info(f"Output for file_id, cell_id: {file_id} {cell_id}")
         if file_id is None:
             self.log.error(f"Could not find file_id for path: {path}")
             return
         self._file_id = file_id
-        try:
-            notebook = await self.jupyter_server_ydoc.get_document(
-                path=path,
-                copy=False,
-                file_format='json',
-                content_type='notebook'
-            )
-        except Exception as e:
-            self.log.error(f"An exception occurred when processing output for cell {cell_id}")
-            self.log.exception(e)
-            return
-        cells = notebook.ycells
-
-        cell_index, target_cell = self.find_cell(cell_id, cells)
-        if target_cell is None:
-            # This is valid as cell_id is optional
-            return
 
         # Convert from the message spec to the nbformat output structure
         if self.use_outputs_service:
@@ -185,8 +164,22 @@ class OutputProcessor(LoggingConfigurable):
             output = self.outputs_manager.write(file_id, cell_id, output)
         else:
             output = self.transform_output(msg_type, content, ydoc=True)
-        if output is not None:
+
+        # Get the notebook ydoc from the room
+        room_id = f"json:notebook:{file_id}"
+        room = self.yroom_manager.get_room(room_id)
+        if room is None:
+            self.log.error(f"YRoom not found: {room_id}")
+            return
+        notebook = await room.get_jupyter_ydoc()
+        self.log.info(f"Notebook: {notebook}")
+ 
+        # Write the outputs to the ydoc cell.
+        cells = notebook.ycells
+        cell_index, target_cell = self.find_cell(cell_id, cells)
+        if target_cell is not None and output is not None:
             target_cell["outputs"].append(output)
+            self.log.info(f"Write output to ydoc: {path} {cell_id} {output}")
 
     def find_cell(self, cell_id, cells):
         """Find a cell with a given cell_id in the list of cells.

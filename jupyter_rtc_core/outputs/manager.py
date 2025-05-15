@@ -29,7 +29,6 @@ class OutputsManager(LoggingConfigurable):
     
     def _ensure_path(self, file_id, cell_id):
         nested_dir = self.outputs_path / file_id / cell_id
-        self.log.info(f"Creating directory: {nested_dir}")
         nested_dir.mkdir(parents=True, exist_ok=True)
 
     def _build_path(self, file_id, cell_id=None, output_index=None):
@@ -42,7 +41,6 @@ class OutputsManager(LoggingConfigurable):
     
     def get_output(self, file_id, cell_id, output_index):
         """Get an outputs by file_id, cell_id, and output_index."""
-        self.log.info(f"OutputsManager.get: {file_id} {cell_id} {output_index}")
         path = self._build_path(file_id, cell_id, output_index)
         if not os.path.isfile(path):
             raise FileNotFoundError(f"The output file doesn't exist: {path}")
@@ -60,12 +58,15 @@ class OutputsManager(LoggingConfigurable):
         return output
 
     def write(self, file_id, cell_id, output):
-        """Write a new output for file_id and cell_id."""
-        self.log.info(f"OutputsManager.write: {file_id} {cell_id} {output}")
-        result = self.write_output(file_id, cell_id, output)
+        """Write a new output for file_id and cell_id.
+        
+        Returns a placeholder output (pycrdt.Map) or None if no placeholder
+        output should be written to the ydoc.
+        """
+        placeholder = self.write_output(file_id, cell_id, output)
         if output["output_type"] == "stream" and self.stream_limit is not None:
-            result = self.write_stream(file_id, cell_id, output)
-        return result
+            placeholder = self.write_stream(file_id, cell_id, output, placeholder)
+        return placeholder
 
     def write_output(self, file_id, cell_id, output):
         self._ensure_path(file_id, cell_id)
@@ -77,9 +78,10 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "w", encoding="utf-8") as f:
             f.write(data)
         url = f"/api/outputs/{file_id}/{cell_id}/{index}.output"
-        return Map({})
+        self.log.info(f"Wrote output: {url}")
+        return create_placeholder_output(output["output_type"], url)
 
-    def write_stream(self, file_id, cell_id, output) -> Map:
+    def write_stream(self, file_id, cell_id, output, placeholder) -> Map:
         # How many stream outputs have been written for this cell previously
         count = self._stream_count.get(cell_id, 0)
 
@@ -91,6 +93,7 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "a", encoding="utf-8") as f:
             f.write(text)
         url = f"/api/outputs/{file_id}/{cell_id}/stream"
+        self.log.info(f"Wrote stream: {url}")
 
         # Increment the count
         count = count + 1
@@ -98,8 +101,8 @@ class OutputsManager(LoggingConfigurable):
 
         # Now create the placeholder output
         if count < self.stream_limit:
-            # Return the original if we haven't reached the limit
-            placeholder = Map({})
+            # Return the original placeholder if we haven't reached the limit
+            placeholder = placeholder
         elif count == self.stream_limit:
             # Return a link to the full stream output
             placeholder = Map({
@@ -109,6 +112,7 @@ class OutputsManager(LoggingConfigurable):
                 }
             })
         elif count > self.stream_limit:
+            # Return None to indicate that no placeholder should be written to the ydoc
             placeholder = None
         return placeholder
 
@@ -123,4 +127,33 @@ class OutputsManager(LoggingConfigurable):
             except KeyError:
                 pass
             path = self._build_path(file_id, cell_id)
-        shutil.rmtree(path)
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+
+
+def create_placeholder_output(output_type: str, url: str):
+    metadata = dict(url=url)
+    if output_type == "stream":
+        output = Map({
+            "output_type": "stream",
+            "text": "",
+            "metadata": metadata
+        })
+    elif output_type == "display_data":
+        output = Map({
+            "output_type": "display_data",
+            "metadata": metadata
+        })
+    elif output_type == "execute_result":
+        output = Map({
+            "output_type": "execute_result",
+            "metadata": metadata
+        })
+    elif output_type == "error":
+        output = Map({
+            "output_type": "error",
+            "metadata": metadata
+        })
+    return output
