@@ -56,7 +56,6 @@ class RtcExtensionApp(ExtensionApp):
             loop=loop,
             log=log
         )
-        pass
     
 
     def _link_jupyter_server_extension(self, server_app):
@@ -72,7 +71,5 @@ class RtcExtensionApp(ExtensionApp):
     async def stop_extension(self):
         self.log.info("Stopping `jupyter_rtc_core` server extension.")
         if self.yroom_manager:
-            self.log.info("Stopping all YRooms.")
             await self.yroom_manager.stop()
-            self.log.info("Stopped all YRooms.")
         self.log.info("`jupyter_rtc_core` server extension is shut down. Goodbye!")
