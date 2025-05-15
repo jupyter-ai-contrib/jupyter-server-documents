@@ -168,35 +168,36 @@ class YRoom:
                 self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
                 self.handle_awareness_update(client_id, message)
                 self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
-                continue
             
             # Handle Sync messages
-            assert message_type == YMessageType.SYNC
-            message_subtype = message[1] if len(message) >= 2 else None
-            if message_subtype == YSyncMessageSubtype.SYNC_STEP1:
+            sync_message_subtype = None
+            if message_type == YMessageType.SYNC and len(message) >= 2:
+                sync_message_subtype = message[1]
+            if sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
                 self.log.info(f"Received SS1 from '{client_id}'.")
                 self.handle_sync_step1(client_id, message)
                 self.log.info(f"Handled SS1 from '{client_id}'.")
-                continue
-            elif message_subtype == YSyncMessageSubtype.SYNC_STEP2:
+            elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
                 self.log.info(f"Received SS2 from '{client_id}'.")
                 self.handle_sync_step2(client_id, message)
                 self.log.info(f"Handled SS2 from '{client_id}'.")
-                continue
-            elif message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
+            elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
                 self.log.info(f"Received SyncUpdate from '{client_id}'.")
                 self.handle_sync_update(client_id, message)
                 self.log.info(f"Handled SyncUpdate from '{client_id}'.")
-                continue
             else:
                 self.log.warning(
                     "Ignoring an unrecognized message with header "
-                    f"'{message_type},{message_subtype}' from client "
+                    f"'{message_type},{sync_message_subtype}' from client "
                     "'{client_id}'. Messages must have one of the following "
                     "headers: '0,0' (SyncStep1), '0,1' (SyncStep2), "
                     "'0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
                 )
-                continue
+            
+            # Finally, inform the asyncio Queue that the task was complete
+            # This is required for `self._message_queue.join()` to unblock once
+            # queue is empty in `self.stop()`.
+            self._message_queue.task_done()
 
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:

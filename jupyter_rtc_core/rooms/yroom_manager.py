@@ -74,7 +74,9 @@ class YRoomManager():
         if not yroom:
             return
         
+        self.log.info(f"Stopping YRoom '{room_id}'.")
         await yroom.stop()
+        self.log.info(f"Stopped YRoom '{room_id}'.")
         del self._rooms_by_id[room_id]
     
 
@@ -82,6 +84,8 @@ class YRoomManager():
         """
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
         """
-        for room_id in self._rooms_by_id.keys():
+        self.log.info(f"Stopping `YRoomManager`.")
+        room_ids = list(self._rooms_by_id.keys())
+        for room_id in room_ids:
             await self.delete_room(room_id)
-        
+        self.log.info(f"Stopped `YRoomManager`.")
