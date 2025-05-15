@@ -161,6 +161,11 @@ class YRoomFileAPI:
 
 
     async def _process_scheduled_saves(self) -> None:
+        """
+        Defines a background task that processes scheduled saves, after waiting
+        for the JupyterYDoc content to be loaded.
+        """
+
         # Wait for content to be loaded before processing scheduled saves
         await self._ydoc_content_loaded.wait()
 
@@ -168,31 +173,64 @@ class YRoomFileAPI:
             try:
                 await self._scheduled_saves.get()
             except asyncio.QueueShutDown:
-                return
+                break
+            
+            await self._save_jupyter_ydoc()
 
-            try:
-                assert self.jupyter_ydoc
-                path = self.get_path()
-                content = self.jupyter_ydoc.source
-                file_format = self.file_format
-                file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
+        self.log.info(
+            "Stopped `self._process_scheduled_save()` background task "
+            f"for YRoom '{self.room_id}'."
+        )
 
-                # Save the YDoc via the ContentsManager
-                await ensure_async(self._contents_manager.save(
-                    {
-                        "format": file_format,
-                        "type": file_type,
-                        "content": content,
-                    },
-                    path
-                ))
+    
+    async def _save_jupyter_ydoc(self):
+        """
+        Saves the JupyterYDoc to disk immediately.
 
-                # Mark 'dirty' as `False`. This hides the "unsaved changes" icon
-                # in the JupyterLab tab rendering this YDoc in the frontend.
-                self.jupyter_ydoc.dirty = False
-            except Exception as e:
-                self.log.error("An exception occurred when saving JupyterYDoc.")
-                self.log.exception(e)
+        This is a private method, and should only be called through the
+        `_process_scheduled_saves()` task and the `stop()` method. Consumers
+        should instead call `schedule_save()` to save the document.
+        """
+        try:
+            assert self.jupyter_ydoc
+            path = self.get_path()
+            content = self.jupyter_ydoc.source
+            file_format = self.file_format
+            file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
+
+            # Save the YDoc via the ContentsManager
+            await ensure_async(self._contents_manager.save(
+                {
+                    "format": file_format,
+                    "type": file_type,
+                    "content": content,
+                },
+                path
+            ))
+
+            # Mark 'dirty' as `False`. This hides the "unsaved changes" icon
+            # in the JupyterLab tab rendering this YDoc in the frontend.
+            self.jupyter_ydoc.dirty = False
+        except Exception as e:
+            self.log.error("An exception occurred when saving JupyterYDoc.")
+            self.log.exception(e)
+    
+    async def stop(self) -> None:
+        """
+        Gracefully stops the YRoomFileAPI, saving the content of
+        `self.jupyter_ydoc` before exiting.
+        """
+        # Stop the `self._process_scheduled_saves()` background task
+        # immediately. This is safe since we save before stopping anyways.
+        self._scheduled_saves.shutdown(immediate=True)
+
+        # Do nothing if content was not loaded first. This prevents overwriting
+        # the existing file with an empty JupyterYDoc.
+        if not (self._ydoc_content_loaded.is_set()):
+            return
+        
+        # Save the file and return.
+        await self._save_jupyter_ydoc()
 
     
 # see https://github.com/jupyterlab/jupyter-collaboration/blob/main/projects/jupyter-server-ydoc/jupyter_server_ydoc/loaders.py#L146-L149

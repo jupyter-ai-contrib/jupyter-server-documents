@@ -13,11 +13,13 @@ import asyncio
 
 if TYPE_CHECKING:
     from tornado.websocket import WebSocketHandler
+
+
 class YjsClient:
     """Data model that represents all data associated
     with a user connecting to a YDoc through JupyterLab."""
 
-    websocket: WebSocketHandler | None
+    websocket: WebSocketHandler
     """The Tornado WebSocketHandler handling the WS connection to this client."""
     id: str
     """UUIDv4 string that uniquely identifies this client."""
@@ -27,21 +29,23 @@ class YjsClient:
     _synced: bool
 
     def __init__(self, websocket):
-        self.websocket: WebSocketHandler | None = websocket
-        self.id: str = str(uuid.uuid4())
-        self._synced: bool = False
+        self.websocket = websocket
+        self.id = str(uuid.uuid4())
+        self._synced = False
         self.last_modified = datetime.now(timezone.utc)
         
+
     @property
-    def synced(self):
+    def synced(self) -> bool:
         """
         Indicates whether the initial Client SS1 + Server SS2 handshake has been
         completed.
         """
         return self._synced
 
+
     @synced.setter
-    def synced(self, v: bool):
+    def synced(self, v: bool) -> None:
         self._synced = v
         self.last_modified = datetime.now(timezone.utc)
 
@@ -70,6 +74,11 @@ class YjsClientGroup:
     """The poll time interval used while auto removing desynced clients"""
     desynced_timeout_seconds: int
     """The max time period in seconds that a desynced client does not become synced before get auto removed from desynced dict"""
+    _stopped: bool
+    """
+    Whether the client group has been stopped. If `True`, this client group will
+    ignore all future calls to `add()`.
+    """
     
     def __init__(self, *, room_id: str, log: Logger, loop: asyncio.AbstractEventLoop, poll_interval_seconds: int = 60, desynced_timeout_seconds: int = 120):
         self.room_id = room_id
@@ -80,9 +89,20 @@ class YjsClientGroup:
         # self.loop.create_task(self._clean_desynced())
         self._poll_interval_seconds = poll_interval_seconds
         self.desynced_timeout_seconds = desynced_timeout_seconds
+        self._stopped = False
         
-    def add(self, websocket: WebSocketHandler) -> str:
-        """Adds a pending client to the group. Returns a client ID."""
+    def add(self, websocket: WebSocketHandler) -> str | None:
+        """
+        Adds a new Websocket as a client to the group.
+
+        Returns a client ID if the client group is active.
+
+        Returns `None` if the client group is stopped, which is set after
+        `stop()` is called.
+        """
+        if self._stopped:
+            return
+
         client = YjsClient(websocket)
         self.desynced[client.id] = client
         return client.id
@@ -101,13 +121,16 @@ class YjsClientGroup:
 
     def remove(self, client_id: str) -> None:
         """Removes a client from the group."""
-        if client := self.desynced.pop(client_id, None) is None: 
+        client = self.desynced.pop(client_id, None)
+        if not client:
             client = self.synced.pop(client_id, None)
-        if client and client.websocket and client.websocket.ws_connection: 
-            try:
-                client.websocket.close()
-            except Exception as e:
-                self.log.exception(f"An exception occurred when remove client '{client_id}' for room '{self.room_id}': {e}")  
+        if not client:
+            return
+        
+        try:
+            client.websocket.close()
+        except Exception as e:
+            self.log.exception(f"An exception occurred when remove client '{client_id}' for room '{self.room_id}': {e}")  
     
     def get(self, client_id: str) -> YjsClient:
         """
@@ -128,10 +151,12 @@ class YjsClientGroup:
         Returns a list of all synced clients.
         Set synced_only=False to also get desynced clients.
         """
-        if synced_only: 
-            return list(client for client in self.synced.values() if client.websocket and client.websocket.ws_connection)
-        return list(client for client in self.desynced.values() if client.websocket and client.websocket.ws_connection)
-    
+        all_clients = [c for c in self.synced.values()]
+        if not synced_only:
+            all_clients += [c for c in self.desynced.values()]
+        
+        return all_clients
+
     def is_empty(self) -> bool:
         """Returns whether the client group is empty."""
         return len(self.synced) == 0 and len(self.desynced) == 0
@@ -150,4 +175,29 @@ class YjsClientGroup:
                         self.remove(client_id)
             except asyncio.CancelledError:
                 break
+    
+    def stop(self):
+        """
+        Closes all Websocket connections with close code 1001 (server
+        shutting down) and ignores any future calls to `add()`.
+        """
+        # Remove all clients from both dictionaries
+        client_ids = set(self.desynced.keys()) | set(self.synced.keys())
+        clients: list[YjsClient] = []
+        for client_id in client_ids:
+            client = self.desynced.pop(client_id, None)
+            if not client:
+                client = self.synced.pop(client_id, None)
+            if client:
+                clients.append(client)
+        
+        assert len(self.desynced) == 0
+        assert len(self.synced) == 0
+
+        # Close all Websocket connections
+        for client in clients:
+            client.websocket.close(code=1001)
+
+        # Set `_stopped` to `True` to ignore future calls to `add()`
+        self._stopped = True
             

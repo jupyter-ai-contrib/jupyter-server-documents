@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
     room_id: str
-    client_id: str
+    client_id: str | None
     # TODO: change this. we should pass `self.log` from our
     # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
     log = logging.Logger("TEMP")
@@ -64,13 +64,22 @@ class YRoomWebsocket(WebSocketHandler):
             raise HTTPError(500, f"Unable to initialize YRoom '{self.room_id}'.")
         self.yroom = yroom
 
-        # Add self as a client to the YRoom
+        # Add self as a client to the YRoom.
+        # If `client_id is None`, then the YRoom is being stopped, and this WS
+        # should be closed immediately w/ close code 1001.
         self.client_id = self.yroom.clients.add(self)
+        if not self.client_id:
+            self.close(code=1001)
+            return
 
 
     def on_message(self, message: bytes):
         # TODO: remove this later
         if self.room_id == "JupyterLab:globalAwareness":
+            return
+
+        if not self.client_id:
+            self.close(code=1001)
             return
 
         # Route all messages to the YRoom for processing
@@ -82,5 +91,6 @@ class YRoomWebsocket(WebSocketHandler):
         if self.room_id == "JupyterLab:globalAwareness":
             return
 
-        self.log.info(f"Closed Websocket to client '{self.client_id}'.")
-        self.yroom.clients.remove(self.client_id)
+        if self.client_id:
+            self.log.info(f"Closed Websocket to client '{self.client_id}'.")
+            self.yroom.clients.remove(self.client_id)
