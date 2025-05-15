@@ -177,6 +177,11 @@ class YRoomFileAPI:
             
             await self._save_jupyter_ydoc()
 
+        self.log.info(
+            "Stopped `self._process_scheduled_save()` background task "
+            f"for YRoom '{self.room_id}'."
+        )
+
     
     async def _save_jupyter_ydoc(self):
         """
@@ -215,6 +220,10 @@ class YRoomFileAPI:
         Gracefully stops the YRoomFileAPI, saving the content of
         `self.jupyter_ydoc` before exiting.
         """
+        # Stop the `self._process_scheduled_saves()` background task
+        # immediately. This is safe since we save before stopping anyways.
+        self._scheduled_saves.shutdown(immediate=True)
+
         # Do nothing if content was not loaded first. This prevents overwriting
         # the existing file with an empty JupyterYDoc.
         if not (self._ydoc_content_loaded.is_set()):
