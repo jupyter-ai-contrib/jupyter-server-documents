@@ -181,8 +181,21 @@ class YjsClientGroup:
         Closes all Websocket connections with close code 1001 (server
         shutting down) and ignores any future calls to `add()`.
         """
+        # Remove all clients from both dictionaries
+        client_ids = set(self.desynced.keys()) | set(self.synced.keys())
+        clients: list[YjsClient] = []
+        for client_id in client_ids:
+            client = self.desynced.pop(client_id, None)
+            if not client:
+                client = self.synced.pop(client_id, None)
+            if client:
+                clients.append(client)
+        
+        assert len(self.desynced) == 0
+        assert len(self.synced) == 0
+
         # Close all Websocket connections
-        for client in self.get_all(synced_only=False):
+        for client in clients:
             client.websocket.close(code=1001)
 
         # Set `_stopped` to `True` to ignore future calls to `add()`
