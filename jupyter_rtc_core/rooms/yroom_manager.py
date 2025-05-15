@@ -70,14 +70,13 @@ class YRoomManager():
         Gracefully deletes a YRoom given a room ID. This stops the YRoom first,
         which finishes applying all updates & saves the content automatically.
         """
-        yroom = self._rooms_by_id.get(room_id, None)
+        yroom = self._rooms_by_id.pop(room_id, None)
         if not yroom:
             return
         
         self.log.info(f"Stopping YRoom '{room_id}'.")
         await yroom.stop()
         self.log.info(f"Stopped YRoom '{room_id}'.")
-        del self._rooms_by_id[room_id]
     
 
     async def stop(self) -> None:
