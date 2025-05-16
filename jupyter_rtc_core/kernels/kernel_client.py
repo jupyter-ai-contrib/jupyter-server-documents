@@ -1,16 +1,17 @@
 """
 A new Kernel client that is aware of ydocuments.
 """
+import anyio
 import asyncio
 import json
 import typing as t
-from traitlets import Set
-from traitlets import Instance
-from traitlets import Any
-from .utils import LRUCache
+
+from traitlets import Set, Instance, Any, Type, default
 from jupyter_client.asynchronous.client import AsyncKernelClient
-import anyio
+
+from .utils import LRUCache
 from jupyter_rtc_core.rooms.yroom import YRoom
+from jupyter_rtc_core.outputs import OutputProcessor
 
 
 class DocumentAwareKernelClient(AsyncKernelClient): 
@@ -34,6 +35,21 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     # A set of YRooms that will intercept output and kernel
     # status messages.
     _yrooms: t.Set[YRoom] = Set(trait=Instance(YRoom), default_value=set())
+
+    output_processor = Instance(
+        OutputProcessor,
+        allow_none=True
+    )
+
+    output_process_class = Type(
+        klass=OutputProcessor,
+        default_value=OutputProcessor
+    ).tag(config=True)
+
+    @default("output_processor")
+    def _default_output_processor(self) -> OutputProcessor:
+        self.log.info("Creating output processor")
+        return OutputProcessor(parent=self, config=self.config)
 
     async def start_listening(self):
         """Start listening to messages coming from the kernel.
@@ -77,7 +93,8 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Cache the message ID and its socket name so that
         # any response message can be mapped back to the
         # source channel.
-        header = header = json.loads(msg[0])
+        self.output_processor.process_incoming_message(channel=channel_name, msg=msg)
+        header = json.loads(msg[0]) # TODO: use session.unpack
         msg_id = header["msg_id"]
         self.message_source_cache[msg_id] = channel_name
         channel = getattr(self, f"{channel_name}_channel")
@@ -158,10 +175,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Intercept messages that are IOPub focused.
         if channel_name == "iopub":
             message_returned = await self.handle_iopub_message(msg)
-            # TODO: If the message is not returned by the iopub handler, then
+            # If the message is not returned by the iopub handler, then
             # return here and do not forward to listeners.
             if not message_returned:
-                self.log.warn(f"If message is handled donot forward after adding output manager")
                 return
 
         # Update the last activity.
@@ -181,11 +197,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         Returns
         ------- 
         Returns the message if it should be forwarded to listeners. Otherwise,
-        returns `None` and keeps (i.e. intercepts) the message from going
+        returns `None` and prevents (i.e. intercepts) the message from going
         to listeners.
         """
-        # NOTE: Here's where we will inject the kernel state
-        # into the awareness of a document.
 
         try:
             dmsg = self.session.deserialize(msg, content=False)
@@ -193,17 +207,15 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             self.log.error(f"Error deserializing message: {e}")
             raise
 
-        # NOTE: Inject display data into ydoc.
-        if dmsg["msg_type"] == "display_data":
-            # Forward to all yrooms.
-            for yroom in self._yrooms:
-                update_document_message = b""
-                # yroom.add_message(update_document_message)
+        if self.output_processor is not None and dmsg["msg_type"] in ("stream", "display_data", "execute_result", "error"):
+            dmsg = self.output_processor.process_outgoing_message(dmsg)
 
-        # TODO: returning message temporarily to not break UI
-        # If the message isn't handled above, return it and it will
-        # be forwarded to all listeners
-        return msg
+        # If process_outgoing_message returns None, return None so the message isn't
+        # sent to clients, otherwise return the original serialized message.
+        if dmsg is None:
+            return None
+        else:
+            return msg
 
     def send_kernel_awareness(self, kernel_status: dict):
         """
@@ -217,7 +229,6 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             self.log.debug(f"current state: {awareness.get_local_state()} room_id: {yroom.room_id}. kernel status: {kernel_status}")
             awareness.set_local_state_field("kernel", kernel_status)    
             self.log.debug(f"current state: {awareness.get_local_state()} room_id: {yroom.room_id}")
-
 
     async def add_yroom(self, yroom: YRoom):
         """
