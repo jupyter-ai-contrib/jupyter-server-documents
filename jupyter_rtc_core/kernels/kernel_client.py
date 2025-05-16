@@ -94,7 +94,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # any response message can be mapped back to the
         # source channel.
         self.output_processor.process_incoming_message(channel=channel_name, msg=msg)
-        header = header = json.loads(msg[0]) # TODO: use session.unpack
+        header = json.loads(msg[0]) # TODO: use session.unpack
         msg_id = header["msg_id"]
         self.message_source_cache[msg_id] = channel_name
         channel = getattr(self, f"{channel_name}_channel")
