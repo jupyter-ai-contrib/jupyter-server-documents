@@ -184,7 +184,7 @@ class YRoom:
                 self.log.warning(
                     "Ignoring an unrecognized message with header "
                     f"'{message_type},{sync_message_subtype}' from client "
-                    "'{client_id}'. Messages must have one of the following "
+                    f"'{client_id}'. Messages must have one of the following "
                     "headers: '0,0' (SyncStep1), '0,1' (SyncStep2), "
                     "'0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
                 )
