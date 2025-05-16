@@ -20,14 +20,8 @@ import {
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
 import { requestAPI } from './handler';
 import { CellList } from '@jupyterlab/notebook';
-/*import {
-  ISharedNotebook
-} from '@jupyter/ydoc';*/
 
-import {
-  IObservableList,
-  ObservableList
-} from '@jupyterlab/observables';
+import { ObservableList } from '@jupyterlab/observables';
 
 const globalModelDBMutex = createMutex();
 
@@ -146,142 +140,6 @@ CodeCellModel.prototype.onOutputsChange = function (
   });
 };
 
-// @ts-ignore
-/*CellList.prototype.updateCodeCellOutputs = function(sharedModel: ISharedCodeCell): Promise<void> {
-    const outputs = sharedModel.getOutputs();
-    // @ts-ignore
-    const updatePromises = [];
-
-    outputs.forEach((output, index) => {
-        // @ts-ignore
-        if (output.metadata && output.metadata.url) {
-            // @ts-ignore
-            const promise = requestAPI(output.metadata.url).then(data => {
-                (sharedModel as YCodeCell).updateOutputs(
-                    index,
-                    index + 1,
-                    // @ts-ignore
-                    [data],
-                    'silent-change'
-                );
-                // @ts-ignore
-                promise.resolve(sharedModel)
-            }).catch(error => {
-                console.error('Error fetching output:', error);
-            });
-            updatePromises.push(promise);
-        }
-    });
-
-    // @ts-ignore
-    return Promise.all(updatePromises);
-}
-
-// @ts-ignore
-CellList.prototype._insertCells = function(index: number, cells: Array<ISharedCell>) {
-    const cellPromises = cells.map(sharedModel => {
-        return new Promise<void>((resolve) => {
-            if (sharedModel.cell_type === 'code') {
-                // For code cells, update outputs first
-                // @ts-ignore
-                this.updateCodeCellOutputs(sharedModel as ISharedCodeCell)
-                    .then((sharedModel: ISharedCodeCell) => {
-                        let cellModel = new CodeCellModel({
-                            sharedModel: sharedModel as ISharedCodeCell
-                        });
-                        // @ts-ignore
-                        this._cellMap.set(sharedModel, cellModel);
-                        sharedModel.disposed.connect(() => {
-                            cellModel.dispose();
-                            // @ts-ignore
-                            this._cellMap.delete(sharedModel);
-                        });
-                        resolve();
-                    }).catch(() => {
-                        let cellModel = new CodeCellModel({
-                            sharedModel: sharedModel as ISharedCodeCell
-                        });
-                        // @ts-ignore
-                        this._cellMap.set(sharedModel, cellModel);
-                        sharedModel.disposed.connect(() => {
-                            cellModel.dispose();
-                            // @ts-ignore
-                            this._cellMap.delete(sharedModel);
-                        });
-                    });
-            } else {
-                // For non-code cells, create model directly
-                let cellModel: CellModel;
-                if (sharedModel.cell_type === 'markdown') {
-                    cellModel = new MarkdownCellModel({
-                        sharedModel: sharedModel as ISharedMarkdownCell
-                    });
-                } else {
-                    cellModel = new RawCellModel({
-                        sharedModel: sharedModel as ISharedRawCell
-                    });
-                }
-                // @ts-ignore
-                this._cellMap.set(sharedModel, cellModel);
-                sharedModel.disposed.connect(() => {
-                    cellModel.dispose();
-                    // @ts-ignore
-                    this._cellMap.delete(sharedModel);
-                });
-                resolve();
-            }
-        });
-    });
-
-    Promise.all(cellPromises).then(() => {
-        console.log('All outputs have been updated')
-    }).catch(error => {
-        console.error('Error updating outputs:', error);
-    });
-}
-*/
-/*CellList.prototype.constructor = function(model: ISharedNotebook) {
-
-    // Update the model to get the real output from outputs service
-    const outputPromises: Array<Promise<any>> = [];
-    // @ts-ignore
-    this.model.cells.forEach(sharedModel => {
-      if(sharedModel.cell_type == "code") {
-        const outputs = (sharedModel as ISharedCodeCell).getOutputs()
-        outputs.forEach((output, index) => {
-            // @ts-ignore
-            if(output.metadata && output.metadata.url) {
-                // fetch the actual output
-                // @ts-ignore
-                const promise = requestAPI(output.metadata.url).then(data => {
-                    // @ts-ignore
-                    sharedModel.updateOutputs(
-                        index,
-                        index + 1,
-                        [data],
-                        'silent-change'
-                    )
-                }).catch(error => {
-                    console.error('Error fetching output:', error);
-                });
-                outputPromises.push(promise);
-            } 
-        }) 
-      }
-    });
-
-    Promise.all(outputPromises).then(() => {
-        console.log('All outputs have been updated');
-        // @ts-ignore
-        this._insertCells(0, this.model.cells);
-
-        // @ts-ignore
-        this.model.changed.connect(this._onSharedModelChanged, this);        
-    }).catch(error => {
-        console.error('Error updating outputs:', error);
-    });
-}*/
-
 class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
   /**
    * Construct a new observable outputs instance.
@@ -353,16 +211,9 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
   }
 }
 
-// This doesn't seem to work
-/*Cell.ContentFactory.prototype.createOutputArea = function(options: IOutputAreaModel.IOptions) {
-  return new YOutputAreaModel(options);
-}*/
-
 CodeCellModel.ContentFactory.prototype.createOutputArea = function(options: IOutputAreaModel.IOptions): IOutputAreaModel {
   return new RtcOutputAreaModel(options);
 }
-
-
 
 export class YNotebookContentFactory extends NotebookPanel.ContentFactory implements NotebookPanel.IContentFactory{
   createCodeCell(options: CodeCell.IOptions): CodeCell {
