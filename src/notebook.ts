@@ -3,7 +3,6 @@ import { NotebookPanel } from '@jupyterlab/notebook';
 import { KernelMessage } from '@jupyterlab/services'
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc'
 import { IOutputAreaModel } from '@jupyterlab/outputarea'
-import {IObservableString} from '@jupyterlab/observables'
 import { requestAPI } from './handler';
 
 
@@ -115,74 +114,15 @@ CodeCellModel.prototype.onOutputsChange = function(
   console.debug(
     "Inside onOutputsChange, called with event: ", event
   )
-  return
   // @ts-ignore
   const codeCell = this.sharedModel as YCodeCell;
   globalModelDBMutex(() => {
-    switch (event.type) {
-      case 'add': {
-        for (const output of event.newValues) {
-          if (output.type === 'stream') {
-            output.streamText!.changed.connect(
-              (
-                sender: IObservableString,
-                textEvent: IObservableString.IChangedArgs
-              ) => {
-                if (
-                  textEvent.options !== undefined &&
-                  (textEvent.options as { [key: string]: any })['silent']
-                ) {
-                  return;
-                }
-                // @ts-ignore
-                const codeCell = this.sharedModel as YCodeCell;
-                if (textEvent.type === 'remove') {
-                  codeCell.removeStreamOutput(
-                    event.newIndex,
-                    textEvent.start,
-                    'silent-change'
-                  );
-                } else {
-                  codeCell.appendStreamOutput(
-                    event.newIndex,
-                    textEvent.value,
-                    'silent-change'
-                  );
-                }
-              },
-              this
-            );
-          }
-        }
-        const outputs = event.newValues.map(output => output.toJSON());
-        codeCell.updateOutputs(
-          event.newIndex,
-          event.newIndex,
-          outputs,
-          'silent-change'
-        );
-        break;
-      }
-      case 'set': {
-        const newValues = event.newValues.map(output => output.toJSON());
-        codeCell.updateOutputs(
-          event.oldIndex,
-          event.oldIndex + newValues.length,
-          newValues,
-          'silent-change'
-        );
-        break;
-      }
-      case 'remove':
+    if(event.type == "remove") {
         codeCell.updateOutputs(
           event.oldIndex,
           event.oldValues.length,
-          [],
-          'silent-change'
+          []
         );
-        break;
-      default:
-        throw new Error(`Invalid event type: ${event.type}`);
     }
   });
 }
