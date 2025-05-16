@@ -208,8 +208,8 @@ class YRoomFileAPI:
                 path
             ))
 
-            # Mark 'dirty' as `False`. This hides the "unsaved changes" icon
-            # in the JupyterLab tab rendering this YDoc in the frontend.
+            # Setting `dirty` to `False` hides the "unsaved changes" icon in the
+            # JupyterLab tab for this YDoc in the frontend.
             self.jupyter_ydoc.dirty = False
         except Exception as e:
             self.log.error("An exception occurred when saving JupyterYDoc.")
