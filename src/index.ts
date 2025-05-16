@@ -30,7 +30,10 @@ import {
 import { 
   AwarenessExecutionIndicator
  } from './executionindicator';
+
+import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
+import { YNotebookContentFactory } from './notebook';
 
 import {
   rtcContentProvider,
@@ -284,7 +287,23 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
 };
 
 
+/**
+ * The notebook cell factory provider.
+ */
+const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
+  id: '@jupyter-rtc-core/notebook-extension:factory',
+  description: 'Provides the notebook cell factory.',
+  provides: NotebookPanel.IContentFactory,
+  requires: [IEditorServices],
+  autoStart: true,
+  activate: (app: JupyterFrontEnd, editorServices: IEditorServices) => {
+    const editorFactory = editorServices.factoryService.newInlineEditor;
+    return new YNotebookContentFactory({ editorFactory });
+  }
+};
+
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
+  factory,
   rtcContentProvider,
   yfile,
   ynotebook,
