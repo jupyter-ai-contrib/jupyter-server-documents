@@ -167,6 +167,7 @@ class YRoom:
             # Determine message type & subtype from header
             message_type = message[0]
             sync_message_subtype = "*"
+            # message subtypes only exist on sync messages, hence this condition
             if message_type == YMessageType.SYNC and len(message) >= 2:
                 sync_message_subtype = message[1]
 
