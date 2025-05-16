@@ -169,10 +169,26 @@ class YRoom:
             sync_message_subtype = "*"
             if message_type == YMessageType.SYNC and len(message) >= 2:
                 sync_message_subtype = message[1]
-            
+
             # Determine if message is invalid
-            invalid_message_type = message_type not in YMessageType
-            invalid_sync_message_type = message_type == YMessageType.SYNC and sync_message_subtype not in YSyncMessageSubtype
+            # NOTE: In Python 3.12+, we can drop the try/except
+            # syntax for a much simpler `in` operator.
+            # e.g. message_type in YMessageType 
+            try:
+
+                YMessageType(message_type)
+                invalid_message_type = False
+            except ValueError:
+                invalid_message_type = True
+
+            invalid_sync_message_type = False
+            if message_type == YMessageType.SYNC:
+                try:
+                    # Check if YMessageType contain this message type.
+                    YSyncMessageSubtype(sync_message_subtype)
+                except ValueError:
+                    invalid_sync_message_type = True
+
             invalid_message = invalid_message_type or invalid_sync_message_type
 
             # Handle invalid messages by logging a warning and ignoring
