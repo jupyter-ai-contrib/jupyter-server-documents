@@ -31,11 +31,8 @@ import {
   ICollaborativeContentProvider,
   IGlobalAwareness
 } from '@jupyter/collaborative-drive';
-import {
-  RtcContentProvider
-} from './ydrive';
+import { RtcContentProvider } from './ydrive';
 import { Awareness } from 'y-protocols/awareness';
-
 
 const TWO_SESSIONS_WARNING =
   'The file %1 has been opened with two different views. ' +
@@ -132,7 +129,7 @@ export const ynotebook: JupyterFrontEndPlugin<void> = {
             const enableDocWideUndo = settings?.get(
               'experimentalEnableDocumentWideUndoRedo'
             ).composite as boolean;
-             
+
             // @ts-ignore
             disableDocumentWideUndoRedo = !enableDocWideUndo ?? true;
           };

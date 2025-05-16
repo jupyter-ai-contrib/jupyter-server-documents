@@ -30,14 +30,12 @@ import {
 import { 
   AwarenessExecutionIndicator
  } from './executionindicator';
-import { requestAPI } from './handler';
 
-import {
-  rtcContentProvider,
-  yfile,
-  ynotebook,
-  logger
-} from './docprovider';
+import { IEditorServices } from '@jupyterlab/codeeditor';
+import { requestAPI } from './handler';
+import { YNotebookContentFactory } from './notebook';
+
+import { rtcContentProvider, yfile, ynotebook, logger } from './docprovider';
 
 import { IStateDB, StateDB } from '@jupyterlab/statedb';
 import { IGlobalAwareness } from '@jupyter/collaborative-drive';
@@ -284,6 +282,21 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
 };
 
 
+/**
+ * The notebook cell factory provider.
+ */
+const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
+  id: '@jupyter/rtc-core/notebook-extension:factory',
+  description: 'Provides the notebook cell factory.',
+  provides: NotebookPanel.IContentFactory,
+  requires: [IEditorServices],
+  autoStart: true,
+  activate: (app: JupyterFrontEnd, editorServices: IEditorServices) => {
+    const editorFactory = editorServices.factoryService.newInlineEditor;
+    return new YNotebookContentFactory({ editorFactory });
+  }
+};
+
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcContentProvider,
   yfile,
@@ -292,7 +305,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcGlobalAwarenessPlugin,
   plugin,
   executionIndicator,
-  kernelStatus
+  kernelStatus,
+  factory
 ];
 
 export default plugins;
