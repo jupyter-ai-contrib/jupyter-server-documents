@@ -43,14 +43,6 @@ class RtcExtensionApp(ExtensionApp):
         default_value=OutputsManager
     ).tag(config=True)
 
-
-    outputs_manager_class = Type(
-        klass=OutputsManager,
-        help="Outputs manager class.",
-        default_value=OutputsManager
-    ).tag(config=True)
-
-
     outputs_manager = Instance(
         klass=OutputsManager,
         help="An instance of the OutputsManager",

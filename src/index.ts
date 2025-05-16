@@ -6,7 +6,6 @@ import {
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Title, Widget } from '@lumino/widgets';
 
-<<<<<<< HEAD
 import {
   INotebookTracker,
   NotebookPanel,
@@ -32,8 +31,6 @@ import {
   AwarenessExecutionIndicator
  } from './executionindicator';
 
-=======
->>>>>>> 0fb6a83 (First version of outputs working at load)
 import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
 import { YNotebookContentFactory } from './notebook';
