@@ -124,7 +124,7 @@ class NextGenKernelManager(AsyncKernelManager):
         # Wait for the kernel to reach an idle state.
         while self.execution_state != ExecutionStates.IDLE.value:
             self.main_client.send_kernel_info()
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
         
     async def disconnect(self):
         await self.main_client.stop_listening()
