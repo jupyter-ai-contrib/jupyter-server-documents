@@ -170,8 +170,6 @@ class YRoom:
             if message_type == YMessageType.SYNC and len(message) >= 2:
                 sync_message_subtype = message[1]
 
-
-
             # Determine if message is invalid
             # NOTE: In Python 3.12+, we can drop list(...) call 
             # according to https://docs.python.org/3/library/enum.html#enum.EnumType.__contains__
@@ -430,7 +428,7 @@ class YRoom:
         Arguments:
             type: The change type.
             changes: The awareness changes.
-        """
+        """        
         if type != "update" or changes[1] != "local":
             return
         
