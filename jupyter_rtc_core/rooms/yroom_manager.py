@@ -116,9 +116,10 @@ class YRoomManager():
 
         if failures:
             self.log.error(
-                "An exception occurred when stopping the `YRoomManager` "
-                f"when stopping ({failures}/{room_count}) YRooms. "
-                "Exceptions are printed above."
+                "An exception occurred when stopping `YRoomManager`. "
+                "Exceptions were raised when stopping "
+                f"({failures}/{room_count}) `YRoom` instances, "
+                "which are printed above."
             )
         else:
             self.log.info(
