@@ -169,10 +169,14 @@ class YRoom:
             sync_message_subtype = "*"
             if message_type == YMessageType.SYNC and len(message) >= 2:
                 sync_message_subtype = message[1]
-            
+
+
+
             # Determine if message is invalid
-            invalid_message_type = message_type not in YMessageType
-            invalid_sync_message_type = message_type == YMessageType.SYNC and sync_message_subtype not in YSyncMessageSubtype
+            # NOTE: In Python 3.12+, we can drop list(...) call 
+            # according to https://docs.python.org/3/library/enum.html#enum.EnumType.__contains__
+            invalid_message_type = message_type not in list(YMessageType)
+            invalid_sync_message_type = message_type == YMessageType.SYNC and sync_message_subtype not in list(YSyncMessageSubtype)
             invalid_message = invalid_message_type or invalid_sync_message_type
 
             # Handle invalid messages by logging a warning and ignoring
