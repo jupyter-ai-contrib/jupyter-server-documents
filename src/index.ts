@@ -6,6 +6,7 @@ import {
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { Title, Widget } from '@lumino/widgets';
 
+<<<<<<< HEAD
 import {
   INotebookTracker,
   NotebookPanel,
@@ -31,16 +32,13 @@ import {
   AwarenessExecutionIndicator
  } from './executionindicator';
 
+=======
+>>>>>>> 0fb6a83 (First version of outputs working at load)
 import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
 import { YNotebookContentFactory } from './notebook';
 
-import {
-  rtcContentProvider,
-  yfile,
-  ynotebook,
-  logger
-} from './docprovider';
+import { rtcContentProvider, yfile, ynotebook, logger } from './docprovider';
 
 import { IStateDB, StateDB } from '@jupyterlab/statedb';
 import { IGlobalAwareness } from '@jupyter/collaborative-drive';
@@ -291,7 +289,7 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
  * The notebook cell factory provider.
  */
 const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
-  id: '@jupyter-rtc-core/notebook-extension:factory',
+  id: '@jupyter/rtc-core/notebook-extension:factory',
   description: 'Provides the notebook cell factory.',
   provides: NotebookPanel.IContentFactory,
   requires: [IEditorServices],
@@ -303,7 +301,6 @@ const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
 };
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
-  factory,
   rtcContentProvider,
   yfile,
   ynotebook,
@@ -311,7 +308,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcGlobalAwarenessPlugin,
   plugin,
   executionIndicator,
-  kernelStatus
+  kernelStatus,
+  factory
 ];
 
 export default plugins;
