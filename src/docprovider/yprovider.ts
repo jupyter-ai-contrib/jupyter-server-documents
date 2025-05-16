@@ -94,13 +94,10 @@ export class WebSocketProvider implements IDocumentProvider {
 
   private async _connect(): Promise<void> {
     // Fetch file ID from the file ID service.
-    let resp = await requestAPI(
-      "api/fileid/index?path=" + this._path, 
-      {
-        method: "POST"
-      }
-    )
-    const fileId = resp["id"];
+    const resp = await requestAPI(`api/fileid/index?path=${this._path}`, {
+      method: 'POST'
+    });
+    const fileId: string = resp['id'];
 
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
@@ -131,18 +128,33 @@ export class WebSocketProvider implements IDocumentProvider {
     this._awareness.setLocalStateField('user', user.identity);
   }
 
+  /**
+   * Handles disconnections from the YRoom Websocket.
+   *
+   * TODO: handle disconnections more gracefully by reseting the YDoc to an
+   * empty state on disconnect. Unfortunately the shared model does not provide
+   * any methods for this, so we are just asking disconnected clients to
+   * refresh for now.
+   *
+   * TODO: distinguish between disconnects when server YDoc history is the same
+   * (i.e. SS1 + SS2 is sufficient), and when the history
+   * differs (client's YDoc has to be reset before SS1 + SS2).
+   */
   private _onConnectionClosed = (event: any): void => {
-    if (event.code === 1003) {
-      console.error('Document provider closed:', event.reason);
+    // Log error to console for debugging
+    console.error('WebSocket connection was closed. Close event: ', event);
 
-      showErrorMessage(this._trans.__('Document session error'), event.reason, [
-        Dialog.okButton()
-      ]);
+    // Show dialog to tell user to refresh the page
+    showErrorMessage(
+      this._trans.__('Document session error'),
+      'Please refresh the browser tab.',
+      [Dialog.okButton()]
+    );
 
-      // Dispose shared model immediately. Better break the document model,
-      // than overriding data on disk.
-      this._sharedModel.dispose();
-    }
+    // Delete this client's YDoc by disposing of the shared model.
+    // This is the only way we know of to stop `y-websocket` from constantly
+    // attempting to re-connect.
+    this._sharedModel.dispose();
   };
 
   private _onSync = (isSynced: boolean) => {
