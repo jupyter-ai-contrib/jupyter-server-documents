@@ -46,6 +46,9 @@ import { IAwareness } from '@jupyter/ydoc';
 import {
   AwarenessKernelStatus
 } from './kernelstatus';
+import { ServerConnection } from '@jupyterlab/services';
+import { WebSocketAwarenessProvider } from './docprovider/awareness';
+import { URLExt } from '@jupyterlab/coreutils';
 /**
  * Initialization data for the @jupyter/rtc-core extension.
  */
@@ -102,7 +105,7 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
     const awareness = new Awareness(ydoc);
 
     // TODO: Uncomment once global awareness is working
-    /*const server = ServerConnection.makeSettings();
+    const server = ServerConnection.makeSettings();
     const url = URLExt.join(server.wsUrl, 'api/collaboration/room');
 
     new WebSocketAwarenessProvider({
@@ -110,7 +113,7 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
       roomID: 'JupyterLab:globalAwareness',
       awareness: awareness,
       user: user
-    });*/
+    });
 
     state.changed.connect(async () => {
       const data: any = await state.toJSON();
