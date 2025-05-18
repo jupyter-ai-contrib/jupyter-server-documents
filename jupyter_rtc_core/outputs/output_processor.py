@@ -75,6 +75,22 @@ class OutputProcessor(LoggingConfigurable):
         """Retrieve a msg_id from a cell_id."""
         return {v: k for k, v in self._cell_ids.items()}.get(cell_id)
 
+    async def clear_cell_outputs(self, cell_id, room_id):
+        """Clears the outputs of a cell in ydoc"""
+        room = self.yroom_manager.get_room(room_id)
+        if room is None:
+            self.log.error(f"YRoom not found: {room_id}")
+            return
+        notebook = await room.get_jupyter_ydoc()
+        self.log.info(f"Notebook: {notebook}")
+ 
+        cells = notebook.ycells
+        cell_index, target_cell = self.find_cell(cell_id, cells)
+        if target_cell is not None:
+            target_cell["outputs"].clear()
+            self.log.info(f"Cleared outputs for ydoc: {room_id} {cell_index}")
+
+    
     # Incoming messages
 
     def process_incoming_message(self, channel: str, msg: list[bytes]):
@@ -106,6 +122,8 @@ class OutputProcessor(LoggingConfigurable):
             self.clear(cell_id)
             if self._file_id is not None:
                 if self.use_outputs_service:
+                    room_id = f"json:notebook:{self._file_id}"
+                    asyncio.create_task(self.clear_cell_outputs(cell_id, room_id))
                     self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
                     self.outputs_manager.clear(file_id=self._file_id)
         self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
