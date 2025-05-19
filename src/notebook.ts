@@ -1,6 +1,6 @@
 import { CodeCell, CodeCellModel } from '@jupyterlab/cells';
-import { NotebookPanel } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
+import { NotebookPanel } from '@jupyterlab/notebook';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
 import { IOutputModel } from '@jupyterlab/rendermime';
 import { requestAPI } from './handler';
