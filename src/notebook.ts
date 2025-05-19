@@ -1,13 +1,6 @@
-import {
-  CodeCell,
-  CodeCellModel
-} from '@jupyterlab/cells';
+import { CodeCell, CodeCellModel } from '@jupyterlab/cells';
 import { NotebookPanel } from '@jupyterlab/notebook';
-import {
-  CellChange,
-  createMutex,
-  ISharedCodeCell
-} from '@jupyter/ydoc';
+import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
 import { IOutputModel } from '@jupyterlab/rendermime';
 import { requestAPI } from './handler';
@@ -15,7 +8,6 @@ import { requestAPI } from './handler';
 import { ObservableList } from '@jupyterlab/observables';
 
 const globalModelDBMutex = createMutex();
-
 
 // @ts-ignore
 CodeCellModel.prototype._onSharedModelChanged = function (
@@ -123,11 +115,10 @@ CodeCellModel.prototype.onOutputsChange = function (
   console.debug('Inside onOutputsChange, called with event: ', event);
 };
 
-
 /* A new OutputAreaModel that loads outputs from outputs service */
-class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
+class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   constructor(options: IOutputAreaModel.IOptions = {}) {
-    super({...options, values: []})
+    super({ ...options, values: [] });
     // @ts-ignore
     this._trusted = !!options.trusted;
     // @ts-ignore
@@ -139,13 +130,13 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
     if (options.values) {
       // Create an array to store promises for each value
       const valuePromises = options.values.map((value, index) => {
-        console.debug("output #${index}, value: ${value}");
+        console.debug('output #${index}, value: ${value}');
         // @ts-ignore
         if (value.metadata?.url) {
           // @ts-ignore
           return requestAPI(value.metadata.url)
             .then(data => {
-              return data
+              return data;
             })
             .catch(error => {
               console.error('Error fetching output:', error);
@@ -158,30 +149,34 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
       });
 
       // Wait for all promises to resolve and add values in original order
-      Promise.all(valuePromises)
-        .then(results => {
-          console.log("After fetching from outputs service:")
-          // Add each value in order
-          results.forEach((data, index) => {
-            console.debug("output #${index}, data: ${data}");
-            if(data && !this.isDisposed){
-              // @ts-ignore
-              const index = this._add(data) - 1;
-              const item = this.list.get(index);
-              // @ts-ignore
-              item.changed.connect(this._onGenericChange, this);
-            }
-          });
+      Promise.all(valuePromises).then(results => {
+        console.log('After fetching from outputs service:');
+        // Add each value in order
+        results.forEach((data, index) => {
+          console.debug('output #${index}, data: ${data}');
+          if (data && !this.isDisposed) {
+            // @ts-ignore
+            const index = this._add(data) - 1;
+            const item = this.list.get(index);
+            // @ts-ignore
+            item.changed.connect(this._onGenericChange, this);
+          }
         });
+      });
     }
   }
 }
 
-CodeCellModel.ContentFactory.prototype.createOutputArea = function(options: IOutputAreaModel.IOptions): IOutputAreaModel {
+CodeCellModel.ContentFactory.prototype.createOutputArea = function (
+  options: IOutputAreaModel.IOptions
+): IOutputAreaModel {
   return new RtcOutputAreaModel(options);
-}
+};
 
-export class YNotebookContentFactory extends NotebookPanel.ContentFactory implements NotebookPanel.IContentFactory{
+export class YNotebookContentFactory
+  extends NotebookPanel.ContentFactory
+  implements NotebookPanel.IContentFactory
+{
   createCodeCell(options: CodeCell.IOptions): CodeCell {
     return new CodeCell(options).initializeState();
   }
