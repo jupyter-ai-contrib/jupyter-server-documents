@@ -1,30 +1,13 @@
-// @ts-nocheck
-import {
-  Cell,
-  CodeCell,
-  CellModel,
-  CodeCellModel,
-  MarkdownCellModel,
-  RawCellModel
-} from '@jupyterlab/cells';
+import { CodeCell, CodeCellModel } from '@jupyterlab/cells';
 import { NotebookPanel } from '@jupyterlab/notebook';
-import { KernelMessage } from '@jupyterlab/services';
-import {
-  CellChange,
-  createMutex,
-  ISharedCodeCell,
-  ISharedMarkdownCell,
-  ISharedRawCell,
-  YCodeCell
-} from '@jupyter/ydoc';
+import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
+import { IOutputModel } from '@jupyterlab/rendermime';
 import { requestAPI } from './handler';
-import { CellList } from '@jupyterlab/notebook';
 
 import { ObservableList } from '@jupyterlab/observables';
 
 const globalModelDBMutex = createMutex();
-
 
 // @ts-ignore
 CodeCellModel.prototype._onSharedModelChanged = function (
@@ -130,92 +113,70 @@ CodeCellModel.prototype.onOutputsChange = function (
   event: IOutputAreaModel.ChangedArgs
 ) {
   console.debug('Inside onOutputsChange, called with event: ', event);
-  return
-  // @ts-ignore
-  const codeCell = this.sharedModel as YCodeCell;
-  globalModelDBMutex(() => {
-    if (event.type == 'remove') {
-      codeCell.updateOutputs(event.oldIndex, event.oldValues.length, []);
-    }
-  });
 };
 
-class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel{
-  /**
-   * Construct a new observable outputs instance.
-   */
+/* A new OutputAreaModel that loads outputs from outputs service */
+class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   constructor(options: IOutputAreaModel.IOptions = {}) {
-    super({...options, values: []})
+    super({ ...options, values: [] });
+    // @ts-ignore
     this._trusted = !!options.trusted;
+    // @ts-ignore
     this.contentFactory =
       options.contentFactory || OutputAreaModel.defaultContentFactory;
     this.list = new ObservableList<IOutputModel>();
+    // @ts-ignore
+    this.list.changed.connect(this._onListChanged, this);
     if (options.values) {
       // Create an array to store promises for each value
-      const valuePromises = options.values.map((value, originalIndex) => {
-        console.log("originalIndex: ", originalIndex, ", value: ", value);
-        // If value has a URL, fetch the data, otherwise just use the value directly
+      const valuePromises = options.values.map((value, index) => {
+        console.debug('output #${index}, value: ${value}');
+        // @ts-ignore
         if (value.metadata?.url) {
+          // @ts-ignore
           return requestAPI(value.metadata.url)
             .then(data => {
-              console.log("data from outputs service: " , data)
-              return {data, originalIndex}
+              return data;
             })
             .catch(error => {
               console.error('Error fetching output:', error);
-              // If fetch fails, return original value to maintain order
-              return { data: null, originalIndex };
+              return null;
             });
         } else {
           // For values without url, return immediately with original value
-          return Promise.resolve({ data: value, originalIndex });
+          return Promise.resolve(value);
         }
       });
 
       // Wait for all promises to resolve and add values in original order
-      Promise.all(valuePromises)
-        .then(results => {
-          // Sort by original index to maintain order
-          results.sort((a, b) => a.originalIndex - b.originalIndex);
-
-          console.log("After fetching outputs...")
-          // Add each value in order
-          results.forEach((result) => {
-            console.log("originalIndex: ", result.originalIndex, ", data: ", result.data)
-            if(result.data && !this.isDisposed){
-              const index = this._add(result.data) - 1;
-              const item = this.list.get(index);
-              item.changed.connect(this._onGenericChange, this);
-            }
-          });
-
-          // Connect the list changed handler after all items are added
-          //this.list.changed.connect(this._onListChanged, this);
-        })/*
-        .catch(error => {
-          console.error('Error processing values:', error);
-          // If something goes wrong, fall back to original behavior
-          options.values.forEach(value => {
-            const index = this._add(value) - 1;
+      Promise.all(valuePromises).then(results => {
+        console.log('After fetching from outputs service:');
+        // Add each value in order
+        results.forEach((data, index) => {
+          console.debug('output #${index}, data: ${data}');
+          if (data && !this.isDisposed) {
+            // @ts-ignore
+            const index = this._add(data) - 1;
             const item = this.list.get(index);
+            // @ts-ignore
             item.changed.connect(this._onGenericChange, this);
-          });
-          this.list.changed.connect(this._onListChanged, this);
-        });*/
-    } else {
-      // If no values, just connect the list changed handler
-      //this.list.changed.connect(this._onListChanged, this);
+          }
+        });
+      });
     }
-    
-    this.list.changed.connect(this._onListChanged, this);
   }
 }
 
-CodeCellModel.ContentFactory.prototype.createOutputArea = function(options: IOutputAreaModel.IOptions): IOutputAreaModel {
+CodeCellModel.ContentFactory.prototype.createOutputArea = function (
+  options: IOutputAreaModel.IOptions
+): IOutputAreaModel {
   return new RtcOutputAreaModel(options);
-}
+};
 
-export class YNotebookContentFactory extends NotebookPanel.ContentFactory implements NotebookPanel.IContentFactory{
+export class YNotebookContentFactory
+  extends NotebookPanel.ContentFactory
+  implements NotebookPanel.IContentFactory
+{
   createCodeCell(options: CodeCell.IOptions): CodeCell {
     return new CodeCell(options).initializeState();
   }

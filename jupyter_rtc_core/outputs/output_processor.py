@@ -125,7 +125,6 @@ class OutputProcessor(LoggingConfigurable):
                     room_id = f"json:notebook:{self._file_id}"
                     asyncio.create_task(self.clear_cell_outputs(cell_id, room_id))
                     self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
-                    self.outputs_manager.clear(file_id=self._file_id)
         self.log.info(f"Saving (msg_id, cell_id): ({msg_id} {cell_id})")
         self.set_cell_id(msg_id, cell_id)
 
