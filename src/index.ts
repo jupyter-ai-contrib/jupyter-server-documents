@@ -24,16 +24,12 @@ import {
   SessionContextDialogs
 } from '@jupyterlab/apputils';
 import { KeyboardEvent } from 'react';
-import {
-  IToolbarWidgetRegistry,
-} from '@jupyterlab/apputils';
-import { 
-  AwarenessExecutionIndicator
- } from './executionindicator';
+import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
+import { AwarenessExecutionIndicator } from './executionindicator';
 
 import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
-import { YNotebookContentFactory } from './notebook';
+import { RtcNotebookContentFactory } from './notebook';
 
 import { rtcContentProvider, yfile, ynotebook, logger } from './docprovider';
 
@@ -43,12 +39,10 @@ import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { IAwareness } from '@jupyter/ydoc';
 
-import {
-  AwarenessKernelStatus
-} from './kernelstatus';
 import { ServerConnection } from '@jupyterlab/services';
 import { WebSocketAwarenessProvider } from './docprovider/awareness';
 import { URLExt } from '@jupyterlab/coreutils';
+import { AwarenessKernelStatus } from './kernelstatus';
 /**
  * Initialization data for the @jupyter/rtc-core extension.
  */
@@ -98,7 +92,6 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
   requires: [IStateDB],
   provides: IGlobalAwareness,
   activate: (app: JupyterFrontEnd, state: StateDB): IAwareness => {
-    // @ts-ignore
     const { user } = app.serviceManager;
 
     const ydoc = new Y.Doc();
@@ -132,19 +125,17 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
   }
 };
 
-class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
-NotebookPanel,
-INotebookModel
-> {
-  createNew(panel: NotebookPanel): IDisposable { 
-    let item = new AwarenessExecutionIndicator()
-    let nb = panel.content;
-    item.model.attachNotebook({content: nb})
+class AwarenessExecutionIndicatorIcon
+  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel>
+{
+  createNew(panel: NotebookPanel): IDisposable {
+    const item = new AwarenessExecutionIndicator();
+    const nb = panel.content;
+    item.model.attachNotebook({ content: nb });
     panel.toolbar.insertAfter('kernelName', 'awarenessExecutionProgress', item);
-    return item
+    return item;
   }
 }
-
 
 /**
  * A plugin that provides a execution indicator item to the status bar.
@@ -162,16 +153,17 @@ export const executionIndicator: JupyterFrontEndPlugin<void> = {
     translator: ITranslator,
     statusBar: IStatusBar | null,
     settingRegistry: ISettingRegistry | null,
-    toolbarRegistry: IToolbarWidgetRegistry, 
+    toolbarRegistry: IToolbarWidgetRegistry
   ) => {
-    console.log("JupyterLab extension activated: Awareness Execution Indicator")
+    console.log(
+      'JupyterLab extension activated: Awareness Execution Indicator'
+    );
     app.docRegistry.addWidgetExtension(
-      "Notebook", 
+      'Notebook',
       new AwarenessExecutionIndicatorIcon()
-    )
+    );
   }
 };
-
 
 /**
  * A plugin that provides a kernel status item to the status bar.
@@ -190,7 +182,9 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
     translator_: ITranslator | null,
     labShell: ILabShell | null
   ): IKernelStatusModel => {
-    console.log("JupyterLab extension activated: Awareness Kernel Status Indicator")
+    console.log(
+      'JupyterLab extension activated: Awareness Kernel Status Indicator'
+    );
     const translator = translator_ ?? nullTranslator;
     const sessionDialogs =
       sessionDialogs_ ?? new SessionContextDialogs({ translator });
@@ -249,7 +243,7 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
       if (oldValue) {
         oldValue.title.changed.disconnect(onTitleChanged);
       }
-    
+
       item.model.attachDocument(newValue);
       item.model.sessionContext =
         [...providers]
@@ -284,7 +278,6 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
   }
 };
 
-
 /**
  * The notebook cell factory provider.
  */
@@ -296,7 +289,7 @@ const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
   autoStart: true,
   activate: (app: JupyterFrontEnd, editorServices: IEditorServices) => {
     const editorFactory = editorServices.factoryService.newInlineEditor;
-    return new YNotebookContentFactory({ editorFactory });
+    return new RtcNotebookContentFactory({ editorFactory });
   }
 };
 
@@ -313,4 +306,3 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
 ];
 
 export default plugins;
-

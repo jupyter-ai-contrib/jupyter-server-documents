@@ -2,15 +2,11 @@ import { CodeCell, CodeCellModel } from '@jupyterlab/cells';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
-import { IOutputModel } from '@jupyterlab/rendermime';
 import { requestAPI } from './handler';
-
-import { ObservableList } from '@jupyterlab/observables';
 
 const globalModelDBMutex = createMutex();
 
-// @ts-ignore
-CodeCellModel.prototype._onSharedModelChanged = function (
+(CodeCellModel.prototype as any)._onSharedModelChanged = function (
   slot: ISharedCodeCell,
   change: CellChange
 ) {
@@ -18,11 +14,9 @@ CodeCellModel.prototype._onSharedModelChanged = function (
     globalModelDBMutex(() => {
       for (const streamOutputChange of change.streamOutputChange!) {
         if ('delete' in streamOutputChange) {
-          // @ts-ignore
           this._outputs.removeStreamOutput(streamOutputChange.delete!);
         }
         if ('insert' in streamOutputChange) {
-          // @ts-ignore
           this._outputs.appendStreamOutput(
             streamOutputChange.insert!.toString()
           );
@@ -40,7 +34,6 @@ CodeCellModel.prototype._onSharedModelChanged = function (
         }
         if ('delete' in outputsChange) {
           for (let i = 0; i < outputsChange.delete!; i++) {
-            // @ts-ignore
             this._outputs.remove(retain);
           }
         }
@@ -50,24 +43,17 @@ CodeCellModel.prototype._onSharedModelChanged = function (
             // For compatibility with older ydoc where a plain object,
             // (rather than a Map instance) could be provided.
             // In a future major release the use of Map will be required.
-            //@ts-ignore
             if ('toJSON' in output) {
-              // @ts-ignore
-              const parsed = output.toJSON();
-              const metadata = parsed.metadata;
-              if (metadata && metadata.url) {
-                // fetch the real output
-                requestAPI(metadata.url).then(data => {
-                  // @ts-ignore
+              const json = (output as { toJSON: () => any }).toJSON();
+              if (json.metadata?.url) {
+                // fetch the output from ouputs service
+                requestAPI(json.metadata.url).then(data => {
                   this._outputs.add(data);
                 });
               } else {
-                // @ts-ignore
-                this._outputs.add(parsed);
+                this._outputs.add(json);
               }
             } else {
-              console.debug('output from doc: ', output);
-              // @ts-ignore
               this._outputs.add(output);
             }
           }
@@ -78,13 +64,10 @@ CodeCellModel.prototype._onSharedModelChanged = function (
   if (change.executionCountChange) {
     if (
       change.executionCountChange.newValue &&
-      // @ts-ignore
       (this.isDirty || !change.executionCountChange.oldValue)
     ) {
-      // @ts-ignore
       this._setDirty(false);
     }
-    // @ts-ignore
     this.stateChanged.emit({
       name: 'executionCount',
       oldValue: change.executionCountChange.oldValue,
@@ -93,48 +76,34 @@ CodeCellModel.prototype._onSharedModelChanged = function (
   }
 
   if (change.executionStateChange) {
-    // @ts-ignore
     this.stateChanged.emit({
       name: 'executionState',
       oldValue: change.executionStateChange.oldValue,
       newValue: change.executionStateChange.newValue
     });
   }
-  // @ts-ignore
   if (change.sourceChange && this.executionCount !== null) {
-    // @ts-ignore
     this._setDirty(this._executedCode !== this.sharedModel.getSource().trim());
   }
 };
 
-// @ts-ignore
-CodeCellModel.prototype.onOutputsChange = function (
+(CodeCellModel as any).prototype.onOutputsChange = function (
   sender: IOutputAreaModel,
   event: IOutputAreaModel.ChangedArgs
 ) {
-  console.debug('Inside onOutputsChange, called with event: ', event);
+  // no-op
 };
 
-/* A new OutputAreaModel that loads outputs from outputs service */
+/* An OutputAreaModel that loads outputs from outputs service */
 class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   constructor(options: IOutputAreaModel.IOptions = {}) {
-    super({ ...options, values: [] });
-    // @ts-ignore
-    this._trusted = !!options.trusted;
-    // @ts-ignore
-    this.contentFactory =
-      options.contentFactory || OutputAreaModel.defaultContentFactory;
-    this.list = new ObservableList<IOutputModel>();
-    // @ts-ignore
-    this.list.changed.connect(this._onListChanged, this);
+    super({ ...options, values: [] }); // Don't pass values to OutputAreaModel
     if (options.values) {
       // Create an array to store promises for each value
-      const valuePromises = options.values.map((value, index) => {
+      const valuePromises = options.values.map(value => {
         console.debug('output #${index}, value: ${value}');
-        // @ts-ignore
-        if (value.metadata?.url) {
-          // @ts-ignore
-          return requestAPI(value.metadata.url)
+        if ((value as any).metadata?.url) {
+          return requestAPI((value as any).metadata.url)
             .then(data => {
               return data;
             })
@@ -154,12 +123,10 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
         // Add each value in order
         results.forEach((data, index) => {
           console.debug('output #${index}, data: ${data}');
-          if (data && !this.isDisposed) {
-            // @ts-ignore
-            const index = this._add(data) - 1;
-            const item = this.list.get(index);
-            // @ts-ignore
-            item.changed.connect(this._onGenericChange, this);
+          if (data && !(this as any).isDisposed) {
+            const index = (this as any)._add(data) - 1;
+            const item = (this as any).list.get(index);
+            item.changed.connect((this as any)._onGenericChange, this);
           }
         });
       });
@@ -173,7 +140,7 @@ CodeCellModel.ContentFactory.prototype.createOutputArea = function (
   return new RtcOutputAreaModel(options);
 };
 
-export class YNotebookContentFactory
+export class RtcNotebookContentFactory
   extends NotebookPanel.ContentFactory
   implements NotebookPanel.IContentFactory
 {

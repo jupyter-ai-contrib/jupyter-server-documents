@@ -130,8 +130,7 @@ export const ynotebook: JupyterFrontEndPlugin<void> = {
               'experimentalEnableDocumentWideUndoRedo'
             ).composite as boolean;
 
-            // @ts-ignore
-            disableDocumentWideUndoRedo = !enableDocWideUndo ?? true;
+            disableDocumentWideUndoRedo = !(enableDocWideUndo ?? false);
           };
 
           updateSettings(settings);

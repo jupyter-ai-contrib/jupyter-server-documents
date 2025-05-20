@@ -2,17 +2,12 @@
 // Distributed under the terms of the Modified BSD License.
 
 import { TextItem } from '@jupyterlab/statusbar';
-import {
-  ITranslator,
-  nullTranslator,
-} from '@jupyterlab/translation';
+import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 import { VDomRenderer } from '@jupyterlab/ui-components';
 import React, { KeyboardEvent } from 'react';
 import { ISessionContext } from '@jupyterlab/apputils';
 import { Widget } from '@lumino/widgets';
-import { 
-  KernelStatus as K
-} from '@jupyterlab/apputils';
+import { KernelStatus as K } from '@jupyterlab/apputils';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { Session } from '@jupyterlab/services';
 
@@ -81,12 +76,11 @@ namespace KernelStatusComponent {
   }
 }
 
-
 export class AwarenessKernelStatus extends VDomRenderer<AwarenessKernelStatus.Model> {
   /**
    * Construct the kernel status widget.
    */
-  constructor(opts:K.IOptions, translator?: ITranslator) {
+  constructor(opts: K.IOptions, translator?: ITranslator) {
     super(new AwarenessKernelStatus.Model(translator));
     this.translator = translator || nullTranslator;
     this._handleClick = opts.onClick;
@@ -119,23 +113,22 @@ export class AwarenessKernelStatus extends VDomRenderer<AwarenessKernelStatus.Mo
   private _handleKeyDown: (event: KeyboardEvent<HTMLImageElement>) => void;
 }
 
-
 export namespace AwarenessKernelStatus {
-
   export class Model extends K.Model {
-
-    attachDocument(widget: Widget | null) { 
+    attachDocument(widget: Widget | null) {
       if (!widget) {
-        return
+        return;
       }
-      let panel = (widget as NotebookPanel);
+      const panel = widget as NotebookPanel;
       const stateChanged = () => {
         if (this) {
-          let awarenessStates = panel?.model?.sharedModel.awareness.getStates();
+          const awarenessStates =
+            panel?.model?.sharedModel.awareness.getStates();
           if (awarenessStates) {
-            for (let [_, clientState] of awarenessStates) {
+            for (const [_, clientState] of awarenessStates) {
               if ('kernel' in clientState) {
-                (this as any)._kernelStatus = clientState['kernel']['execution_state'];
+                (this as any)._kernelStatus =
+                  clientState['kernel']['execution_state'];
                 (this as any).stateChanged.emit(void 0);
                 return;
               }
@@ -150,9 +143,13 @@ export namespace AwarenessKernelStatus {
       const oldState = (this as any)._getAllState();
       (this as any)._sessionContext = sessionContext;
       (this as any)._kernelName =
-        sessionContext?.kernelDisplayName ?? (this as any)._trans.__('No Kernel');
-      (this as any)._triggerChange(oldState, (this as any)._getAllState()); 
-      sessionContext?.kernelChanged.connect(this._onKernelDisplayNameChanged, this);
+        sessionContext?.kernelDisplayName ??
+        (this as any)._trans.__('No Kernel');
+      (this as any)._triggerChange(oldState, (this as any)._getAllState());
+      sessionContext?.kernelChanged.connect(
+        this._onKernelDisplayNameChanged,
+        this
+      );
     }
     /**
      * React to changes in the kernel.
@@ -167,7 +164,5 @@ export namespace AwarenessKernelStatus {
       (this as any)._kernelName = _sessionContext.kernelDisplayName;
       (this as any)._triggerChange(oldState, (this as any)._getAllState());
     }
-
   }
-
 }
