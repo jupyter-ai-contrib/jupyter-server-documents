@@ -29,7 +29,7 @@ class YRoom:
     room_id := "{file_type}:{file_format}:{file_id}"
     """
 
-    _jupyter_ydoc: YBaseDoc
+    _jupyter_ydoc: YBaseDoc | None
     """JupyterYDoc"""
     _ydoc: pycrdt.Doc
     """Ydoc"""
@@ -65,23 +65,34 @@ class YRoom:
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
-        _, file_type, _ = self.room_id.split(":")
-        JupyterYDocClass = cast(
-            type[YBaseDoc],
-            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
-        )
-        self._jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
 
-        # Initialize YRoomFileAPI and begin loading content
-        self.file_api = YRoomFileAPI(
-            room_id=self.room_id,
-            jupyter_ydoc=self._jupyter_ydoc,
-            log=self.log,
-            loop=self._loop,
-            fileid_manager=fileid_manager,
-            contents_manager=contents_manager
-        )
-        self.file_api.load_ydoc_content()
+        # If this room is providing global awareness, set
+        # `file_api` and `jupyter_ydoc` to `None` as this room
+        # will never read/write via the `ContentsManager`.
+        if self.room_id == "JupyterLab:globalAwareness":
+            self.file_api = None
+            self._jupyter_ydoc = None
+        else:
+            # Otherwise, initialize `jupyter_ydoc` and `file_api`
+            _, file_type, _ = self.room_id.split(":")
+            JupyterYDocClass = cast(
+                type[YBaseDoc],
+                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
+            )
+            self._jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
+
+            # Initialize YRoomFileAPI and begin loading content
+            self.file_api = YRoomFileAPI(
+                room_id=self.room_id,
+                jupyter_ydoc=self._jupyter_ydoc,
+                log=self.log,
+                loop=self._loop,
+                fileid_manager=fileid_manager,
+                contents_manager=contents_manager
+            )
+            self.file_api.load_ydoc_content()
+            self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+        
         
         # Start observers on `self.ydoc` and `self.awareness` to ensure new
         # updates are broadcast to all clients and saved to disk.
@@ -91,7 +102,6 @@ class YRoom:
         self._ydoc_subscription = self._ydoc.observe(
             self._on_ydoc_update
         )
-        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
 
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
@@ -118,7 +128,12 @@ class YRoom:
         (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
         loaded from the ContentsManager.
         """
-        await self.file_api.ydoc_content_loaded
+        if self.file_api:
+            await self.file_api.ydoc_content_loaded
+        if self.room_id == "JupyterLab:globalAwareness":
+            message = "There is no Jupyter ydoc for global awareness scenario"
+            self.log.error(message)
+            raise Exception(message)
         return self._jupyter_ydoc
     
 
@@ -127,7 +142,8 @@ class YRoom:
         Returns a reference to the room's YDoc (`pycrdt.Doc`) after
         waiting for its content to be loaded from the ContentsManager.
         """
-        await self.file_api.ydoc_content_loaded
+        if self.file_api:
+            await self.file_api.ydoc_content_loaded
         return self._ydoc
 
     
@@ -155,7 +171,8 @@ class YRoom:
         """
         # Wait for content to be loaded before processing any messages in the
         # message queue
-        await self.file_api.ydoc_content_loaded
+        if self.file_api:
+            await self.file_api.ydoc_content_loaded
 
         # Begin processing messages from the message queue
         while True:
@@ -448,7 +465,8 @@ class YRoom:
         # Remove all observers, as updates no longer need to be broadcast
         self._ydoc.unobserve(self._ydoc_subscription)
         self._awareness.unobserve(self._awareness_subscription)
-        self._jupyter_ydoc.unobserve()
+        if self._jupyter_ydoc:
+            self._jupyter_ydoc.unobserve()
 
         # Finish processing all messages, then stop the queue to end the
         # `_process_message_queue()` background task.
@@ -457,4 +475,5 @@ class YRoom:
 
         # Finally, stop FileAPI and return. This saves the final content of the
         # JupyterYDoc in the process.
-        await self.file_api.stop()
+        if self.file_api:
+            await self.file_api.stop()

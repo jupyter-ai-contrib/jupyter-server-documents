@@ -4,7 +4,7 @@ import asyncio
 
 from traitlets import Instance, Type
 from .handlers import RouteHandler, FileIDIndexHandler
-from .websockets import GlobalAwarenessWebsocket, YRoomWebsocket
+from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 from .outputs import OutputsManager, outputs_handlers
 
@@ -17,8 +17,6 @@ class RtcExtensionApp(ExtensionApp):
         # dummy handler that verifies the server extension is installed;
         # # this can be deleted prior to initial release.
         (r"jupyter-rtc-core/get-example/?", RouteHandler),
-        # global awareness websocket
-        # (r"api/collaboration/room/JupyterLab:globalAwareness/?", GlobalAwarenessWebsocket),
         # # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
         # # handler that just adds compatibility with Jupyter Collaboration's frontend

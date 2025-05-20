@@ -40,24 +40,15 @@ class YRoomWebsocket(WebSocketHandler):
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]
 
-        # TODO: remove this once globalawareness is implemented
-        if self.room_id == "JupyterLab:globalAwareness":
-            self.close(1011)
-            return
-
         # Verify the file ID contained in the room ID points to a valid file.
-        fileid = self.room_id.split(":")[-1]
-        path = self.fileid_manager.get_path(fileid)
-        if not path:
-            raise HTTPError(404, f"No file with ID '{fileid}'.")
+        if self.room_id != "JupyterLab:globalAwareness":
+            fileid = self.room_id.split(":")[-1]
+            path = self.fileid_manager.get_path(fileid)
+            if not path:
+                raise HTTPError(404, f"No file with ID '{fileid}'.")
     
 
     def open(self, *_, **__):
-        # TODO: remove this later
-        if self.room_id == "JupyterLab:globalAwareness":
-            self.close(1011)
-            return
-
         # Create the YRoom
         yroom = self.yroom_manager.get_room(self.room_id)
         if not yroom:
@@ -74,10 +65,6 @@ class YRoomWebsocket(WebSocketHandler):
 
 
     def on_message(self, message: bytes):
-        # TODO: remove this later
-        if self.room_id == "JupyterLab:globalAwareness":
-            return
-
         if not self.client_id:
             self.close(code=1001)
             return
@@ -87,10 +74,6 @@ class YRoomWebsocket(WebSocketHandler):
 
 
     def on_close(self):
-        # TODO: remove this later
-        if self.room_id == "JupyterLab:globalAwareness":
-            return
-
         if self.client_id:
             self.log.info(f"Closed Websocket to client '{self.client_id}'.")
             self.yroom.clients.remove(self.client_id)
