@@ -9,8 +9,6 @@ import { Title, Widget } from '@lumino/widgets';
 import {
   INotebookTracker,
   NotebookPanel,
-  // Notebook,
-  // ExecutionIndicator,
   INotebookModel
 } from '@jupyterlab/notebook';
 import { IStatusBar } from '@jupyterlab/statusbar';
