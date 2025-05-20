@@ -62,7 +62,9 @@ export namespace AwarenessExecutionIndicator {
     /**
      * A weak map to hold execution status of multiple notebooks.
      */
-
+    
+    // (this as any) casts are required to avoid 
+    // ts errors when accessing private methods
     attachNotebook(
       data: { content?: Notebook; context?: ISessionContext } | null
     ): void {
