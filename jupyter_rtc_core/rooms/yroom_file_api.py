@@ -5,7 +5,7 @@ This file just contains interfaces to be filled out later.
 """
 
 from __future__ import annotations
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 import asyncio
 import pycrdt
 from jupyter_ydoc.ybasedoc import YBaseDoc
@@ -14,7 +14,7 @@ import logging
 import os
 
 if TYPE_CHECKING:
-    from typing import Awaitable
+    from typing import Awaitable, Literal
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -45,7 +45,15 @@ class YRoomFileAPI:
     _loop: asyncio.AbstractEventLoop
     _ydoc_content_loading: False
     _ydoc_content_loaded: asyncio.Event
-    _scheduled_saves: asyncio.Queue[None]
+    _scheduled_saves: asyncio.Queue[Literal[0] | None]
+    """
+    Queue of size 1, which may store `0` or `None`. If `0` is enqueued, another
+    save will occur after the current save is complete. If `None` is enqueued,
+    the processing of this queue is halted.
+
+    The `self._process_scheduled_saves()` background task can be halted by
+    running `self._scheduled_saves.put_nowait(None)`.
+    """
 
     def __init__(
         self,
@@ -157,7 +165,7 @@ class YRoomFileAPI:
         """
         assert self.jupyter_ydoc
         if not self._scheduled_saves.full():
-            self._scheduled_saves.put_nowait(None)
+            self._scheduled_saves.put_nowait(0)
 
 
     async def _process_scheduled_saves(self) -> None:
@@ -170,12 +178,13 @@ class YRoomFileAPI:
         await self._ydoc_content_loaded.wait()
 
         while True:
-            try:
-                await self._scheduled_saves.get()
-            except asyncio.QueueShutDown:
+            queue_item = await self._scheduled_saves.get()
+            if queue_item is None:
+                self._scheduled_saves.task_done()
                 break
             
             await self._save_jupyter_ydoc()
+            self._scheduled_saves.task_done()
 
         self.log.info(
             "Stopped `self._process_scheduled_save()` background task "
@@ -221,14 +230,9 @@ class YRoomFileAPI:
         `self.jupyter_ydoc` before exiting.
         """
         # Stop the `self._process_scheduled_saves()` background task
-        # immediately. This is safe since we save before stopping anyways.
-        self._scheduled_saves.shutdown(immediate=True)
+        await self._scheduled_saves.join()
+        self._scheduled_saves.put_nowait(None)
 
-        # Do nothing if content was not loaded first. This prevents overwriting
-        # the existing file with an empty JupyterYDoc.
-        if not (self._ydoc_content_loaded.is_set()):
-            return
-        
         # Save the file and return.
         await self._save_jupyter_ydoc()
 
