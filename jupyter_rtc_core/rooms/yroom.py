@@ -39,8 +39,16 @@ class YRoom:
     """Event loop"""
     _client_group: YjsClientGroup
     """Client group to manage synced and desynced clients"""
-    _message_queue: asyncio.Queue[Tuple[str, bytes]]
-    """A message queue per room to keep websocket messages in order"""
+    _message_queue: asyncio.Queue[Tuple[str, bytes] | None]
+    """
+    A per-room message queue that stores new messages from clients to process
+    them in order. If a tuple `(client_id, message)` is enqueued, the message is
+    queued for processing. If `None` is enqueued, the processing of the message
+    queue is halted.
+
+    The `self._process_message_queue()` background task can be halted by running
+    `self._message_queue.put_nowait(None)`.
+    """
     _awareness_subscription: pycrdt.Subscription
     """Subscription to awareness changes."""
     _ydoc_subscription: pycrdt.Subscription
@@ -168,6 +176,9 @@ class YRoom:
         queue. This method routes the message to a handler method based on the
         message type & subtype, which are obtained from the first 2 bytes of the
         message.
+
+        This task can be halted by calling
+        `self._message_queue.put_nowait(None)`.
         """
         # Wait for content to be loaded before processing any messages in the
         # message queue
@@ -176,10 +187,15 @@ class YRoom:
 
         # Begin processing messages from the message queue
         while True:
-            try: 
-                client_id, message = await self._message_queue.get()
-            except asyncio.QueueShutDown:
+            # Wait for next item in the message queue
+            queue_item = await self._message_queue.get()
+
+            # If the next item is `None`, break the loop and stop this task
+            if queue_item is None:
                 break
+
+            # Otherwise, process the new message
+            client_id, message = queue_item
         
             # Determine message type & subtype from header
             message_type = message[0]
@@ -471,7 +487,7 @@ class YRoom:
         # Finish processing all messages, then stop the queue to end the
         # `_process_message_queue()` background task.
         await self._message_queue.join()
-        self._message_queue.shutdown(immediate=True)
+        self._message_queue.put_nowait(None)
 
         # Finally, stop FileAPI and return. This saves the final content of the
         # JupyterYDoc in the process.
