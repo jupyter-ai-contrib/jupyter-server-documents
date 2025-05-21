@@ -62,8 +62,8 @@ export namespace AwarenessExecutionIndicator {
     /**
      * A weak map to hold execution status of multiple notebooks.
      */
-    
-    // (this as any) casts are required to avoid 
+
+    // (this as any) casts are required to avoid
     // ts errors when accessing private methods
     attachNotebook(
       data: { content?: Notebook; context?: ISessionContext } | null
@@ -89,7 +89,7 @@ export namespace AwarenessExecutionIndicator {
         if (state) {
           const awarenessStates = nb?.model?.sharedModel.awareness.getStates();
           if (awarenessStates) {
-            for (const [_, clientState] of awarenessStates) {
+            for (const [, clientState] of awarenessStates) {
               if ('kernel' in clientState) {
                 state.kernelStatus = clientState['kernel']['execution_state'];
                 this.stateChanged.emit(void 0);

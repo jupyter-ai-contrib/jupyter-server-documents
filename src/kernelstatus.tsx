@@ -125,7 +125,7 @@ export namespace AwarenessKernelStatus {
           const awarenessStates =
             panel?.model?.sharedModel.awareness.getStates();
           if (awarenessStates) {
-            for (const [_, clientState] of awarenessStates) {
+            for (const [, clientState] of awarenessStates) {
               if ('kernel' in clientState) {
                 (this as any)._kernelStatus =
                   clientState['kernel']['execution_state'];
