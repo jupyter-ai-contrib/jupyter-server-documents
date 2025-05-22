@@ -4,16 +4,13 @@ import React from 'react';
 
 import { ISessionContext } from '@jupyterlab/apputils';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
+import { VDomRenderer } from '@jupyterlab/ui-components';
+
 import {
-  VDomRenderer
-} from '@jupyterlab/ui-components';
-
-import { 
-  Notebook, 
-  ExecutionIndicatorComponent, 
-  ExecutionIndicator as E,
+  Notebook,
+  ExecutionIndicatorComponent,
+  ExecutionIndicator as E
 } from '@jupyterlab/notebook';
-
 
 /**
  * A VDomRenderer widget for displaying the execution status.
@@ -61,19 +58,21 @@ export class AwarenessExecutionIndicator extends VDomRenderer<AwarenessExecution
 }
 
 export namespace AwarenessExecutionIndicator {
-
   export class Model extends E.Model {
-
     /**
      * A weak map to hold execution status of multiple notebooks.
      */
-  
-    attachNotebook(data: { content?: Notebook; context?: ISessionContext; } | null): void {
-      let nb = data?.content;
+
+    // (this as any) casts are required to avoid
+    // ts errors when accessing private methods
+    attachNotebook(
+      data: { content?: Notebook; context?: ISessionContext } | null
+    ): void {
+      const nb = data?.content;
       if (!nb) {
         return;
       }
-      (this as any)._currentNotebook = nb;  
+      (this as any)._currentNotebook = nb;
       (this as any)._notebookExecutionProgress.set(nb, {
         executionStatus: 'idle',
         kernelStatus: 'idle',
@@ -81,16 +80,16 @@ export namespace AwarenessExecutionIndicator {
         interval: 0,
         timeout: 0,
         scheduledCell: new Set<string>(),
-        scheduledCellNumber: 0, 
+        scheduledCellNumber: 0,
         needReset: true
       });
       const state = (this as any)._notebookExecutionProgress.get(nb);
-  
+
       const contextStatusChanged = (ctx: ISessionContext) => {
         if (state) {
-          let awarenessStates = nb?.model?.sharedModel.awareness.getStates();
+          const awarenessStates = nb?.model?.sharedModel.awareness.getStates();
           if (awarenessStates) {
-            for (let [_, clientState] of awarenessStates) {
+            for (const [, clientState] of awarenessStates) {
               if ('kernel' in clientState) {
                 state.kernelStatus = clientState['kernel']['execution_state'];
                 this.stateChanged.emit(void 0);
@@ -100,11 +99,9 @@ export namespace AwarenessExecutionIndicator {
           }
         }
       };
-      
+
       nb?.model?.sharedModel.awareness.on('change', contextStatusChanged);
       super.attachNotebook(data);
     }
   }
 }
-
-
