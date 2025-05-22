@@ -7,7 +7,7 @@ This file just contains interfaces to be filled out later.
 from __future__ import annotations
 from datetime import timedelta, timezone, datetime
 from logging import Logger
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import uuid
 import asyncio
 
@@ -91,7 +91,7 @@ class YjsClientGroup:
         self.desynced_timeout_seconds = desynced_timeout_seconds
         self._stopped = False
         
-    def add(self, websocket: WebSocketHandler) -> str | None:
+    def add(self, websocket: WebSocketHandler) -> Optional[str]:
         """
         Adds a new Websocket as a client to the group.
 

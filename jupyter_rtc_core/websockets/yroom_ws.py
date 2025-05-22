@@ -1,7 +1,7 @@
 from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
-from typing import TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import asyncio
 from ..rooms import YRoomManager
 import logging
@@ -14,7 +14,7 @@ if TYPE_CHECKING:
 class YRoomWebsocket(WebSocketHandler):
     yroom: YRoom
     room_id: str
-    client_id: str | None
+    client_id: Optional[str]
     # TODO: change this. we should pass `self.log` from our
     # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
     log = logging.Logger("TEMP")
