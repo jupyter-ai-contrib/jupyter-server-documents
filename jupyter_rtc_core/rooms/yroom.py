@@ -6,7 +6,7 @@ from ..websockets import YjsClientGroup
 
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
-from jupyter_ydoc import ydocs as jupyter_ydoc_classes
+from jupyter_rtc_core.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from tornado.websocket import WebSocketHandler
 from .yroom_file_api import YRoomFileAPI
