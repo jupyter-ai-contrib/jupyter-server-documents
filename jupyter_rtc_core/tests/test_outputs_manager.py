@@ -47,7 +47,7 @@ def test_stream():
         file_id = str(uuid4())
         cell_id = str(uuid4())
         for s in streams:
-            op.write_stream(file_id, cell_id, s)
+            op.write(file_id, cell_id, s)
         assert op.get_stream(file_id, cell_id) == text
 
 def test_display_data():
@@ -90,4 +90,4 @@ def file_not_found():
         with pytest.raises(FileNotFoundError):
             op.get_output('a','b',0)
         with pytest.raises(FileNotFoundError):
-            op.get_stream('a','b')       
+            op.get_stream('a','b')
