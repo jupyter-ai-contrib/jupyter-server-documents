@@ -3,7 +3,10 @@
 | Distributed under the terms of the Modified BSD License.
 |----------------------------------------------------------------------------*/
 
-import { IDocumentProvider } from '@jupyter/collaborative-drive';
+import {
+  IDocumentProvider,
+  ISharedModelFactory
+} from '@jupyter/collaborative-drive';
 import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
@@ -15,6 +18,7 @@ import { DocumentChange, YDocument } from '@jupyter/ydoc';
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
+import { YFile } from './custom_ydocs';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -36,9 +40,9 @@ export class WebSocketProvider implements IDocumentProvider {
     this._format = options.format;
     this._serverUrl = options.url;
     this._sharedModel = options.model;
-    this._awareness = options.model.awareness;
     this._yWebsocketProvider = null;
     this._trans = options.translator;
+    this._sharedModelFactory = options.sharedModelFactory;
 
     const user = options.user;
 
@@ -50,6 +54,13 @@ export class WebSocketProvider implements IDocumentProvider {
     user.userChanged.connect(this._onUserChanged, this);
 
     this._connect().catch(e => console.warn(e));
+  }
+
+  /**
+   * Returns the awareness object within the shared model.
+   */
+  get awareness(): Awareness {
+    return this._sharedModel.awareness;
   }
 
   /**
@@ -99,6 +110,7 @@ export class WebSocketProvider implements IDocumentProvider {
     });
     const fileId: string = resp['id'];
 
+    console.log('RECONNECTING');
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
       `${this._format}:${this._contentType}:${fileId}`,
@@ -106,7 +118,7 @@ export class WebSocketProvider implements IDocumentProvider {
       {
         disableBc: true,
         // params: { sessionId: session.sessionId },
-        awareness: this._awareness
+        awareness: this.awareness
       }
     );
 
@@ -125,7 +137,7 @@ export class WebSocketProvider implements IDocumentProvider {
   }
 
   private _onUserChanged(user: User.IManager): void {
-    this._awareness.setLocalStateField('user', user.identity);
+    this.awareness.setLocalStateField('user', user.identity);
   }
 
   /**
@@ -152,8 +164,29 @@ export class WebSocketProvider implements IDocumentProvider {
         [Dialog.okButton()]
       );
 
+      // reset YDoc
+      const sharedModel = this._sharedModel as YFile;
+      sharedModel.reset();
+      console.log({ source: sharedModel.source });
+
+      // Reset ifsynced and reconnect
+      this.reconnect();
       // Reset client YDoc
-      this._sharedModel.dispose();
+      // this._sharedModel.dispose();
+      // const factoryArgs = {
+      //   path: this._path,
+      //   format: this._format,
+      //   contentType: this._contentType
+      // };
+      // console.log(factoryArgs);
+      // const sharedModel = this._sharedModelFactory.createNew(
+      //   factoryArgs as any
+      // );
+      // if (!sharedModel) {
+      //   console.error('Could not re-create shared model');
+      //   return;
+      // }
+      // this._sharedModel = sharedModel as any;
 
       return;
     }
@@ -172,6 +205,7 @@ export class WebSocketProvider implements IDocumentProvider {
   };
 
   private _onSync = (isSynced: boolean) => {
+    console.log('on sync called. isSynced:', isSynced);
     if (isSynced) {
       if (this._yWebsocketProvider) {
         this._yWebsocketProvider.off('sync', this._onSync);
@@ -183,7 +217,6 @@ export class WebSocketProvider implements IDocumentProvider {
     }
   };
 
-  private _awareness: Awareness;
   private _contentType: string;
   private _format: string;
   private _isDisposed: boolean;
@@ -191,6 +224,9 @@ export class WebSocketProvider implements IDocumentProvider {
   private _ready = new PromiseDelegate<void>();
   private _serverUrl: string;
   private _sharedModel: YDocument<DocumentChange>;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  private _sharedModelFactory: ISharedModelFactory;
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
 }
@@ -237,5 +273,8 @@ export namespace WebSocketProvider {
      * The jupyterlab translator
      */
     translator: TranslationBundle;
+
+    // The shared model factory
+    sharedModelFactory: ISharedModelFactory;
   }
 }
