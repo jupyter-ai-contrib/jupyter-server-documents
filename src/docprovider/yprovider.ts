@@ -165,8 +165,11 @@ export class WebSocketProvider implements IDocumentProvider {
       //   [Dialog.okButton()]
       // );
 
-      Notification.success(
-        'The contents of this file were changed on disk. The document state has been reset.'
+      Notification.info(
+        'The contents of this file were changed on disk. The document state has been reset.',
+        {
+          autoClose: false
+        }
       );
 
       // reset YDoc
