@@ -12,6 +12,7 @@ import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
 import { PromiseDelegate } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
+import { Notification } from '@jupyterlab/apputils';
 
 import { DocumentChange, YDocument } from '@jupyter/ydoc';
 
@@ -110,7 +111,6 @@ export class WebSocketProvider implements IDocumentProvider {
     });
     const fileId: string = resp['id'];
 
-    console.log('RECONNECTING');
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
       `${this._format}:${this._contentType}:${fileId}`,
@@ -157,20 +157,28 @@ export class WebSocketProvider implements IDocumentProvider {
     console.error('WebSocket connection was closed. Close event: ', event);
     const close_code = event.code;
 
+    // 4000 := server close code on out-of-band change
     if (close_code === 4000) {
-      showErrorMessage(
-        this._trans.__('Document state was reset'),
-        'The contents of this file were changed on disk.',
-        [Dialog.okButton()]
+      // showErrorMessage(
+      //   this._trans.__('Document state was reset'),
+      //   'The contents of this file were changed on disk.',
+      //   [Dialog.okButton()]
+      // );
+
+      Notification.success(
+        'The contents of this file were changed on disk. The document state has been reset.'
       );
 
       // reset YDoc
       const sharedModel = this._sharedModel as YFile;
       sharedModel.reset();
-      console.log({ source: sharedModel.source });
 
-      // Reset ifsynced and reconnect
+      // Reset if synced and reconnect
       this.reconnect();
+
+      // TODO: delete references to shared model factory once we confirm we do
+      // not need it.
+
       // Reset client YDoc
       // this._sharedModel.dispose();
       // const factoryArgs = {
