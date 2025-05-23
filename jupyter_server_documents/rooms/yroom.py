@@ -54,6 +54,9 @@ class YRoom:
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
+    _fileid_manager: BaseFileIdManager
+    _contents_manager: AsyncContentsManager | ContentsManager
+
 
     def __init__(
         self,
@@ -65,9 +68,11 @@ class YRoom:
         contents_manager: AsyncContentsManager | ContentsManager,
     ):
         # Bind instance attributes
+        self.room_id = room_id
         self.log = log
         self._loop = loop
-        self.room_id = room_id
+        self._fileid_manager = fileid_manager
+        self._contents_manager = contents_manager
 
         # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -95,10 +100,14 @@ class YRoom:
                 jupyter_ydoc=self._jupyter_ydoc,
                 log=self.log,
                 loop=self._loop,
-                fileid_manager=fileid_manager,
-                contents_manager=contents_manager
+                fileid_manager=self._fileid_manager,
+                contents_manager=self._contents_manager,
+                on_outofband_change=self.reload_ydoc
             )
             self.file_api.load_ydoc_content()
+
+            # Start `self._on_jupyter_ydoc_update()` observer to automatically
+            # save the YDoc on change.
             self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
         
         
@@ -470,6 +479,80 @@ class YRoom:
         state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
         self._broadcast_message(message, "AwarenessUpdate")
+    
+
+    def reload_ydoc(self) -> None:
+        """
+        Reloads the YDoc from the `ContentsManager`. This method:
+
+        - Is called in response to out-of-band changes.
+
+        - Disconnects all clients with close code 4000.
+
+        - Empties the message queue, as the updates can no longer be applied.
+
+        - Resets `self._ydoc`, `self._awareness`, and `self._jupyter_ydoc`.
+
+        - Resets `self.file_api` to reload the YDoc from the `ContentsManager`.
+
+        This method is deliberately synchronous so it cannot interrupted by
+        another coroutine.
+        """
+        # Do nothing if this is a global awareness room, since the YDoc is never
+        # used anyways.
+        if self.room_id == "JupyterLab:globalAwareness":
+            return
+
+        # Stop the existing `YRoomFileAPI` immediately
+        assert self.file_api
+        self.file_api.stop()
+
+        # Disconnect all clients with close code 4000.
+        # This is a special code defined by our extension, informing each client
+        # to purge their existing YDoc & re-connect.
+        self.clients.close_all(4000)
+
+        # Empty message queue
+        while not self._message_queue.empty():
+            self._message_queue.get_nowait()
+            self._message_queue.task_done()
+
+        # Reset YDoc, YAwareness, JupyterYDoc to empty states
+        self._client_group = YjsClientGroup(room_id=self.room_id, log=self.log, loop=self._loop)
+        self._ydoc = pycrdt.Doc()
+        self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
+        _, file_type, _ = self.room_id.split(":")
+        JupyterYDocClass = cast(
+            type[YBaseDoc],
+            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
+        )
+        self._jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
+
+        # Reset `YRoomFileAPI` to reload the document
+        self.file_api = YRoomFileAPI(
+            room_id=self.room_id,
+            jupyter_ydoc=self._jupyter_ydoc,
+            log=self.log,
+            loop=self._loop,
+            fileid_manager=self._fileid_manager,
+            contents_manager=self._contents_manager,
+            on_outofband_change=self.reload_ydoc
+        )
+        self.file_api.load_ydoc_content()
+
+        # Start `self._on_jupyter_ydoc_update()` observer to automatically
+        # save the YDoc on change.
+        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+        
+        # Start observers on `self.ydoc` and `self.awareness` to ensure new
+        # updates are broadcast to all clients and saved to disk.
+        self._awareness_subscription = self._awareness.observe(
+            self._on_awareness_update
+        )
+        self._ydoc_subscription = self._ydoc.observe(
+            self._on_ydoc_update
+        )
+
         
     async def stop(self) -> None:
         """
@@ -492,4 +575,4 @@ class YRoom:
         # Finally, stop FileAPI and return. This saves the final content of the
         # JupyterYDoc in the process.
         if self.file_api:
-            await self.file_api.stop()
+            await self.file_api.stop_then_save()

@@ -140,9 +140,23 @@ export class WebSocketProvider implements IDocumentProvider {
    * (i.e. SS1 + SS2 is sufficient), and when the history
    * differs (client's YDoc has to be reset before SS1 + SS2).
    */
-  private _onConnectionClosed = (event: any): void => {
+  private _onConnectionClosed = (event: CloseEvent): void => {
     // Log error to console for debugging
     console.error('WebSocket connection was closed. Close event: ', event);
+    const close_code = event.code;
+
+    if (close_code === 4000) {
+      showErrorMessage(
+        this._trans.__('Document state was reset'),
+        'The contents of this file were changed on disk.',
+        [Dialog.okButton()]
+      );
+
+      // Reset client YDoc
+      this._sharedModel.dispose();
+
+      return;
+    }
 
     // Show dialog to tell user to refresh the page
     showErrorMessage(
