@@ -213,7 +213,6 @@ export class WebSocketProvider implements IDocumentProvider {
   };
 
   private _onSync = (isSynced: boolean) => {
-    console.log('on sync called. isSynced:', isSynced);
     if (isSynced) {
       if (this._yWebsocketProvider) {
         this._yWebsocketProvider.off('sync', this._onSync);
