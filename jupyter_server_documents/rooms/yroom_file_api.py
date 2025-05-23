@@ -45,16 +45,9 @@ class YRoomFileAPI:
     _loop: asyncio.AbstractEventLoop
     _ydoc_content_loading: False
     _ydoc_content_loaded: asyncio.Event
-    _scheduled_saves: asyncio.Queue[Literal[0] | None]
-    """
-    Queue of size 1, which may store `0` or `None`. If `0` is enqueued, another
-    save will occur after the current save is complete. If `None` is enqueued,
-    the processing of this queue is halted.
-
-    The `self._process_scheduled_saves()` background task can be halted by
-    running `self._scheduled_saves.put_nowait(None)`.
-    """
     _last_modified: datetime | None
+
+    _save_loop_task: asyncio.Task
 
     def __init__(
         self,
@@ -75,19 +68,15 @@ class YRoomFileAPI:
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
-        self._last_modified = None
         self._on_outofband_change = on_outofband_change
+        self._last_modified = None
 
         # Initialize loading & loaded states
         self._ydoc_content_loading = False
         self._ydoc_content_loaded = asyncio.Event()
 
-        # Initialize save request queue
-        # Setting maxsize=1 allows 1 save in-progress with another save pending.
-        self._scheduled_saves = asyncio.Queue(maxsize=1)
-
         # Start processing scheduled saves in a loop running concurrently
-        self._loop.create_task(self._process_scheduled_saves())
+        self._save_loop_task = self._loop.create_task(self._watch_file())
 
 
     def get_path(self) -> str:
@@ -154,81 +143,88 @@ class YRoomFileAPI:
         self._ydoc_content_loading = False
         self.log.info(f"Loaded content for room ID '{self.room_id}'.")
 
-    
+
     def schedule_save(self) -> None:
         """
-        Schedules a request to save the JupyterYDoc to disk. This method
-        requires `self.get_jupyter_ydoc()` to have been awaited prior; otherwise
-        this will raise a `RuntimeError`.
-
-        If there are no pending requests, then this will immediately save the
-        YDoc to disk in a separate background thread.
-
-        If there is any pending request, then this method does nothing, as the
-        YDoc will be saved when the pending request is fulfilled.
-
-        TODO: handle out-of-band changes to the file when writing.
+        Schedules a save of the Jupyter YDoc to disk. When called, the Jupyter
+        YDoc will be saved on the next tick of the `self._watch_file()`
+        background task.
         """
-        assert self.jupyter_ydoc
-        if not self._scheduled_saves.full():
-            self._scheduled_saves.put_nowait(0)
-
-
-    async def _process_scheduled_saves(self) -> None:
+        self._save_scheduled = True
+    
+    async def _watch_file(self) -> None:
         """
-        Defines a background task that processes scheduled saves, after waiting
-        for the JupyterYDoc content to be loaded.
+        Defines a background task that continuously saves the YDoc every 500ms.
+
+        Note that consumers must call `self.schedule_save()` for the next tick
+        of this task to save.
         """
 
         # Wait for content to be loaded before processing scheduled saves
         await self._ydoc_content_loaded.wait()
 
         while True:
-            queue_item = await self._scheduled_saves.get()
-            if queue_item is None:
-                self._scheduled_saves.task_done()
+            try:
+                await asyncio.sleep(0.5)
+                await asyncio.shield(self._check_oob_changes())
+                if self._save_scheduled:
+                    await asyncio.shield(self._save_jupyter_ydoc())
+            except asyncio.CancelledError:
                 break
-            
-            await self._save_jupyter_ydoc()
-            self._scheduled_saves.task_done()
 
         self.log.info(
-            "Stopped `self._process_scheduled_save()` background task "
+            "Stopped `self._watch_file()` background task "
             f"for YRoom '{self.room_id}'."
         )
+
+    async def _check_oob_changes(self):
+        """
+        Checks for out-of-band changes. Called in the `self._watch_file()`
+        background task.
+        
+        Calls the `on_outofband_change()` function passed to the constructor if
+        an out-of-band change is detected. This is guaranteed to always run
+        before each save through the `ContentsManager`.
+        """
+        # Build arguments to `CM.get()`
+        path = self.get_path()
+        file_format = self.file_format
+        file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
+
+        # Check for out-of-band file changes
+        file_data = await ensure_async(self._contents_manager.get(
+            path=path, format=file_format, type=file_type, content=False
+        ))
+
+        # If an out-of-band file change is detected, run the designated callback
+        if self._last_modified != file_data['last_modified']:
+            self.log.warning("Out-of-band file change detected.")
+            self.log.warning(f"Last detected change: {self._last_modified}")
+            self.log.warning(f"Most recent change: {file_data['last_modified']}")
+            self._on_outofband_change()
 
     
     async def _save_jupyter_ydoc(self):
         """
         Saves the JupyterYDoc to disk immediately.
 
-        This is a private method, and should only be called through the
-        `_process_scheduled_saves()` task and the `stop()` method. Consumers
-        should instead call `schedule_save()` to save the document.
+        This is a private method. Consumers should call
+        `file_api.schedule_save()` to save the YDoc on the next tick of
+        the `self._watch_file()` background task.
         """
         try:
-            assert self.jupyter_ydoc
+            # Build arguments to `CM.save()`
             path = self.get_path()
             content = self.jupyter_ydoc.source
             file_format = self.file_format
             file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
 
-            # Check for out-of-band file changes
-            file_data = await ensure_async(self._contents_manager.get(
-                path=path, format=file_format, type=file_type, content=False
-            ))
-
-            # If an out-of-band file change is detected, run the designated
-            # callback and halt.
-            if self._last_modified != file_data['last_modified']:
-                self.log.warning("Out-of-band file change detected.")
-                self.log.warning(f"Last detected change: {self._last_modified}")
-                self.log.warning(f"Most recent change: {file_data['last_modified']}")
-                self._on_outofband_change()
-                return
+            # Set `_save_scheduled=False` before the `await` to make sure we
+            # save on the next tick when a save is scheduled while `CM.get()` is
+            # being awaited.
+            self._save_scheduled = False
 
             # Save the YDoc via the ContentsManager
-            self.log.info("saving...")
             file_data = await ensure_async(self._contents_manager.save(
                 {
                     "format": file_format,
@@ -243,13 +239,14 @@ class YRoomFileAPI:
                 self.log.info(f"Reseting last_modified to {file_data['last_modified']}")
                 self._last_modified = file_data['last_modified']
 
-            # Setting `dirty` to `False` hides the "unsaved changes" icon in the
+            # Set `dirty` to `False` to hide the "unsaved changes" icon in the
             # JupyterLab tab for this YDoc in the frontend.
             self.jupyter_ydoc.dirty = False
         except Exception as e:
             self.log.error("An exception occurred when saving JupyterYDoc.")
             self.log.exception(e)
     
+
     def stop(self) -> None:
         """
         Gracefully stops the `YRoomFileAPI`. This immediately halts the
@@ -258,14 +255,7 @@ class YRoomFileAPI:
         To save the YDoc after stopping, call `await file_api.stop_then_save()`
         instead.
         """
-        # Clear the queue of scheduled saves.
-        while not self._scheduled_saves.empty():
-            self._scheduled_saves.get_nowait()
-            self._scheduled_saves.task_done()
-        
-        # Add `None` to the queue to stop the `self._process_scheduled_saves()`
-        # background task.
-        self._scheduled_saves.put_nowait(None)
+        self._save_loop_task.cancel()
 
 
     async def stop_then_save(self) -> None:
