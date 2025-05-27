@@ -146,7 +146,7 @@ export class WebSocketProvider implements IDocumentProvider {
     const close_code = event.code;
 
     // 4000 := server close code on out-of-band change
-    if (close_code === 4000) {
+    if (close_code === 4000 && this._sharedModel instanceof YFile) {
       this._handleOobChange();
       return;
     }
