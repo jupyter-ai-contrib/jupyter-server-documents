@@ -102,7 +102,6 @@ export class YSyncConfig {
    *
    * @param ytext Yjs text to synchronize
    */
-  // TODO: getYText
   constructor(
     public getYText: () => Text,
     public ytextResetSignal?: ISignal<unknown, null>
