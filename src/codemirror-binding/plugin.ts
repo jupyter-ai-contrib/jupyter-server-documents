@@ -28,8 +28,6 @@ export const codemirrorYjsPlugin: JupyterFrontEndPlugin<void> = {
       name: 'shared-model-binding',
       factory: options => {
         const sharedModel = options.model.sharedModel as IYText;
-        console.log({ sharedModel });
-        console.log({ name: sharedModel.constructor.name });
 
         return EditorExtensionRegistry.createImmutableExtension(
           ybinding({
