@@ -1,8 +1,4 @@
-import json
-import uuid
-
 from jupyter_server.base.handlers import APIHandler
-import tornado
 
 from jupyter_server.auth.decorator import authorized
 from jupyter_server.base.handlers import APIHandler
@@ -31,14 +27,3 @@ class FileIDIndexHandler(APIHandler):
             raise web.HTTPError(
                 400, log_message="'path' parameter was not provided in the request."
             )
-
-
-class RouteHandler(APIHandler):
-    # The following decorator should be present on all verb methods (head, get, post,
-    # patch, put, delete, options) to ensure only authorized user can request the
-    # Jupyter server
-    @tornado.web.authenticated
-    def get(self):
-        self.finish(json.dumps({
-            "data": "This is /jupyter-rtc-core/get-example endpoint!"
-        }))

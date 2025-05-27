@@ -1,7 +1,7 @@
 {
   "ServerApp": {
     "jpserver_extensions": {
-      "jupyter_rtc_core": true
+      "jupyter_server_documents": true
     }
   }
 }

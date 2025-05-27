@@ -17,7 +17,7 @@ test('should emit an activation console message', async ({ page }) => {
 
   expect(
     logs.filter(
-      s => s === 'JupyterLab extension @jupyter/rtc-core is activated!'
+      s => s === 'JupyterLab extension @jupyter/server-documents is activated!'
     )
   ).toHaveLength(1);
 });

@@ -16,7 +16,7 @@ class YRoomWebsocket(WebSocketHandler):
     room_id: str
     client_id: str | None
     # TODO: change this. we should pass `self.log` from our
-    # `ExtensionApp` to log messages w/ "RtcCoreExtension" prefix
+    # `ExtensionApp` to log messages w/ "ServerDocsApp" prefix
     log = logging.Logger("TEMP")
 
 

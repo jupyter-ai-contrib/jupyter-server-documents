@@ -1,4 +1,4 @@
-name: rtccore-jcollab-backend
+name: serverdocs-jcollab-backend
 channels:
   - conda-forge
 dependencies:

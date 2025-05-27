@@ -41,7 +41,7 @@ const TWO_SESSIONS_WARNING =
 
 export const rtcContentProvider: JupyterFrontEndPlugin<ICollaborativeContentProvider> =
   {
-    id: '@jupyter-rtc-core/docprovider-extension:content-provider',
+    id: '@jupyter/server-documents/docprovider-extension:content-provider',
     description: 'The RTC content provider',
     provides: ICollaborativeContentProvider,
     requires: [ITranslator],
@@ -81,7 +81,7 @@ export const rtcContentProvider: JupyterFrontEndPlugin<ICollaborativeContentProv
  * Plugin to register the shared model factory for the content type 'file'.
  */
 export const yfile: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter-rtc-core/docprovider-extension:yfile',
+  id: '@jupyter/server-documents/docprovider-extension:yfile',
   description:
     "Plugin to register the shared model factory for the content type 'file'",
   autoStart: true,
@@ -106,7 +106,7 @@ export const yfile: JupyterFrontEndPlugin<void> = {
  * Plugin to register the shared model factory for the content type 'notebook'.
  */
 export const ynotebook: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/rtc-core/docprovider-extension:ynotebook',
+  id: '@jupyter/server-documents/docprovider-extension:ynotebook',
   description:
     "Plugin to register the shared model factory for the content type 'notebook'",
   autoStart: true,
@@ -157,7 +157,7 @@ export const ynotebook: JupyterFrontEndPlugin<void> = {
  * The default collaborative drive provider.
  */
 export const logger: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/rtc-core/docprovider-extension:logger',
+  id: '@jupyter/server-documents/docprovider-extension:logger',
   description: 'A logging plugin for debugging purposes.',
   autoStart: true,
   optional: [ILoggerRegistry, IEditorTracker, INotebookTracker, ITranslator],

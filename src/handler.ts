@@ -17,7 +17,7 @@ export async function requestAPI<T>(
   const settings = ServerConnection.makeSettings();
   const requestUrl = URLExt.join(
     settings.baseUrl,
-    endPoint.startsWith('/') ? '' : 'jupyter-rtc-core', // API Namespace
+    endPoint.startsWith('/') ? '' : 'server-documents', // API Namespace
     endPoint
   );
 

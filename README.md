@@ -1,11 +1,11 @@
-# jupyter_rtc_core
+# jupyter_server_documents
 
-[![Github Actions Status](https://github.com/ellisonbg/jupyter-rtc-core/workflows/Build/badge.svg)](https://github.com/ellisonbg/jupyter-rtc-core/actions/workflows/build.yml)
+[![Github Actions Status](https://github.com/jupyter-ai-contrib/jupyter_server_documents/workflows/Build/badge.svg)](https://github.com/jupyter-ai-contrib/jupyter_server_documents/actions/workflows/build.yml)
 
 A JupyterLab extension that provides RTC capabilities.
 
-This extension is composed of a Python package named `jupyter_rtc_core`
-for the server extension and a NPM package named `@jupyter/rtc-core`
+This extension is composed of a Python package named `jupyter_server_documents`
+for the server extension and a NPM package named `@jupyter/server-documents`
 for the frontend extension.
 
 ## Try it out
@@ -25,13 +25,13 @@ jupyter lab --config jupyter_config.py
 To install the extension, run:
 
 ```bash
-pip install jupyter_rtc_core
+pip install jupyter_server_documents
 ```
 
 To remove the extension, run:
 
 ```bash
-pip uninstall jupyter_rtc_core
+pip uninstall jupyter_server_documents
 ```
 
 ## Contributing
@@ -50,22 +50,22 @@ this repository:
 micromamba env create -f dev-environment.yml
 ```
 
-This creates a new Python environment named `rtccore` and automatically installs
+This creates a new Python environment named `serverdocs` and automatically installs
 this extension's build dependencies, required for local development. Then,
 activate the environment:
 
 ```sh
-micromamba activate rtccore
+micromamba activate serverdocs
 ```
 
 Activating an environment is required to access any Python packages installed in
 that environment. You should activate the environment before developing any
-changes to the `jupyter_rtc_core` package locally.
+changes to the `jupyter_server_documents` package locally.
 
 ### Development install
 
-After ensuring that the `rtccore` environment is activated, you can install an
-editable copy of `jupyter_rtc_core` into your environment by running the script
+After ensuring that the `serverdocs` environment is activated, you can install an
+editable copy of `jupyter_server_documents` into your environment by running the script
 below.
 
 ```bash
@@ -84,12 +84,12 @@ Notes about the development installation:
   more modern replacement for `pip`.
 
 After completing this, you should have a working, editable copy of
-`jupyter_rtc_core` in your environment. Run `jupyter lab` and open JupyterLab in
-a browser to verify that `jupyter_rtc_core` is installed.
+`jupyter_server_documents` in your environment. Run `jupyter lab` and open JupyterLab in
+a browser to verify that `jupyter_server_documents` is installed.
 
 ### Development process
 
-When making new changes to your local copy of `jupyter_rtc_core`, different
+When making new changes to your local copy of `jupyter_server_documents`, different
 commands need to be run depending on the types of changes made. Without running
 these commands, the new changes are not reflected in JupyterLab.
 
@@ -157,7 +157,7 @@ jlpm dev:uninstall
 In development mode, you will also need to remove the symlink created by
 `jupyter labextension develop` command. To find its location, you can run
 `jupyter labextension list` to figure out where the `labextensions` folder is
-located. Then you can remove the symlink named `@jupyter/rtc-core` within that
+located. Then you can remove the symlink named `@jupyter/server-documents` within that
 folder.
 
 ### Testing the extension
@@ -177,7 +177,7 @@ jupyter labextension develop . --overwrite
 To execute them, run:
 
 ```sh
-pytest -vv -r ap --cov jupyter_rtc_core
+pytest -vv -r ap --cov jupyter_server_documents
 ```
 
 #### Frontend tests
