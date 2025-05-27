@@ -152,8 +152,7 @@ export class RtcContentProvider
         contentType: options.contentType,
         model: sharedModel,
         user: this._user,
-        translator: this._trans,
-        sharedModelFactory: this.sharedModelFactory
+        translator: this._trans
       });
 
       // Add the document path in the list of opened ones for this user.
