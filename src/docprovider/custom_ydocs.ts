@@ -11,52 +11,55 @@ export class YFile extends DefaultYFile {
     super();
     this._resetSignal = new Signal(this);
   }
+
   /**
-   * Resets the current YDoc.
+   * Resets the YDoc to an empty state and emits an event for consumers to
+   * respond to via the `YFile.resetSignal`.
+   *
+   * This method should be called when the server's YDoc history changes. This
+   * may happen when the server detects an out-of-band change to the file on
+   * disk, or when the server needs to erase YDoc history to save memory.
    */
   reset() {
-    /* TODO: Remove all existing observers ? */
+    // TODO (?): Remove *all* observers, including those added by consumers,
+    // then re-add them. We only do this for observers added by default for now.
+    // The issue is that Yjs does not provide methods for accessing the list of
+    // observers or migrating them to a new `Y.Doc()` instance.
 
-    /* Constructor from YDocument */
+    // Remove default observers
+    (this as any)._ystate.unobserve(this.onStateChanged);
+    this.ysource.unobserve((this as any)._modelObserver);
+
+    // Reset `this._ydoc` to an empty state
     (this as any)._ydoc = new Y.Doc();
-    (this as any)._ystate = (this as any)._ydoc.getMap('state');
 
+    // Reset all properties derived from `this._ydoc`
+    (this as any).ysource = (this as any)._ydoc.getText('source');
+    (this as any)._ystate = (this as any)._ydoc.getMap('state');
     (this as any)._undoManager = new Y.UndoManager([], {
       trackedOrigins: new Set([this]),
       doc: (this as any)._ydoc
     });
-
+    (this as any)._undoManager.addToScope(this.ysource);
     (this as any)._awareness = new Awareness((this as any)._ydoc);
 
-    (this as any)._ystate.observe(this.onStateChanged);
-
-    /* CUSTOM: Reset ysource */
-    (this as any).ysource = (this as any)._ydoc.getText('source');
+    // Emit to `this.resetSignal` to inform consumers immediately
     this._resetSignal.emit(null);
-    console.log('RESET YDOC.');
-    console.log('new source', this.ysource.toString());
 
-    /* CUSTOM (TODO ?): Migrate observers */
-    // SEE RtcContentProvider._onChanged() in ydrive.ts
-
-    /* Constructor from YFile */
-    this.undoManager.addToScope(this.ysource);
+    // Add back default observers
+    (this as any)._ystate.observe(this.onStateChanged);
     this.ysource.observe((this as any)._modelObserver);
   }
 
+  /**
+   * Signal that is emitted to whenever the YDoc is reset. Consumers should
+   * listen to this signal if they need to act when the YDoc is reset.
+   *
+   * The Codemirror Yjs extension defined in `ybinding.ts` listens to this
+   * signal to clear the editor when the YDoc is reset.
+   */
   get resetSignal(): ISignal<this, null> {
     return this._resetSignal;
-  }
-
-  setSource(value: string): void {
-    console.log('SETTING SOURCE');
-    console.log('from', this.ysource.toString());
-    console.log('to', value);
-    this.transact(() => {
-      const ytext = this.ysource;
-      ytext.delete(0, ytext.length);
-      ytext.insert(0, value);
-    });
   }
 
   _resetSignal: Signal<this, null>;
