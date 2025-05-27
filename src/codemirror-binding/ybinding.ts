@@ -221,7 +221,6 @@ export const ySync = ViewPlugin.fromClass(
         this._handle_reset();
       };
       if (this._resetSignal) {
-        console.log('Attached reset signal slot');
         this._resetSignal.connect(this._resetSignalSlot);
       }
     }
