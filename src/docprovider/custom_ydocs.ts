@@ -4,8 +4,13 @@ import {
 } from '@jupyter/ydoc';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
+import { ISignal, Signal } from '@lumino/signaling';
 
 export class YFile extends DefaultYFile {
+  constructor() {
+    super();
+    this._resetSignal = new Signal(this);
+  }
   /**
    * Resets the current YDoc.
    */
@@ -27,7 +32,7 @@ export class YFile extends DefaultYFile {
 
     /* CUSTOM: Reset ysource */
     (this as any).ysource = (this as any)._ydoc.getText('source');
-    // TODO? emit event?
+    this._resetSignal.emit(null);
     console.log('RESET YDOC.');
     console.log('new source', this.ysource.toString());
 
@@ -37,6 +42,10 @@ export class YFile extends DefaultYFile {
     /* Constructor from YFile */
     this.undoManager.addToScope(this.ysource);
     this.ysource.observe((this as any)._modelObserver);
+  }
+
+  get resetSignal(): ISignal<this, null> {
+    return this._resetSignal;
   }
 
   setSource(value: string): void {
@@ -49,4 +58,6 @@ export class YFile extends DefaultYFile {
       ytext.insert(0, value);
     });
   }
+
+  _resetSignal: Signal<this, null>;
 }
