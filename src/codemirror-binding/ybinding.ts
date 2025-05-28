@@ -19,6 +19,7 @@ import { EditorView, ViewPlugin, ViewUpdate } from '@codemirror/view';
 // '@jupyterlab/codemirror/lib/extensions/yundomanager'.
 // Therefore we import from './yundomanager.ts', whose contents are copied from
 // '@jupyterlab/codemirror'.
+// Reference: issue #85
 import {
   yUndoManager,
   YUndoManagerConfig,
