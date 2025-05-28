@@ -21,12 +21,24 @@ class YRoom:
     """A Room to manage all client connection to one notebook file"""
 
     log: Logger
-    """Log object"""
+    """The `logging.Logger` instance used by this room to log."""
+
     room_id: str
     """
     The ID of the room. This is a composite ID following the format:
 
     room_id := "{file_type}:{file_format}:{file_id}"
+    """
+
+    file_api: YRoomFileAPI | None
+    """
+    The `YRoomFileAPI` instance for this room. This is set to `None` if & only
+    if `self.room_id == "JupyterLab:globalAwareness"`.
+
+    The file API provides `load_ydoc_content()` for loading the YDoc content
+    from the `ContentsManager`, accepts & handles save requests via
+    `file_api.schedule_save()`, and automatically watches the file for
+    out-of-band changes.
     """
 
     _jupyter_ydoc: YBaseDoc | None
