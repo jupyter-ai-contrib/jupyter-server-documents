@@ -18,7 +18,7 @@ import { ybinding } from './ybinding';
  * CodeMirror shared model binding provider.
  */
 export const codemirrorYjsPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/rtc-core:ybinding',
+  id: '@jupyter/server-documents:ybinding',
   description:
     'Register the CodeMirror extension factory binding the editor and the shared model.',
   autoStart: true,
