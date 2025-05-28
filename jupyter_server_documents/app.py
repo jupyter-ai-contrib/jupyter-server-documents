@@ -8,15 +8,15 @@ from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 from .outputs import OutputsManager, outputs_handlers
 
-class RtcExtensionApp(ExtensionApp):
-    name = "jupyter_rtc_core"
+class ServerDocsApp(ExtensionApp):
+    name = "jupyter_server_documents"
     app_name = "Collaboration"
     description = "A new implementation of real-time collaboration (RTC) in JupyterLab."
 
     handlers = [  # type:ignore[assignment]
         # dummy handler that verifies the server extension is installed;
         # # this can be deleted prior to initial release.
-        (r"jupyter-rtc-core/get-example/?", RouteHandler),
+        (r"jupyter-server-documents/get-example/?", RouteHandler),
         # # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
         # # handler that just adds compatibility with Jupyter Collaboration's frontend
@@ -53,7 +53,7 @@ class RtcExtensionApp(ExtensionApp):
     def initialize_settings(self):
         # Get YRoomManager arguments from server extension context.
         # We cannot access the 'file_id_manager' key immediately because server
-        # extensions initialize in alphabetical order. 'jupyter_rtc_core' <
+        # extensions initialize in alphabetical order. 'jupyter_server_documents' <
         # 'jupyter_server_fileid'.
         def get_fileid_manager():
             return self.serverapp.web_app.settings["file_id_manager"]
@@ -76,15 +76,15 @@ class RtcExtensionApp(ExtensionApp):
     def _link_jupyter_server_extension(self, server_app):
         """Setup custom config needed by this extension."""
         c = Config()
-        c.ServerApp.kernel_websocket_connection_class = "jupyter_rtc_core.kernels.websocket_connection.NextGenKernelWebsocketConnection"
-        c.ServerApp.kernel_manager_class = "jupyter_rtc_core.kernels.multi_kernel_manager.NextGenMappingKernelManager"
-        c.MultiKernelManager.kernel_manager_class = "jupyter_rtc_core.kernels.kernel_manager.NextGenKernelManager"
-        c.ServerApp.session_manager_class = "jupyter_rtc_core.session_manager.YDocSessionManager"
+        c.ServerApp.kernel_websocket_connection_class = "jupyter_server_documents.kernels.websocket_connection.NextGenKernelWebsocketConnection"
+        c.ServerApp.kernel_manager_class = "jupyter_server_documents.kernels.multi_kernel_manager.NextGenMappingKernelManager"
+        c.MultiKernelManager.kernel_manager_class = "jupyter_server_documents.kernels.kernel_manager.NextGenKernelManager"
+        c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
         server_app.update_config(c)
         super()._link_jupyter_server_extension(server_app)
     
     async def stop_extension(self):
-        self.log.info("Stopping `jupyter_rtc_core` server extension.")
+        self.log.info("Stopping `jupyter_server_documents` server extension.")
         if self.yroom_manager:
             await self.yroom_manager.stop()
-        self.log.info("`jupyter_rtc_core` server extension is shut down. Goodbye!")
+        self.log.info("`jupyter_server_documents` server extension is shut down. Goodbye!")

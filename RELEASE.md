@@ -1,4 +1,4 @@
-# Making a new release of jupyter_rtc_core
+# Making a new release of jupyter_server_documents
 
 The extension can be published to `PyPI` and `npm` manually or using the [Jupyter Releaser](https://github.com/jupyter-server/jupyter_releaser).
 

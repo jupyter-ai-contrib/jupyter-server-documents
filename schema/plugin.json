@@ -1,7 +1,7 @@
 {
   "jupyter.lab.shortcuts": [],
-  "title": "@jupyter/rtc-core",
-  "description": "@jupyter/rtc-core settings.",
+  "title": "@jupyter/server-documents",
+  "description": "@jupyter/server-documents settings.",
   "type": "object",
   "properties": {},
   "additionalProperties": false,

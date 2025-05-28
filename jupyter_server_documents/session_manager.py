@@ -3,9 +3,9 @@ from typing import Optional, Any
 from jupyter_server.services.sessions.sessionmanager import SessionManager, KernelName, ModelName
 from jupyter_server.serverapp import ServerApp
 from jupyter_server_fileid.manager import BaseFileIdManager
-from jupyter_rtc_core.rooms.yroom_manager import YRoomManager
-from jupyter_rtc_core.rooms.yroom import YRoom
-from jupyter_rtc_core.kernels.kernel_client import DocumentAwareKernelClient
+from jupyter_server_documents.rooms.yroom_manager import YRoomManager
+from jupyter_server_documents.rooms.yroom import YRoom
+from jupyter_server_documents.kernels.kernel_client import DocumentAwareKernelClient
 
 
 class YDocSessionManager(SessionManager): 

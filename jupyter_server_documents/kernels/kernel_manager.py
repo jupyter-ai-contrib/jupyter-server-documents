@@ -25,10 +25,10 @@ class NextGenKernelManager(AsyncKernelManager):
     main_client = Instance(AsyncKernelClient, allow_none=True)
 
     client_class = DottedObjectName(
-        "jupyter_rtc_core.kernels.kernel_client.DocumentAwareKernelClient"
+        "jupyter_server_documents.kernels.kernel_client.DocumentAwareKernelClient"
     )
     
-    client_factory: Type = Type(klass="jupyter_rtc_core.kernels.kernel_client.DocumentAwareKernelClient")
+    client_factory: Type = Type(klass="jupyter_server_documents.kernels.kernel_client.DocumentAwareKernelClient")
 
     connection_attempts: int = Int(
         default_value=10,

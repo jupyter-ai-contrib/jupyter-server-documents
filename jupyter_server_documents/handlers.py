@@ -1,5 +1,4 @@
 import json
-import uuid
 
 from jupyter_server.base.handlers import APIHandler
 import tornado
@@ -40,5 +39,5 @@ class RouteHandler(APIHandler):
     @tornado.web.authenticated
     def get(self):
         self.finish(json.dumps({
-            "data": "This is /jupyter-rtc-core/get-example endpoint!"
+            "data": "This is /jupyter-server-documents/get-example endpoint!"
         }))

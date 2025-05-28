@@ -1,4 +1,4 @@
-name: rtccore
+name: serverdocs
 channels:
   - conda-forge
 dependencies:

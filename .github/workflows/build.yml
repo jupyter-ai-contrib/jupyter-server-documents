@@ -40,12 +40,12 @@ jobs:
         set -eux
         python -m pip install .[test]
 
-        pytest -vv -r ap --cov jupyter_rtc_core
+        pytest -vv -r ap --cov jupyter_server_documents
         jupyter server extension list
-        jupyter server extension list 2>&1 | grep -ie "jupyter_rtc_core.*OK"
+        jupyter server extension list 2>&1 | grep -ie "jupyter_server_documents.*OK"
 
         jupyter labextension list
-        jupyter labextension list 2>&1 | grep -ie "@jupyter/rtc-core.*OK"
+        jupyter labextension list 2>&1 | grep -ie "@jupyter/server-documents.*OK"
         python -m jupyterlab.browser_check
 
     - name: Package the extension
@@ -54,13 +54,13 @@ jobs:
 
         pip install build
         python -m build
-        pip uninstall -y "jupyter_rtc_core" jupyterlab
+        pip uninstall -y "jupyter_server_documents" jupyterlab
 
     - name: Upload extension packages
       uses: actions/upload-artifact@v4
       with:
         name: extension-artifacts
-        path: dist/jupyter_rtc_core*
+        path: dist/jupyter_server_documents*
         if-no-files-found: error
 
   test_isolated:
@@ -83,14 +83,14 @@ jobs:
         sudo rm -rf $(which node)
         sudo rm -rf $(which node)
 
-        pip install "jupyterlab>=4.0.0,<5" jupyter_rtc_core*.whl
+        pip install "jupyterlab>=4.0.0,<5" jupyter_server_documents*.whl
 
 
         jupyter server extension list
-        jupyter server extension list 2>&1 | grep -ie "jupyter_rtc_core.*OK"
+        jupyter server extension list 2>&1 | grep -ie "jupyter_server_documents.*OK"
 
         jupyter labextension list
-        jupyter labextension list 2>&1 | grep -ie "@jupyter/rtc-core.*OK"
+        jupyter labextension list 2>&1 | grep -ie "@jupyter/server-documents.*OK"
         python -m jupyterlab.browser_check --no-browser-test
 
   integration-tests:
@@ -116,7 +116,7 @@ jobs:
     - name: Install the extension
       run: |
         set -eux
-        python -m pip install "jupyterlab>=4.0.0,<5" jupyter_rtc_core*.whl
+        python -m pip install "jupyterlab>=4.0.0,<5" jupyter_server_documents*.whl
 
     - name: Install dependencies
       working-directory: ui-tests
@@ -145,7 +145,7 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v4
       with:
-        name: jupyter_rtc_core-playwright-tests
+        name: jupyter_server_documents-playwright-tests
         path: |
           ui-tests/test-results
           ui-tests/playwright-report
