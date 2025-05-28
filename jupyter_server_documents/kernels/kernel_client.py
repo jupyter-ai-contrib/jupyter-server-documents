@@ -10,8 +10,8 @@ from traitlets import Set, Instance, Any, Type, default
 from jupyter_client.asynchronous.client import AsyncKernelClient
 
 from .utils import LRUCache
-from jupyter_rtc_core.rooms.yroom import YRoom
-from jupyter_rtc_core.outputs import OutputProcessor
+from jupyter_server_documents.rooms.yroom import YRoom
+from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server.utils import ensure_async
 
 
