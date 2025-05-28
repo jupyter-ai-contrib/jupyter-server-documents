@@ -91,22 +91,14 @@ class YRoom:
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
 
-        # If this room is providing global awareness, set
-        # `file_api` and `jupyter_ydoc` to `None` as this room
-        # will never read/write via the `ContentsManager`.
+        # If this room is providing global awareness, set `file_api` and
+        # `_jupyter_ydoc` to `None` as the YDoc is unused.
         if self.room_id == "JupyterLab:globalAwareness":
             self.file_api = None
             self._jupyter_ydoc = None
         else:
-            # Otherwise, initialize `jupyter_ydoc` and `file_api`
-            _, file_type, _ = self.room_id.split(":")
-            JupyterYDocClass = cast(
-                type[YBaseDoc],
-                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
-            )
-            self._jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
-
-            # Initialize YRoomFileAPI and begin loading content
+            # Otherwise, initialize `_jupyter_ydoc` and `file_api`.
+            self._jupyter_ydoc = self._init_jupyter_ydoc()
             self.file_api = YRoomFileAPI(
                 room_id=self.room_id,
                 jupyter_ydoc=self._jupyter_ydoc,
@@ -116,15 +108,15 @@ class YRoom:
                 contents_manager=self._contents_manager,
                 on_outofband_change=self.reload_ydoc
             )
+
+            # Load the YDoc content after initializing
             self.file_api.load_ydoc_content()
 
-            # Start `self._on_jupyter_ydoc_update()` observer to automatically
-            # save the YDoc on change.
+            # Attach Jupyter YDoc observer to automatically save on change
             self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
         
-        
         # Start observers on `self.ydoc` and `self.awareness` to ensure new
-        # updates are broadcast to all clients and saved to disk.
+        # updates are always broadcast to all clients.
         self._awareness_subscription = self._awareness.observe(
             self._on_awareness_update
         )
@@ -140,6 +132,32 @@ class YRoom:
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
     
+
+    def _init_jupyter_ydoc(self) -> YBaseDoc:
+        """
+        Initializes a Jupyter YDoc (instance of `pycrdt.YBaseDoc`). This
+        should not be called in global awareness rooms, and requires
+        `self._ydoc` and `self._awareness` to be set prior.
+
+        Raises `AssertionError` if the room ID is "JupyterLab:globalAwareness"
+        or if either `self._ydoc` or `self._awareness` are not set.
+        """
+        assert self.room_id != "JupyterLab:globalAwareness"
+        assert self._ydoc
+        assert self._awareness
+
+        # Get Jupyter YDoc class, defaulting to `YFile` if the file type is
+        # unrecognized
+        _, file_type, _ = self.room_id.split(":")
+        JupyterYDocClass = cast(
+            type[YBaseDoc],
+            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
+        )
+
+        # Initialize Jupyter YDoc, add an observer to save it on change, return
+        jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
+        return jupyter_ydoc
+
 
     @property
     def clients(self) -> YjsClientGroup:
@@ -400,6 +418,9 @@ class YRoom:
         This observer is separate because `pycrdt.Doc.observe()` does not pass
         `updated_key` to `self._on_ydoc_update()`.
         """
+        if self.file_api is None:
+            return
+
         if updated_key != "state":
             self.file_api.schedule_save()
 
@@ -529,18 +550,18 @@ class YRoom:
             self._message_queue.get_nowait()
             self._message_queue.task_done()
 
+        # Remove existing observers
+        self._ydoc.unobserve(self._ydoc_subscription)
+        self._awareness.unobserve(self._awareness_subscription)
+        self._jupyter_ydoc.unobserve()
+
         # Reset YDoc, YAwareness, JupyterYDoc to empty states
         self._client_group = YjsClientGroup(room_id=self.room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
-        _, file_type, _ = self.room_id.split(":")
-        JupyterYDocClass = cast(
-            type[YBaseDoc],
-            jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
-        )
-        self._jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
+        self._jupyter_ydoc = self._init_jupyter_ydoc()
 
-        # Reset `YRoomFileAPI` to reload the document
+        # Reset `YRoomFileAPI` & reload the document
         self.file_api = YRoomFileAPI(
             room_id=self.room_id,
             jupyter_ydoc=self._jupyter_ydoc,
@@ -552,18 +573,14 @@ class YRoom:
         )
         self.file_api.load_ydoc_content()
 
-        # Start `self._on_jupyter_ydoc_update()` observer to automatically
-        # save the YDoc on change.
-        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
-        
-        # Start observers on `self.ydoc` and `self.awareness` to ensure new
-        # updates are broadcast to all clients and saved to disk.
+        # Add observers to new YDoc, YAwareness, and JupyterYDoc instances
         self._awareness_subscription = self._awareness.observe(
             self._on_awareness_update
         )
         self._ydoc_subscription = self._ydoc.observe(
             self._on_ydoc_update
         )
+        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
 
         
     async def stop(self) -> None:
