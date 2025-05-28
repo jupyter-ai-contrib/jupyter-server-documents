@@ -3,7 +3,7 @@ from traitlets.config import Config
 import asyncio
 
 from traitlets import Instance, Type
-from .handlers import FileIDIndexHandler
+from .handlers import RouteHandler, FileIDIndexHandler
 from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 from .outputs import OutputsManager, outputs_handlers
@@ -14,6 +14,9 @@ class ServerDocsApp(ExtensionApp):
     description = "A new implementation of real-time collaboration (RTC) in JupyterLab."
 
     handlers = [  # type:ignore[assignment]
+        # dummy handler that verifies the server extension is installed;
+        # # this can be deleted prior to initial release.
+        (r"jupyter-server-documents/get-example/?", RouteHandler),
         # # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
         # # handler that just adds compatibility with Jupyter Collaboration's frontend

@@ -42,10 +42,10 @@ import { WebSocketAwarenessProvider } from './docprovider/awareness';
 import { URLExt } from '@jupyterlab/coreutils';
 import { AwarenessKernelStatus } from './kernelstatus';
 /**
- * Initialization data for the @jupyter/rtc-core extension.
+ * Initialization data for the @jupyter/server-documents extension.
  */
 export const plugin: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/rtc-core:plugin',
+  id: '@jupyter/server-documents:plugin',
   description: 'A JupyterLab extension that provides RTC capabilities.',
   autoStart: true,
   optional: [ISettingRegistry],
@@ -53,17 +53,17 @@ export const plugin: JupyterFrontEndPlugin<void> = {
     app: JupyterFrontEnd,
     settingRegistry: ISettingRegistry | null
   ) => {
-    console.log('JupyterLab extension @jupyter/rtc-core is activated!');
+    console.log('JupyterLab extension @jupyter/server-documents is activated!');
 
     if (settingRegistry) {
       settingRegistry
         .load(plugin.id)
         .then(settings => {
-          console.log('@jupyter/rtc-core settings loaded:', settings.composite);
+          console.log('@jupyter/server-documents settings loaded:', settings.composite);
         })
         .catch(reason => {
           console.error(
-            'Failed to load settings for @jupyter/rtc-core.',
+            'Failed to load settings for @jupyter/server-documents.',
             reason
           );
         });
@@ -75,7 +75,7 @@ export const plugin: JupyterFrontEndPlugin<void> = {
       })
       .catch(reason => {
         console.error(
-          `The jupyter_rtc_core server extension appears to be missing.\n${reason}`
+          `The jupyter_server_documents server extension appears to be missing.\n${reason}`
         );
       });
   }
@@ -85,7 +85,7 @@ export const plugin: JupyterFrontEndPlugin<void> = {
  * Jupyter plugin creating a global awareness for RTC.
  */
 export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
-  id: '@jupyter/rtc-core/collaboration-extension:rtcGlobalAwareness',
+  id: '@jupyter/server-documents/collaboration-extension:rtcGlobalAwareness',
   description: 'Add global awareness to share working document of users.',
   requires: [IStateDB],
   provides: IGlobalAwareness,
@@ -139,7 +139,7 @@ class AwarenessExecutionIndicatorIcon
  * A plugin that provides a execution indicator item to the status bar.
  */
 export const executionIndicator: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/rtc-core:awareness-execution-indicator',
+  id: '@jupyter/server-documents:awareness-execution-indicator',
   description: 'Adds a notebook execution status widget.',
   autoStart: true,
   requires: [INotebookTracker, ILabShell, ITranslator, IToolbarWidgetRegistry],
@@ -280,7 +280,7 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
  * The notebook cell factory provider.
  */
 const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
-  id: '@jupyter/rtc-core/notebook-extension:factory',
+  id: '@jupyter/server-documents/notebook-extension:factory',
   description: 'Provides the notebook cell factory.',
   provides: NotebookPanel.IContentFactory,
   requires: [IEditorServices],
