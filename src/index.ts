@@ -41,6 +41,9 @@ import { ServerConnection } from '@jupyterlab/services';
 import { WebSocketAwarenessProvider } from './docprovider/awareness';
 import { URLExt } from '@jupyterlab/coreutils';
 import { AwarenessKernelStatus } from './kernelstatus';
+
+import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
+
 /**
  * Initialization data for the @jupyter/server-documents extension.
  */
@@ -300,7 +303,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
   executionIndicator,
   kernelStatus,
-  factory
+  factory,
+  codemirrorYjsPlugin
 ];
 
 export default plugins;

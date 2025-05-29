@@ -9,12 +9,14 @@ import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
 import { PromiseDelegate } from '@lumino/coreutils';
 import { Signal } from '@lumino/signaling';
+import { Notification } from '@jupyterlab/apputils';
 
 import { DocumentChange, YDocument } from '@jupyter/ydoc';
 
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
+import { YFile } from './custom_ydocs';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -36,7 +38,6 @@ export class WebSocketProvider implements IDocumentProvider {
     this._format = options.format;
     this._serverUrl = options.url;
     this._sharedModel = options.model;
-    this._awareness = options.model.awareness;
     this._yWebsocketProvider = null;
     this._trans = options.translator;
 
@@ -50,6 +51,13 @@ export class WebSocketProvider implements IDocumentProvider {
     user.userChanged.connect(this._onUserChanged, this);
 
     this._connect().catch(e => console.warn(e));
+  }
+
+  /**
+   * Returns the awareness object within the shared model.
+   */
+  get awareness(): Awareness {
+    return this._sharedModel.awareness;
   }
 
   /**
@@ -106,7 +114,7 @@ export class WebSocketProvider implements IDocumentProvider {
       {
         disableBc: true,
         // params: { sessionId: session.sessionId },
-        awareness: this._awareness
+        awareness: this.awareness
       }
     );
 
@@ -125,37 +133,59 @@ export class WebSocketProvider implements IDocumentProvider {
   }
 
   private _onUserChanged(user: User.IManager): void {
-    this._awareness.setLocalStateField('user', user.identity);
+    this.awareness.setLocalStateField('user', user.identity);
   }
 
   /**
    * Handles disconnections from the YRoom Websocket.
    *
-   * TODO: handle disconnections more gracefully by reseting the YDoc to an
-   * empty state on disconnect. Unfortunately the shared model does not provide
-   * any methods for this, so we are just asking disconnected clients to
-   * refresh for now.
-   *
-   * TODO: distinguish between disconnects when server YDoc history is the same
-   * (i.e. SS1 + SS2 is sufficient), and when the history
-   * differs (client's YDoc has to be reset before SS1 + SS2).
+   * TODO: Issue #45.
    */
-  private _onConnectionClosed = (event: any): void => {
-    // Log error to console for debugging
-    console.error('WebSocket connection was closed. Close event: ', event);
+  private _onConnectionClosed = (event: CloseEvent): void => {
+    // Handle close events based on code
+    const close_code = event.code;
 
-    // Show dialog to tell user to refresh the page
+    // 4000 := server close code on out-of-band change
+    if (close_code === 4000 && this._sharedModel instanceof YFile) {
+      this._handleOobChange();
+      return;
+    }
+
+    // If the close code is unhandled, log an error to the browser console and
+    // show a popup asking user to refresh the page.
+    console.error('WebSocket connection was closed. Close event: ', event);
     showErrorMessage(
       this._trans.__('Document session error'),
       'Please refresh the browser tab.',
       [Dialog.okButton()]
     );
 
-    // Delete this client's YDoc by disposing of the shared model.
-    // This is the only way we know of to stop `y-websocket` from constantly
-    // attempting to re-connect.
+    // Stop `y-websocket` from re-connecting by disposing of the shared model.
+    // This seems to be the only way to halt re-connection attempts.
     this._sharedModel.dispose();
   };
+
+  /**
+   * Handles an out-of-band change that requires reseting the YDoc before
+   * re-connecting. The server extension indicates this by closing the YRoom
+   * Websocket connection with close code 4000.
+   */
+  private _handleOobChange() {
+    // Reset YDoc
+    // TODO: handle YNotebooks.
+    // TODO: is it safe to assume that we only need YFile & YNotebook?
+    const sharedModel = this._sharedModel as YFile;
+    sharedModel.reset();
+
+    // Re-connect and display a notification to the user
+    this.reconnect();
+    Notification.info(
+      'The contents of this file were changed on disk. The document state has been reset.',
+      {
+        autoClose: false
+      }
+    );
+  }
 
   private _onSync = (isSynced: boolean) => {
     if (isSynced) {
@@ -169,7 +199,6 @@ export class WebSocketProvider implements IDocumentProvider {
     }
   };
 
-  private _awareness: Awareness;
   private _contentType: string;
   private _format: string;
   private _isDisposed: boolean;
@@ -177,6 +206,9 @@ export class WebSocketProvider implements IDocumentProvider {
   private _ready = new PromiseDelegate<void>();
   private _serverUrl: string;
   private _sharedModel: YDocument<DocumentChange>;
+  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+  // @ts-ignore
+  private _sharedModelFactory: ISharedModelFactory;
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
 }

@@ -176,10 +176,10 @@ class YjsClientGroup:
             except asyncio.CancelledError:
                 break
     
-    def stop(self):
+    def close_all(self, close_code: int):
         """
-        Closes all Websocket connections with close code 1001 (server
-        shutting down) and ignores any future calls to `add()`.
+        Closes each Websocket with the given close code and removes all clients
+        from this group.
         """
         # Remove all clients from both dictionaries
         client_ids = set(self.desynced.keys()) | set(self.synced.keys())
@@ -190,13 +190,21 @@ class YjsClientGroup:
                 client = self.synced.pop(client_id, None)
             if client:
                 clients.append(client)
-        
         assert len(self.desynced) == 0
         assert len(self.synced) == 0
 
         # Close all Websocket connections
         for client in clients:
-            client.websocket.close(code=1001)
+            client.websocket.close(code=close_code)
+
+    def stop(self):
+        """
+        Closes all Websocket connections with close code 1001 (server
+        shutting down), removes all clients from this group, and ignores any
+        future calls to `add()`.
+        """
+        # Close all Websockets with code 1001
+        self.close_all(close_code=1001)
 
         # Set `_stopped` to `True` to ignore future calls to `add()`
         self._stopped = True

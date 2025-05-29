@@ -285,7 +285,17 @@ class SharedModelFactory implements ISharedModelFactory {
       return;
     }
 
-    if (!this.collaborative || !options.collaborative) {
+    /**
+     * Whether RTC is enabled on the YDrive.
+     */
+    const ydriveRtcEnabled = this.collaborative;
+    /**
+     * Whether RTC is enabled on this document. This defaults to `true` to align
+     * with the docstring on `options.collaborative`.
+     */
+    const docRtcEnabled = options.collaborative ?? true;
+
+    if (!ydriveRtcEnabled || !docRtcEnabled) {
       // Bail if the document model does not support collaboration
       // the `sharedModel` will be the default one.
       return;
