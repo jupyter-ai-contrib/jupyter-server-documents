@@ -145,14 +145,16 @@ class YRoomFileAPI:
             format=self.file_format
         ))
 
-        # Set JupyterYDoc content
+        # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
+        # changes" icon in the UI
         self.jupyter_ydoc.source = file_data['content']
+        self.jupyter_ydoc.dirty = False
 
         # Set `_last_modified` timestamp
         self._last_modified = file_data['last_modified']
 
         # Finally, set loaded event to inform consumers that the YDoc is ready
-        # Also set loading to `False` for consistency
+        # Also set loading to `False` for consistency and log success
         self._ydoc_content_loaded.set()
         self._ydoc_content_loading = False
         self.log.info(f"Loaded content for room ID '{self.room_id}'.")
