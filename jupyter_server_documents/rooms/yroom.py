@@ -432,10 +432,6 @@ class YRoom:
         # Save only when the content of the YDoc is updated.
         # See this method's docstring for more context.
         if updated_key != "state":
-            event = cast(pycrdt.TextEvent, _[0])
-            self.log.error(event.delta)
-            self.log.error(event.path)
-            self.log.error(event.target)
             self.file_api.schedule_save()
 
 
