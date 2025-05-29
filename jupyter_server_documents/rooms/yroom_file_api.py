@@ -225,9 +225,12 @@ class YRoomFileAPI:
 
         # If an out-of-band file change is detected, run the designated callback
         if self._last_modified != file_data['last_modified']:
-            self.log.warning("Out-of-band file change detected.")
-            self.log.warning(f"Last detected change: {self._last_modified}")
-            self.log.warning(f"Most recent change: {file_data['last_modified']}")
+            self.log.warning(
+                "Out-of-band file change detected. "
+                f"Room ID: '{self.room_id}', "
+                f"Last detected change: '{self._last_modified}', "
+                f"Most recent change: '{file_data['last_modified']}'."
+            )
             self._on_outofband_change()
 
     
