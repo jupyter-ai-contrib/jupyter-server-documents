@@ -176,7 +176,7 @@ class YRoom:
         loaded from the ContentsManager.
         """
         if self.file_api:
-            await self.file_api.ydoc_content_loaded
+            await self.file_api.ydoc_content_loaded.wait()
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
             self.log.error(message)
@@ -190,7 +190,7 @@ class YRoom:
         waiting for its content to be loaded from the ContentsManager.
         """
         if self.file_api:
-            await self.file_api.ydoc_content_loaded
+            await self.file_api.ydoc_content_loaded.wait()
         return self._ydoc
 
     
@@ -222,7 +222,7 @@ class YRoom:
         # Wait for content to be loaded before processing any messages in the
         # message queue
         if self.file_api:
-            await self.file_api.ydoc_content_loaded
+            await self.file_api.ydoc_content_loaded.wait()
 
         # Begin processing messages from the message queue
         while True:
@@ -418,10 +418,24 @@ class YRoom:
         This observer is separate because `pycrdt.Doc.observe()` does not pass
         `updated_key` to `self._on_ydoc_update()`.
         """
+        # Do nothing if there is no file API for this room (e.g. global awareness)
         if self.file_api is None:
             return
 
+        # Do nothing if the content is still loading. Clients cannot make
+        # updates until the content is loaded, so this safely prevents an extra
+        # save upon loading/reloading the YDoc.
+        content_loading = not self.file_api.ydoc_content_loaded.is_set()
+        if content_loading:
+            return
+
+        # Save only when the content of the YDoc is updated.
+        # See this method's docstring for more context.
         if updated_key != "state":
+            event = cast(pycrdt.TextEvent, _[0])
+            self.log.error(event.delta)
+            self.log.error(event.path)
+            self.log.error(event.target)
             self.file_api.schedule_save()
 
 
@@ -556,7 +570,6 @@ class YRoom:
         self._jupyter_ydoc.unobserve()
 
         # Reset YDoc, YAwareness, JupyterYDoc to empty states
-        self._client_group = YjsClientGroup(room_id=self.room_id, log=self.log, loop=self._loop)
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
         self._jupyter_ydoc = self._init_jupyter_ydoc()

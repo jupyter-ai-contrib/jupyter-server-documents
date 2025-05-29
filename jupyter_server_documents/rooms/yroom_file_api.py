@@ -14,7 +14,7 @@ import logging
 import os
 
 if TYPE_CHECKING:
-    from typing import Any, Awaitable, Callable, Literal
+    from typing import Any, Callable, Literal
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
@@ -100,12 +100,24 @@ class YRoomFileAPI:
     
 
     @property
-    def ydoc_content_loaded(self) -> Awaitable[None]:
+    def ydoc_content_loaded(self) -> asyncio.Event:
         """
-        Returns an Awaitable that only resolves when the content of the YDoc is
-        loaded.
+        Returns an `asyncio.Event` that is set when the YDoc content is loaded.
+
+        To suspend a coroutine until the content is loaded:
+
+        ```
+        await file_api.ydoc_content_loaded.wait()
+        ```
+
+        To synchronously (i.e. immediately) check if the content is loaded:
+        
+        ```
+        file_api.ydoc_content_loaded.is_set()
+        ```
         """
-        return self._ydoc_content_loaded.wait()
+
+        return self._ydoc_content_loaded
     
 
     def load_ydoc_content(self) -> None:
