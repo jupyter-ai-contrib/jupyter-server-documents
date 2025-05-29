@@ -166,11 +166,21 @@ class YRoomFileAPI:
         while True:
             try:
                 await asyncio.sleep(0.5)
-                await asyncio.shield(self._check_oob_changes())
+                await self._check_oob_changes()
                 if self._save_scheduled:
-                    await asyncio.shield(self._save_jupyter_ydoc())
+                    # `asyncio.shield()` prevents the save task from being
+                    # cancelled halfway and corrupting the file. We need to
+                    # store a reference to the shielded task to prevent it from
+                    # being garbage collected (see `asyncio.shield()` docs).
+                    save_task = self._save_jupyter_ydoc()
+                    await asyncio.shield(save_task)
             except asyncio.CancelledError:
                 break
+            except Exception:
+                self.log.exception(
+                    "Exception occurred in `_watch_file() background task "
+                    f"for YRoom '{self.room_id}'."
+                )
 
         self.log.info(
             "Stopped `self._watch_file()` background task "
