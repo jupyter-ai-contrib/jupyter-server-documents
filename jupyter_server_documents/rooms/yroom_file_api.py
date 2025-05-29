@@ -193,8 +193,11 @@ class YRoomFileAPI:
             except Exception:
                 self.log.exception(
                     "Exception occurred in `_watch_file() background task "
-                    f"for YRoom '{self.room_id}'."
+                    f"for YRoom '{self.room_id}'. Halting for 5 seconds."
                 )
+                # Wait 5 seconds to reduce error log spam if the exception
+                # occurs repeatedly.
+                await asyncio.sleep(5)
 
         self.log.info(
             "Stopped `self._watch_file()` background task "
