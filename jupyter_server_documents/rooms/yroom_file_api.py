@@ -43,7 +43,8 @@ class YRoomFileAPI:
     _fileid_manager: BaseFileIdManager
     _contents_manager: AsyncContentsManager | ContentsManager
     _loop: asyncio.AbstractEventLoop
-    _ydoc_content_loading: False
+    _save_scheduled: bool
+    _ydoc_content_loading: bool
     _ydoc_content_loaded: asyncio.Event
     _last_modified: datetime | None
 
@@ -69,6 +70,7 @@ class YRoomFileAPI:
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
         self._on_outofband_change = on_outofband_change
+        self._save_scheduled = False
         self._last_modified = None
 
         # Initialize loading & loaded states
