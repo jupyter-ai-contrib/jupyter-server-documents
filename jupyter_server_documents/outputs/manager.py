@@ -1,3 +1,4 @@
+import glob
 import json
 import os
 from pathlib import Path, PurePath
@@ -42,6 +43,23 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "r", encoding="utf-8") as f:
             output = json.loads(f.read())
         return output
+    
+    def get_outputs(self, file_id, cell_id):
+        """Get all outputs by file_id, cell_id."""
+        path = self._build_path(file_id, cell_id)
+        if not os.path.isdir(path):
+            raise FileNotFoundError(f"The output dir doesn't exist: {path}")
+        
+        outputs = []
+        
+        # Find and load .output files
+        for output_file in path.glob("*.output"):
+            with open(output_file, "r", encoding="utf-8") as f:
+                output = json.loads(f.read())
+                outputs.append(output)
+
+        return outputs
+        
 
     def get_outputs(self, file_id, cell_id):
         """Get all outputs by file_id, cell_id."""
