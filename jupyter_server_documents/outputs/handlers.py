@@ -75,20 +75,3 @@ outputs_handlers = [
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]
 
-# def setup_handlers(web_app):
-#     """Setup the handlers for the outputs service."""
-
-#     handlers = [
-#         (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/{_output_index_regex}.output", OutputsAPIHandler),
-#         (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
-#     ]
-
-#     base_url = web_app.settings["base_url"]
-#     new_handlers = []
-#     for handler in handlers:
-#         pattern = url_path_join(base_url, handler[0])
-#         new_handler = (pattern, *handler[1:])
-#         new_handlers.append(new_handler)
-
-#     # Add the handler for all hosts
-#     web_app.add_handlers(".*$", new_handlers)
