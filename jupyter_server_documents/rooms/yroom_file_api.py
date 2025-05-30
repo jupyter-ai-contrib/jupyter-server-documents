@@ -11,7 +11,6 @@ from datetime import datetime
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_server.utils import ensure_async
 import logging
-import os
 
 if TYPE_CHECKING:
     from typing import Any, Callable, Literal
