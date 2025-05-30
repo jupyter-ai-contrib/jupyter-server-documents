@@ -221,6 +221,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
 
         parent_msg_id = dmsg["parent_header"]["msg_id"]
         parent_msg_data = self.message_cache.get(parent_msg_id)
+        cell_id = parent_msg_data.get('cell_id')
 
         # Handle different message types using pattern matching
         match dmsg["msg_type"]:
@@ -233,12 +234,11 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                     notebook = await yroom.get_jupyter_ydoc()
                     # The metadata ydoc is not exposed as a
                     # public property.
-                    metadata = notebook._ymeta
+                    metadata = notebook.ymeta
                     metadata["metadata"]["language_info"] = language_info
 
             case "status":
                 # Unpack cell-specific information and determine execution state
-                cell_id = parent_msg_data.get('cell_id')
                 content = self.session.unpack(dmsg["content"])
                 execution_state = content.get("execution_state")
                 # Update status across all collaborative rooms
@@ -253,7 +253,6 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                     # Specifically update the running cell's execution state if cell_id is provided
                     if cell_id:
                         notebook = await yroom.get_jupyter_ydoc()
-                        cells = notebook.ycells
                         _, target_cell = notebook.find_cell(cell_id)
                         if target_cell:
                             # Adjust state naming convention from 'busy' to 'running' as per JupyterLab expectation
@@ -263,12 +262,10 @@ class DocumentAwareKernelClient(AsyncKernelClient):
 
             case "execute_input":
                 # Extract execution count and update each collaborative room's notebook
-                cell_id = parent_msg_data.get('cell_id')
                 content = self.session.unpack(dmsg["content"])
                 execution_count = content["execution_count"]
                 for yroom in self._yrooms:
                     notebook = await yroom.get_jupyter_ydoc()
-                    cells = notebook.ycells
                     _, target_cell = notebook.find_cell(cell_id)
                     if target_cell:
                         target_cell["execution_count"] = execution_count

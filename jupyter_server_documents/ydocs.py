@@ -24,6 +24,16 @@ class YNotebook(UpstreamYNotebook):
     def __init__(self, *args, **kwargs): 
         super().__init__(*args, **kwargs)
         self._cell_indices = {}
+    
+    @property
+    def ymeta(self):
+        """
+        Returns the Y-meta.
+
+        :return: The Y-meta.
+        :rtype: :class:`pycrdt.Map`
+        """
+        return self._ymeta
 
     def find_cell(self, cell_id):
         """Find a cell with a given cell_id in the list of cells.
