@@ -120,11 +120,11 @@ class NextGenKernelManager(AsyncKernelManager):
                 self.set_state(LifecycleStates.UNKNOWN, ExecutionStates.UNKNOWN)
                 raise Exception("The kernel took too long to connect to the ZMQ sockets.")
             # Wait a second until the next time we try again.
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
         # Wait for the kernel to reach an idle state.
         while self.execution_state != ExecutionStates.IDLE.value:
             self.main_client.send_kernel_info()
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.1)
         
     async def disconnect(self):
         await self.main_client.stop_listening()
@@ -139,7 +139,11 @@ class NextGenKernelManager(AsyncKernelManager):
         session = self.main_client.session
         parent_header = session.msg_header("status")
         parent_msg_id = parent_header["msg_id"]
-        self.main_client.message_source_cache[parent_msg_id] = "shell"
+        self.main_client.message_cache.add({
+            "msg_id": parent_msg_id,
+            "channel": "shell",
+            "cellId": None
+        })
         msg = session.msg("status", content={"execution_state": self.execution_state}, parent=parent_header)
         smsg = session.serialize(msg)[1:]
         await self.main_client.handle_outgoing_message("iopub", smsg)
@@ -150,7 +154,7 @@ class NextGenKernelManager(AsyncKernelManager):
         if channel_name != "iopub":
             return  
         
-        session = self.main_client.session        
+        session = self.main_client.session       
         # Unpack the message 
         deserialized_msg = session.deserialize(msg, content=False)
         if deserialized_msg["msg_type"] == "status":
@@ -162,14 +166,9 @@ class NextGenKernelManager(AsyncKernelManager):
             else:
                 parent = deserialized_msg.get("parent_header", {})
                 msg_id = parent.get("msg_id", "")
-                parent_channel = self.main_client.message_source_cache.get(msg_id, None)
+                message_data = self.main_client.message_cache.get(msg_id)
+                if message_data is None:
+                    return
+                parent_channel = message_data.get("channel")
                 if parent_channel and parent_channel == "shell":
                     self.set_state(LifecycleStates.CONNECTED, ExecutionStates(execution_state))
-                    
-            kernel_status = {
-                "execution_state": self.execution_state,
-                "lifecycle_state": self.lifecycle_state
-            }        
-            self.log.debug(f"Sending kernel status awareness {kernel_status}")
-            self.main_client.send_kernel_awareness(kernel_status)
-            self.log.debug(f"Sent kernel status awareness {kernel_status}")
