@@ -117,8 +117,9 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
         // Skip the last section with *.output
         outputsUrl = outputsUrl.substring(0, outputsUrl.lastIndexOf('/'));
         requestAPI(outputsUrl)
-          .then(outputs => {
-            (outputs as any).forEach((output: any) => {
+          .then(data => {
+            const outputs = (data as any)['outputs'];
+            outputs.forEach((output: any) => {
               if (!(this as any).isDisposed) {
                 const index = (this as any)._add(output) - 1;
                 const item = (this as any).list.get(index);
