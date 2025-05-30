@@ -7,6 +7,9 @@ from traitlets.config import LoggingConfigurable
 class MissingKeyException(Exception):
     """An exception when a dictionary is missing a required key."""
 
+class InvalidKeyException(Exception):
+    """An exception when the key doesn't match msg_id property in value"""
+
 
 class KernelMessageCache(LoggingConfigurable):
     """
@@ -20,7 +23,7 @@ class KernelMessageCache(LoggingConfigurable):
         _by_cell_id (dict):  A dictionary mapping cell IDs to message data.
         _by_msg_id (OrderedDict): An OrderedDict mapping message IDs to message data,
                                  maintaining insertion order for LRU eviction.
-        _maxsize (int): The maximum number of messages to store in the cache.
+        maxsize (int): The maximum number of messages to store in the cache.
     """
 
     _by_cell_id = Dict({})
@@ -71,7 +74,15 @@ class KernelMessageCache(LoggingConfigurable):
 
         if "channel" not in value:
             raise MissingKeyException("`channel` missing in message data")
+        
+        if value["msg_id"] != msg_id:
+            raise InvalidKeyException("Key must match `msg_id` in value")
 
+        # Remove the existing msg_id if a new msg with same cell_id exists
+        if "cell_id" in value and value["cell_id"] in self._by_cell_id:
+            existing_msg_id = self._by_cell_id[value["cell_id"]]["msg_id"]
+            del self._by_msg_id[existing_msg_id]
+        
         if "cell_id" in value and value['cell_id'] is not None:
             self._by_cell_id[value['cell_id']] = value
 
