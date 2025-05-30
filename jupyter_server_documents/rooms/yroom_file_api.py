@@ -83,19 +83,18 @@ class YRoomFileAPI:
 
     def get_path(self) -> str:
         """
-        Returns the path to the file by querying the FileIdManager. This is a
-        relative path to the `root_dir` in `ContentsManager`.
+        Returns the relative path to the file by querying the FileIdManager. The
+        path is relative to the `ServerApp.root_dir` configurable trait.
 
         Raises a `RuntimeError` if the file ID does not refer to a valid file
         path.
         """
-        abs_path = self._fileid_manager.get_path(self.file_id)
-        if not abs_path:
+        rel_path = self._fileid_manager.get_path(self.file_id)
+        if not rel_path:
             raise RuntimeError(
                 f"Unable to locate file with ID: '{self.file_id}'."
             )
 
-        rel_path = os.path.relpath(abs_path, self._contents_manager.root_dir)
         return rel_path
     
 
