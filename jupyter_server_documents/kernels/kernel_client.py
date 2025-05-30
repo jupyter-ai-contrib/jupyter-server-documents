@@ -243,9 +243,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                 execution_state = content.get("execution_state")
                 # Update status across all collaborative rooms
                 for yroom in self._yrooms:
-                    # If this status came from the shell channel, update 
+                    # If this status came from the shell channel, update
                     # the notebook status.
-                    if parent_msg_data["channel"] == "shell":                        
+                    if parent_msg_data["channel"] == "shell":                     
                         awareness = yroom.get_awareness()
                         if awareness is not None:
                             # Update the kernel execution state at the top document level
@@ -261,23 +261,25 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             target_cell["execution_state"] = state
 
             case "execute_input":
-                # Extract execution count and update each collaborative room's notebook
-                content = self.session.unpack(dmsg["content"])
-                execution_count = content["execution_count"]
-                for yroom in self._yrooms:
-                    notebook = await yroom.get_jupyter_ydoc()
-                    _, target_cell = notebook.find_cell(cell_id)
-                    if target_cell:
-                        target_cell["execution_count"] = execution_count
+                if cell_id:
+                    # Extract execution count and update each collaborative room's notebook
+                    content = self.session.unpack(dmsg["content"])
+                    execution_count = content["execution_count"]
+                    for yroom in self._yrooms:
+                        notebook = await yroom.get_jupyter_ydoc()
+                        _, target_cell = notebook.find_cell(cell_id)
+                        if target_cell:
+                            target_cell["execution_count"] = execution_count
 
             case "stream" | "display_data" | "execute_result" | "error":
-                # Process specific output messages through an optional processor
-                if self.output_processor:
-                    cell_id = parent_msg_data.get('cell_id')
-                    content = self.session.unpack(dmsg["content"])
-                    dmsg = self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
-                    # Suppress forwarding of processed messages by returning None
-                    return None
+                if cell_id: 
+                    # Process specific output messages through an optional processor
+                    if self.output_processor and cell_id:
+                        cell_id = parent_msg_data.get('cell_id')
+                        content = self.session.unpack(dmsg["content"])
+                        dmsg = self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
+                        # Suppress forwarding of processed messages by returning None
+                        return None
 
         # Default return if message is processed and does not need forwarding
         return msg

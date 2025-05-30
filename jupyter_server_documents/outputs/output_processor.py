@@ -56,7 +56,6 @@ class OutputProcessor(LoggingConfigurable):
         notebook = await room.get_jupyter_ydoc()
         self.log.info(f"Notebook: {notebook}")
  
-        cells = notebook.ycells
         cell_index, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None:
             target_cell["outputs"].clear()
@@ -124,7 +123,6 @@ class OutputProcessor(LoggingConfigurable):
         self.log.info(f"Notebook: {notebook}")
  
         # Write the outputs to the ydoc cell.
-        cells = notebook.ycells
         _, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None and output is not None:
             target_cell["outputs"].append(output)
