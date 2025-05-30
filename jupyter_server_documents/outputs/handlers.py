@@ -19,8 +19,13 @@ class OutputsAPIHandler(APIHandler):
     @web.authenticated
     @authorized
     async def get(self, file_id=None, cell_id=None, output_index=None):
+        print("Reached the handler...")
         try:
-            output = self.outputs.get_output(file_id, cell_id, output_index)
+            if output_index:
+                output = self.outputs.get_output(file_id, cell_id, output_index)
+            else:
+                all_outputs = self.outputs.get_outputs(file_id, cell_id)
+                output = {"outputs": all_outputs}
         except (FileNotFoundError, KeyError):
             self.set_status(404)
             self.finish({"error": "Output not found."})
@@ -71,7 +76,7 @@ _cell_id_regex = rf"(?P<cell_id>{_uuid_regex})"
 _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"
 
 outputs_handlers = [
-    (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/{_output_index_regex}.output", OutputsAPIHandler),
+    (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}(?:/{_output_index_regex}.output)?", OutputsAPIHandler),
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]
 
