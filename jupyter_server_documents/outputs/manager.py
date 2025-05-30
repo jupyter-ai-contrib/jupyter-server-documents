@@ -51,10 +51,19 @@ class OutputsManager(LoggingConfigurable):
             raise FileNotFoundError(f"The output dir doesn't exist: {path}")
         
         outputs = []
+
+        # Collect .output files with their modification times
+        output_files = [
+            (f, os.path.getmtime(f)) 
+            for f in path.glob("*.output")
+        ]
         
-        # Find and load .output files
-        for output_file in path.glob("*.output"):
-            with open(output_file, "r", encoding="utf-8") as f:
+        # Sort .output files by modification time
+        output_files.sort(key=lambda x: x[1])
+
+        # Load sorted .output files
+        for file_path, _ in output_files:
+            with open(file_path, "r", encoding="utf-8") as f:
                 output = json.loads(f.read())
                 outputs.append(output)
 
