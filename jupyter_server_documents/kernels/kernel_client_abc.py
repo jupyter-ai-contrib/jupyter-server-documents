@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from jupyter_server_documents.rooms.yroom import YRoom
 
 
-class KernelClientABC(ABC):
+class AbstractKernelClient(ABC):
     
     @abstractmethod
     async def start_listening(self):
@@ -31,7 +31,7 @@ class KernelClientABC(ABC):
         ...
 
 
-class DocumentAwareKernelClientABC(KernelClientABC):
+class AbstractDocumentAwareKernelClient(AbstractKernelClient):
     
     @abstractmethod    
     async def add_yroom(self, yroom: YRoom):

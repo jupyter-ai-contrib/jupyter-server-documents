@@ -14,7 +14,7 @@ from jupyter_server_documents.rooms.yroom import YRoom
 from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server.utils import ensure_async
 
-from .kernel_client_abc import DocumentAwareKernelClientABC
+from .kernel_client_abc import AbstractDocumentAwareKernelClient
 
 
 class DocumentAwareKernelClient(AsyncKernelClient):
@@ -299,4 +299,4 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         self._yrooms.discard(yroom)
 
 
-DocumentAwareKernelClientABC.register(DocumentAwareKernelClient)
+AbstractDocumentAwareKernelClient.register(DocumentAwareKernelClient)
