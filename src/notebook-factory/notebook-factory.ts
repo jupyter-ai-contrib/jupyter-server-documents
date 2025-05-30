@@ -111,31 +111,33 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   constructor(options: IOutputAreaModel.IOptions = {}) {
     super({ ...options, values: [] }); // Don't pass values to OutputAreaModel
     if (options.values?.length) {
-      const firstValue = options.values[0]
-      if((firstValue as any).metadata?.url) {
-        let outputsUrl = (firstValue as any).metadata.url
+      const firstValue = options.values[0];
+      if ((firstValue as any).metadata?.url) {
+        let outputsUrl = (firstValue as any).metadata.url;
         // Skip the last section with *.output
-        outputsUrl = outputsUrl.substring(0, outputsUrl.lastIndexOf('/'))
-        requestAPI(outputsUrl).then(data  => {
-          const outputs = (data as any)["outputs"]
-          outputs.forEach((output: any) => {
-            if (!(this as any).isDisposed) {
-              const index = (this as any)._add(output) - 1;
-              const item = (this as any).list.get(index);
-              item.changed.connect((this as any)._onGenericChange, this);
-            }
+        outputsUrl = outputsUrl.substring(0, outputsUrl.lastIndexOf('/'));
+        requestAPI(outputsUrl)
+          .then(data => {
+            const outputs = (data as any)['outputs'];
+            outputs.forEach((output: any) => {
+              if (!(this as any).isDisposed) {
+                const index = (this as any)._add(output) - 1;
+                const item = (this as any).list.get(index);
+                item.changed.connect((this as any)._onGenericChange, this);
+              }
+            });
+          })
+          .catch(error => {
+            console.error('Error fetching output:', error);
           });
-        }).catch(error => {
-          console.error('Error fetching output:', error);
-        })
       } else {
         options.values.forEach((output: any) => {
-            if (!(this as any).isDisposed) {
-              const index = (this as any)._add(output) - 1;
-              const item = (this as any).list.get(index);
-              item.changed.connect((this as any)._onGenericChange, this);
-            }
-          });
+          if (!(this as any).isDisposed) {
+            const index = (this as any)._add(output) - 1;
+            const item = (this as any).list.get(index);
+            item.changed.connect((this as any)._onGenericChange, this);
+          }
+        });
       }
     }
   }
