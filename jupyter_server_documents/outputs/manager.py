@@ -68,6 +68,16 @@ class OutputsManager(LoggingConfigurable):
 
         # Load sorted .output files
         for file_path, _ in output_files:
+            if len(outputs) >= self.stream_limit:
+                url = f"/api/outputs/{file_id}/{cell_id}/stream"
+                placeholder = {
+                    "output_type": "display_data",
+                    "data": {
+                        'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
+                    }
+                }
+                outputs.append(placeholder)
+                break
             with open(file_path, "r", encoding="utf-8") as f:
                 output = json.loads(f.read())
                 outputs.append(output)

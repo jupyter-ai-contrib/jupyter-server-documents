@@ -19,7 +19,6 @@ class OutputsAPIHandler(APIHandler):
     @web.authenticated
     @authorized
     async def get(self, file_id=None, cell_id=None, output_index=None):
-        print("Reached the handler...")
         try:
             if output_index:
                 output = self.outputs.get_output(file_id, cell_id, output_index)
