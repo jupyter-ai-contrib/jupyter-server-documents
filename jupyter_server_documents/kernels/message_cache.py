@@ -79,9 +79,10 @@ class KernelMessageCache(LoggingConfigurable):
             raise InvalidKeyException("Key must match `msg_id` in value")
 
         # Remove the existing msg_id if a new msg with same cell_id exists
-        if "cell_id" in value and value["cell_id"] in self._by_cell_id:
+        if value["channel"] == "shell" and "cell_id" in value and value["cell_id"] in self._by_cell_id:
             existing_msg_id = self._by_cell_id[value["cell_id"]]["msg_id"]
-            del self._by_msg_id[existing_msg_id]
+            if msg_id != existing_msg_id:
+                del self._by_msg_id[existing_msg_id]
         
         if "cell_id" in value and value['cell_id'] is not None:
             self._by_cell_id[value['cell_id']] = value
