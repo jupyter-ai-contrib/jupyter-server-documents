@@ -22,16 +22,18 @@ class OutputsAPIHandler(APIHandler):
         try:
             if output_index:
                 output = self.outputs.get_output(file_id, cell_id, output_index)
+                content_type = "application/json"
             else:
-                all_outputs = self.outputs.get_outputs(file_id, cell_id)
-                output = {"outputs": all_outputs}
+                outputs = self.outputs.get_outputs(file_id, cell_id)
+                output = "\n".join(outputs)
+                content_type = "application/x-ndjson"
         except (FileNotFoundError, KeyError):
             self.set_status(404)
             self.finish({"error": "Output not found."})
         else:
             self.set_status(200)
-            self.set_header("Content-Type", "application/json")
             self.write(output)
+            self.finish(set_content_type=content_type)
 
 
 class StreamAPIHandler(APIHandler):

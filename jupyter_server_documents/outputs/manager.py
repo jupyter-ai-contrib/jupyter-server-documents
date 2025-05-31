@@ -76,10 +76,10 @@ class OutputsManager(LoggingConfigurable):
                         'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
                     }
                 }
-                outputs.append(placeholder)
+                outputs.append(json.dumps(placeholder))
                 break
             with open(file_path, "r", encoding="utf-8") as f:
-                output = json.loads(f.read())
+                output = f.read()
                 outputs.append(output)
 
         return outputs

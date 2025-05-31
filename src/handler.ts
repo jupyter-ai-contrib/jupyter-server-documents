@@ -28,11 +28,20 @@ export async function requestAPI<T>(
     throw new ServerConnection.NetworkError(error as any);
   }
 
-  let data: any = await response.text();
+  const contentType = response.headers.get('Content-Type') || '';
+  let data: any;
 
-  if (data.length > 0) {
+  // Read response text
+  const responseText = await response.text();
+
+  if (contentType.includes('application/x-ndjson')) {
+    data = responseText
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line));
+  } else if (responseText.length > 0) {
     try {
-      data = JSON.parse(data);
+      data = JSON.parse(responseText);
     } catch (error) {
       console.log('Not a JSON response body.', response);
     }
