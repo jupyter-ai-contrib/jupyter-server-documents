@@ -4,7 +4,6 @@ from jupyter_server.base.handlers import APIHandler
 import tornado
 
 from jupyter_server.auth.decorator import authorized
-from jupyter_server.base.handlers import APIHandler
 from tornado import web
 from tornado.escape import json_encode
 
