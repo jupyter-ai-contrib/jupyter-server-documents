@@ -57,30 +57,29 @@ class OutputsManager(LoggingConfigurable):
         
         outputs = []
 
-        # Collect .output files with their modification times
         output_files = [
-            (f, os.path.getmtime(f)) 
+            (f, int(f.stem)) 
             for f in path.glob("*.output")
         ]
-        
-        # Sort .output files by modification time
         output_files.sort(key=lambda x: x[1])
+        output_files = output_files[:self.stream_limit]
+        has_more_files = len(output_files) >= self.stream_limit
 
-        # Load sorted .output files
+        outputs = []
         for file_path, _ in output_files:
-            if len(outputs) >= self.stream_limit:
-                url = f"/api/outputs/{file_id}/{cell_id}/stream"
-                placeholder = {
-                    "output_type": "display_data",
-                    "data": {
-                        'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
-                    }
-                }
-                outputs.append(json.dumps(placeholder))
-                break
             with open(file_path, "r", encoding="utf-8") as f:
                 output = f.read()
                 outputs.append(output)
+
+        if has_more_files:
+            url = f"/api/outputs/{file_id}/{cell_id}/stream"
+            placeholder = {
+                "output_type": "display_data",
+                "data": {
+                    'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
+                }
+            }
+            outputs.append(json.dumps(placeholder))
 
         return outputs
         
