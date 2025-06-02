@@ -405,7 +405,7 @@ class YRoom:
         self._broadcast_message(message, message_type="SyncUpdate")
 
 
-    def _on_jupyter_ydoc_update(self, updated_key: str, event: pycrdt) -> None:
+    def _on_jupyter_ydoc_update(self, updated_key: str, event: Any) -> None:
         """
         This method is an observer on `self._jupyter_ydoc` which saves the file
         whenever the YDoc changes.
