@@ -1,6 +1,7 @@
 import {
-  YFile as DefaultYFile
-  // YNotebook as DefaultYNotebook
+  YFile as DefaultYFile,
+  YNotebook as DefaultYNotebook,
+  ISharedNotebook
 } from '@jupyter/ydoc';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
@@ -34,14 +35,14 @@ export class YFile extends DefaultYFile {
     (this as any)._ydoc = new Y.Doc();
 
     // Reset all properties derived from `this._ydoc`
-    (this as any).ysource = (this as any)._ydoc.getText('source');
-    (this as any)._ystate = (this as any)._ydoc.getMap('state');
+    (this as any).ysource = this.ydoc.getText('source');
+    (this as any)._ystate = this.ydoc.getMap('state');
     (this as any)._undoManager = new Y.UndoManager([], {
       trackedOrigins: new Set([this]),
       doc: (this as any)._ydoc
     });
     (this as any)._undoManager.addToScope(this.ysource);
-    (this as any)._awareness = new Awareness((this as any)._ydoc);
+    (this as any)._awareness = new Awareness(this.ydoc);
 
     // Emit to `this.resetSignal` to inform consumers immediately
     this._resetSignal.emit(null);
@@ -57,6 +58,55 @@ export class YFile extends DefaultYFile {
    *
    * The Codemirror Yjs extension defined in `ybinding.ts` listens to this
    * signal to clear the editor when the YDoc is reset.
+   */
+  get resetSignal(): ISignal<this, null> {
+    return this._resetSignal;
+  }
+
+  _resetSignal: Signal<this, null>;
+}
+
+export class YNotebook extends DefaultYNotebook {
+  constructor(options?: Omit<ISharedNotebook.IOptions, 'data'>) {
+    super(options);
+    this._resetSignal = new Signal(this);
+  }
+
+  /**
+   * See `YFile.reset()`.
+   */
+  reset() {
+    // Remove default observers
+    this._ycells.unobserve((this as any)._onYCellsChanged);
+    this.ymeta.unobserveDeep((this as any)._onMetaChanged);
+    (this as any)._ystate.unobserve(this.onStateChanged);
+
+    // Reset `this._ydoc` to an empty state
+    (this as any)._ydoc = new Y.Doc();
+
+    // Reset all properties derived from `this._ydoc`
+    (this as any)._ystate = this.ydoc.getMap('state');
+    (this as any)._ycells = this.ydoc.getArray('cells');
+    (this as any).cells = [];
+    (this as any).ymeta = this.ydoc.getMap('meta');
+    (this as any)._undoManager = new Y.UndoManager([], {
+      trackedOrigins: new Set([this]),
+      doc: (this as any)._ydoc
+    });
+    (this as any)._undoManager.addToScope(this._ycells);
+    (this as any)._awareness = new Awareness(this.ydoc);
+
+    // Emit to `this.resetSignal` to inform consumers immediately
+    this._resetSignal.emit(null);
+
+    // Add back default observers
+    this._ycells.observe((this as any)._onYCellsChanged);
+    this.ymeta.observeDeep((this as any)._onMetaChanged);
+    (this as any)._ystate.observe(this.onStateChanged);
+  }
+
+  /**
+   * See `YFile.resetSignal`.
    */
   get resetSignal(): ISignal<this, null> {
     return this._resetSignal;

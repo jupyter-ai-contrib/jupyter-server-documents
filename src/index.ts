@@ -25,9 +25,7 @@ import { KeyboardEvent } from 'react';
 import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
 import { AwarenessExecutionIndicator } from './executionindicator';
 
-import { IEditorServices } from '@jupyterlab/codeeditor';
 import { requestAPI } from './handler';
-import { RtcNotebookContentFactory } from './notebook';
 
 import { rtcContentProvider, yfile, ynotebook, logger } from './docprovider';
 
@@ -43,6 +41,7 @@ import { URLExt } from '@jupyterlab/coreutils';
 import { AwarenessKernelStatus } from './kernelstatus';
 
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
+import { notebookFactoryPlugin } from './notebook-factory';
 
 /**
  * Initialization data for the @jupyter/server-documents extension.
@@ -62,7 +61,10 @@ export const plugin: JupyterFrontEndPlugin<void> = {
       settingRegistry
         .load(plugin.id)
         .then(settings => {
-          console.log('@jupyter/server-documents settings loaded:', settings.composite);
+          console.log(
+            '@jupyter/server-documents settings loaded:',
+            settings.composite
+          );
         })
         .catch(reason => {
           console.error(
@@ -279,21 +281,6 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
   }
 };
 
-/**
- * The notebook cell factory provider.
- */
-const factory: JupyterFrontEndPlugin<NotebookPanel.IContentFactory> = {
-  id: '@jupyter/server-documents/notebook-extension:factory',
-  description: 'Provides the notebook cell factory.',
-  provides: NotebookPanel.IContentFactory,
-  requires: [IEditorServices],
-  autoStart: true,
-  activate: (app: JupyterFrontEnd, editorServices: IEditorServices) => {
-    const editorFactory = editorServices.factoryService.newInlineEditor;
-    return new RtcNotebookContentFactory({ editorFactory });
-  }
-};
-
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcContentProvider,
   yfile,
@@ -303,7 +290,7 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
   executionIndicator,
   kernelStatus,
-  factory,
+  notebookFactoryPlugin,
   codemirrorYjsPlugin
 ];
 
