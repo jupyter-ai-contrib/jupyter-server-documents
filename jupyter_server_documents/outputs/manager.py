@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 from pathlib import Path, PurePath
@@ -43,21 +42,18 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "r", encoding="utf-8") as f:
             output = json.loads(f.read())
         return output
-    
+
     def get_outputs(self, file_id, cell_id):
         """Get all outputs by file_id, cell_id."""
         path = self._build_path(file_id, cell_id)
         if not os.path.isdir(path):
             raise FileNotFoundError(f"The output dir doesn't exist: {path}")
-        
+
         outputs = []
 
-        output_files = [
-            (f, int(f.stem)) 
-            for f in path.glob("*.output")
-        ]
+        output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
         output_files.sort(key=lambda x: x[1])
-        output_files = output_files[:self.stream_limit]
+        output_files = output_files[: self.stream_limit]
         has_more_files = len(output_files) >= self.stream_limit
 
         outputs = []
@@ -67,17 +63,10 @@ class OutputsManager(LoggingConfigurable):
                 outputs.append(output)
 
         if has_more_files:
-            url = f"/api/outputs/{file_id}/{cell_id}/stream"
-            placeholder = {
-                "output_type": "display_data",
-                "data": {
-                    'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
-                }
-            }
+            placeholder = self._create_outputs_placeholder(file_id, cell_id)
             outputs.append(json.dumps(placeholder))
 
         return outputs
-        
 
     def get_outputs(self, file_id, cell_id):
         """Get all outputs by file_id, cell_id."""
