@@ -34,7 +34,7 @@ class OutputsManager(LoggingConfigurable):
             path = path / f"{output_index}.output"
         return path
 
-    def _create_outputs_placeholder(self, file_id: str, cell_id: str):
+    def _create_outputs_link(self, file_id: str, cell_id: str):
         url = f"/api/outputs/{file_id}/{cell_id}/stream"
         return {
             "output_type": "display_data",
@@ -72,7 +72,7 @@ class OutputsManager(LoggingConfigurable):
                 outputs.append(output)
 
         if has_more_files:
-            placeholder = self._create_outputs_placeholder(file_id, cell_id)
+            placeholder = self._create_outputs_link(file_id, cell_id)
             outputs.append(json.dumps(placeholder))
 
         return outputs
@@ -134,7 +134,7 @@ class OutputsManager(LoggingConfigurable):
             placeholder = placeholder
         elif count == self.stream_limit:
             # Return a link to the full stream output
-            placeholder = Map(self._create_outputs_placeholder(file_id, cell_id))
+            placeholder = Map(self._create_outputs_link(file_id, cell_id))
         elif count > self.stream_limit:
             # Return None to indicate that no placeholder should be written to the ydoc
             placeholder = None
