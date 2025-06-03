@@ -642,19 +642,23 @@ def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
     more info.
     """
     # Iterate through the keys added/updated/deleted by this event. Return
-    # `False` if:
-    # - any key was not updated (i.e. a key was added/deleted), or
-    # - the key was updated to a value different from the previous value
+    # `False` immediately if:
+    # - a key was updated to a value different from the previous value
+    # - a key was added with a value different from the previous value
     for key in event.keys.keys():
-        key_update = event.keys[key]
-        action = key_update.get('action', None)
-        if action != 'update':
-            return False
+        update_info = event.keys[key]
+        action = update_info.get('action', None)
+        if action == 'update':
+            old_value = update_info.get('oldValue', None)
+            new_value = update_info.get('newValue', None)
+            if old_value != new_value:
+                return False
+        elif action == "add":
+            old_value = event.target.get(key, None)
+            new_value = update_info.get('newValue', None)
+            if old_value != new_value:
+                return False
         
-        old_value = key_update.get('oldValue', None)
-        new_value = key_update.get('newValue', None)
-        if old_value != new_value:
-            return False
-    
+    # Otherwise, return `True`.
     return True
     

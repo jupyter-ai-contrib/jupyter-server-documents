@@ -190,9 +190,6 @@ export class WebSocketProvider implements IDocumentProvider {
     if (isSynced) {
       if (this._yWebsocketProvider) {
         this._yWebsocketProvider.off('sync', this._onSync);
-
-        const state = this._sharedModel.ydoc.getMap('state');
-        state.set('document_id', this._yWebsocketProvider.roomname);
       }
       this._ready.resolve();
     }
