@@ -1,4 +1,4 @@
-import { INotebookModel, Notebook, NotebookModel } from '@jupyterlab/notebook';
+import { INotebookModel, Notebook } from '@jupyterlab/notebook';
 import { YNotebook } from '../docprovider/custom_ydocs';
 
 /**
@@ -17,33 +17,30 @@ export class ResettableNotebook extends Notebook {
     return super.model;
   }
 
-  set model(newValue: INotebookModel | null) {
-    // if current model exists, remove the `resetSignal` observer
-    if (this.model) {
-      const ynotebook = this.model.sharedModel as YNotebook;
+  set model(newModel: INotebookModel | null) {
+    // if there is an existing model, remove the `resetSignal` observer
+    const oldModel = this.model;
+    if (oldModel) {
+      const ynotebook = oldModel.sharedModel as YNotebook;
       ynotebook.resetSignal.disconnect(this._resetSignalSlot);
     }
 
     // call parent property setter
-    super.model = newValue;
+    super.model = newModel;
 
     // return early if `newValue === null`
-    if (!newValue) {
+    if (!newModel) {
       return;
     }
 
     // otherwise, listen to `YNotebook.resetSignal`.
-    const ynotebook = newValue.sharedModel as YNotebook;
+    const ynotebook = newModel.sharedModel as YNotebook;
     ynotebook.resetSignal.connect(this._resetSignalSlot);
   }
 
   /**
-   * Function called when the YDoc has been reset. This recreates the notebook
-   * model using this model's options.
-   *
-   * TODO (?): we may want to use NotebookModelFactory, but that factory only
-   * seems to set some configuration options. The NotebookModel constructor
-   * does not require any arguments so this is OK for now.
+   * Function called when the YDoc has been reset. This simply refreshes the UI
+   * to reflect the new YDoc state.
    */
   _onReset() {
     if (!this.model) {
@@ -53,12 +50,8 @@ export class ResettableNotebook extends Notebook {
       return;
     }
 
-    this.model = new NotebookModel({
-      collaborationEnabled: this.model.collaborative,
-      sharedModel: this.model.sharedModel
-      // other options in `NotebookModel.IOptions` are either unused or
-      // forwarded to `YNotebook`, which is preserved here
-    });
+    // Refresh the UI by emitting to the `modelContentChanged` signal
+    this.onModelContentChanged(this.model);
   }
 
   _resetSignalSlot: () => void;
