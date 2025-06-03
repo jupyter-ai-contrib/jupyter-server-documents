@@ -259,6 +259,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             # https://github.com/jupyterlab/jupyterlab/blob/0ad84d93be9cb1318d749ffda27fbcd013304d50/packages/cells/src/widget.ts#L1670-L1678
                             state = 'running' if execution_state == 'busy' else execution_state
                             target_cell["execution_state"] = state
+                            break
 
             case "execute_input":
                 if cell_id:
@@ -270,6 +271,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                         _, target_cell = notebook.find_cell(cell_id)
                         if target_cell:
                             target_cell["execution_count"] = execution_count
+                            break
 
             case "stream" | "display_data" | "execute_result" | "error":
                 if cell_id: 
