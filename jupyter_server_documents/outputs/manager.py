@@ -63,7 +63,7 @@ class OutputsManager(LoggingConfigurable):
                 outputs.append(output)
 
         if has_more_files:
-            placeholder = self._create_outputs_placeholder(file_id, cell_id)
+            placeholder = self._create_outputs_link(file_id, cell_id)
             outputs.append(json.dumps(placeholder))
 
         return outputs
