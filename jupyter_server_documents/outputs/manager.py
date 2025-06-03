@@ -1,4 +1,3 @@
-import glob
 import json
 import os
 from pathlib import Path, PurePath
@@ -7,17 +6,12 @@ import shutil
 from pycrdt import Map
 
 from traitlets.config import LoggingConfigurable
-from traitlets import (
-    Dict,
-    Instance,
-    Int,
-    default
-)
+from traitlets import Dict, Instance, Int, default
 
 from jupyter_core.paths import jupyter_runtime_dir
 
-class OutputsManager(LoggingConfigurable):
 
+class OutputsManager(LoggingConfigurable):
     _last_output_index = Dict(default_value={})
     _stream_count = Dict(default_value={})
 
@@ -27,7 +21,7 @@ class OutputsManager(LoggingConfigurable):
     @default("outputs_path")
     def _default_outputs_path(self):
         return Path(jupyter_runtime_dir()) / "outputs"
-    
+
     def _ensure_path(self, file_id, cell_id):
         nested_dir = self.outputs_path / file_id / cell_id
         nested_dir.mkdir(parents=True, exist_ok=True)
@@ -39,7 +33,16 @@ class OutputsManager(LoggingConfigurable):
         if output_index is not None:
             path = path / f"{output_index}.output"
         return path
-    
+
+    def _create_outputs_placeholder(self, file_id: str, cell_id: str):
+        url = f"/api/outputs/{file_id}/{cell_id}/stream"
+        return {
+            "output_type": "display_data",
+            "data": {
+                "text/html": f'<a href="{url}">Click this link to see the full stream output</a>'
+            },
+        }
+
     def get_output(self, file_id, cell_id, output_index):
         """Get an output by file_id, cell_id, and output_index."""
         path = self._build_path(file_id, cell_id, output_index)
@@ -48,21 +51,18 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "r", encoding="utf-8") as f:
             output = json.loads(f.read())
         return output
-    
+
     def get_outputs(self, file_id, cell_id):
         """Get all outputs by file_id, cell_id."""
         path = self._build_path(file_id, cell_id)
         if not os.path.isdir(path):
             raise FileNotFoundError(f"The output dir doesn't exist: {path}")
-        
+
         outputs = []
 
-        output_files = [
-            (f, int(f.stem)) 
-            for f in path.glob("*.output")
-        ]
+        output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
         output_files.sort(key=lambda x: x[1])
-        output_files = output_files[:self.stream_limit]
+        output_files = output_files[: self.stream_limit]
         has_more_files = len(output_files) >= self.stream_limit
 
         outputs = []
@@ -72,17 +72,10 @@ class OutputsManager(LoggingConfigurable):
                 outputs.append(output)
 
         if has_more_files:
-            url = f"/api/outputs/{file_id}/{cell_id}/stream"
-            placeholder = {
-                "output_type": "display_data",
-                "data": {
-                    'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
-                }
-            }
+            placeholder = self._create_outputs_placeholder(file_id, cell_id)
             outputs.append(json.dumps(placeholder))
 
         return outputs
-        
 
     def get_stream(self, file_id, cell_id):
         "Get the stream output for a cell by file_id and cell_id."
@@ -95,7 +88,7 @@ class OutputsManager(LoggingConfigurable):
 
     def write(self, file_id, cell_id, output):
         """Write a new output for file_id and cell_id.
-        
+
         Returns a placeholder output (pycrdt.Map) or None if no placeholder
         output should be written to the ydoc.
         """
@@ -125,7 +118,7 @@ class OutputsManager(LoggingConfigurable):
         self._ensure_path(file_id, cell_id)
         path = self._build_path(file_id, cell_id) / "stream"
         text = output["text"]
-        mode = 'a' if os.path.isfile(path) else 'w'
+        mode = "a" if os.path.isfile(path) else "w"
         with open(path, "a", encoding="utf-8") as f:
             f.write(text)
         url = f"/api/outputs/{file_id}/{cell_id}/stream"
@@ -141,12 +134,7 @@ class OutputsManager(LoggingConfigurable):
             placeholder = placeholder
         elif count == self.stream_limit:
             # Return a link to the full stream output
-            placeholder = Map({
-                "output_type": "display_data",
-                "data": {
-                    'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
-                }
-            })
+            placeholder = Map(self._create_outputs_placeholder(file_id, cell_id))
         elif count > self.stream_limit:
             # Return None to indicate that no placeholder should be written to the ydoc
             placeholder = None
@@ -172,24 +160,11 @@ class OutputsManager(LoggingConfigurable):
 def create_placeholder_output(output_type: str, url: str):
     metadata = dict(url=url)
     if output_type == "stream":
-        output = Map({
-            "output_type": "stream",
-            "text": "",
-            "metadata": metadata
-        })
+        output = Map({"output_type": "stream", "text": "", "metadata": metadata})
     elif output_type == "display_data":
-        output = Map({
-            "output_type": "display_data",
-            "metadata": metadata
-        })
+        output = Map({"output_type": "display_data", "metadata": metadata})
     elif output_type == "execute_result":
-        output = Map({
-            "output_type": "execute_result",
-            "metadata": metadata
-        })
+        output = Map({"output_type": "execute_result", "metadata": metadata})
     elif output_type == "error":
-        output = Map({
-            "output_type": "error",
-            "metadata": metadata
-        })
+        output = Map({"output_type": "error", "metadata": metadata})
     return output
