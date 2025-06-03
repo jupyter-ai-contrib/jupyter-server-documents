@@ -1,10 +1,18 @@
-import { CodeCell, CodeCellModel } from '@jupyterlab/cells';
+import { CodeCell, CodeCellModel, ICellModel, ICodeCellModel } from '@jupyterlab/cells';
 import { NotebookPanel } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
+import { IChangedArgs } from '@jupyterlab/coreutils';
 import { requestAPI } from './handler';
 
 const globalModelDBMutex = createMutex();
+
+/**
+ * The class name added to the cell when dirty.
+ */
+const DIRTY_CLASS = 'jp-mod-dirty';
+
+
 
 (CodeCellModel.prototype as any)._onSharedModelChanged = function (
   slot: ISharedCodeCell,
@@ -131,6 +139,54 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
         });
       });
     }
+  }
+}
+
+/** 
+ * NOTE: We should upstream this fix. This is a bug in JupyterLab. 
+ * 
+ * The execution count comes back from the kernel immediately
+ * when the execute request is made by the client, even thought
+ * cell might still be running. JupyterLab holds this value in
+ * memory with a Promise to set it later, once the execution 
+ * state goes back to Idle. 
+ * 
+ * In CRDT world, we don't need to do this gymnastics, holding
+ * the state in a Promise. Instead, we can just watch the 
+ * executionState and executionCount in the CRDT being maintained
+ * by the server-side model.
+ * 
+ * This is a big win! It means user can close and re-open a
+ * notebook while a list of executed cells are queued. 
+ */
+(CodeCell.prototype as any).onStateChanged = function (
+
+  model: ICellModel, 
+  args: IChangedArgs<any>
+): void {
+  switch (args.name) {
+    case 'executionCount':
+      // NOTE: This code should not be here. It's a bandaid
+      // fix because executionState and executionCount
+      // aren't handled in a single message without CRDT/YNotebook.
+      // if (args.newValue !== null) {
+      //   // Mark execution state if execution count was set.
+      //   this.model.executionState = 'idle';
+      // }
+      this._updatePrompt();
+      break;
+    case 'executionState':
+      this._updatePrompt();
+      break;
+    case 'isDirty':
+      if ((model as ICodeCellModel).isDirty) {
+        this.addClass(DIRTY_CLASS);
+      } else {
+        this.removeClass(DIRTY_CLASS);
+      }
+      break;
+    default:
+      break;
   }
 }
 

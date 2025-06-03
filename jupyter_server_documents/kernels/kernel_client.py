@@ -9,15 +9,17 @@ import typing as t
 from traitlets import Set, Instance, Any, Type, default
 from jupyter_client.asynchronous.client import AsyncKernelClient
 
-from .utils import LRUCache
+from .message_cache import KernelMessageCache
 from jupyter_server_documents.rooms.yroom import YRoom
 from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server.utils import ensure_async
 
+from .kernel_client_abc import AbstractDocumentAwareKernelClient
 
-class DocumentAwareKernelClient(AsyncKernelClient): 
+
+class DocumentAwareKernelClient(AsyncKernelClient):
     """
-    A kernel client 
+    A kernel client that routes messages to registered ydocs.
     """
     # Having this message cache is not ideal.
     # Unfortunately, we don't include the parent channel
@@ -25,9 +27,13 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     # we can't differential between the control channel vs.
     # shell channel status. This message cache gives us
     # the ability to map status message back to their source.
-    message_source_cache = Instance(
-        default_value=LRUCache(maxsize=1000), klass=LRUCache
+    message_cache = Instance(
+        klass=KernelMessageCache
     )
+
+    @default('message_cache')
+    def _default_message_cache(self):
+        return KernelMessageCache(parent=self)
 
     # A set of callables that are called when a kernel
     # message is received.
@@ -36,6 +42,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     # A set of YRooms that will intercept output and kernel
     # status messages.
     _yrooms: t.Set[YRoom] = Set(trait=Instance(YRoom), default_value=set())
+
 
     output_processor = Instance(
         OutputProcessor,
@@ -50,7 +57,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     @default("output_processor")
     def _default_output_processor(self) -> OutputProcessor:
         self.log.info("Creating output processor")
-        return OutputProcessor(parent=self, config=self.config)
+        return self.output_process_class(parent=self, config=self.config)
 
     async def start_listening(self):
         """Start listening to messages coming from the kernel.
@@ -94,10 +101,23 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Cache the message ID and its socket name so that
         # any response message can be mapped back to the
         # source channel.
-        self.output_processor.process_incoming_message(channel=channel_name, msg=msg)
-        header = json.loads(msg[0]) # TODO: use session.unpack
-        msg_id = header["msg_id"]
-        self.message_source_cache[msg_id] = channel_name
+        header = self.session.unpack(msg[0])
+        msg_id = header["msg_id"]                
+        metadata = self.session.unpack(msg[2])
+        cell_id = metadata.get("cellId")
+        
+        # Clear output processor if this cell already has 
+        # an existing request.
+        if cell_id:
+            existing = self.message_cache.get(cell_id=cell_id)
+            if existing and existing['msg_id'] != msg_id:
+                self.output_processor.clear(cell_id)
+        
+        self.message_cache.add({
+            "msg_id": msg_id,
+            "channel": channel_name,
+            "cell_id": cell_id
+        })
         channel = getattr(self, f"{channel_name}_channel")
         channel.session.send_raw(channel.socket, msg)
 
@@ -152,7 +172,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         async with anyio.create_task_group() as tg:
             # Broadcast the message to all listeners.
             for listener in self._listeners:
-                async def _wrap_listener(listener_to_wrap, channel_name, msg): 
+                async def _wrap_listener(listener_to_wrap, channel_name, msg):
                     """
                     Wrap the listener to ensure its async and 
                     logs (instead of raises) exceptions.
@@ -172,63 +192,99 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         when appropriate. Then, it routes the message
         to all listeners.
         """
-        # Intercept messages that are IOPub focused.
-        if channel_name == "iopub":
-            message_returned = await self.handle_iopub_message(msg)
-            # If the message is not returned by the iopub handler, then
-            # return here and do not forward to listeners.
-            if not message_returned:
-                self.log.warn(f"If message is handled do not forward after adding output manager")
+        if channel_name in ('iopub', 'shell'):
+            msg = await self.handle_document_related_message(msg)
+            # If msg has been cleared by the handler, escape this method.
+            if msg is None:
                 return
-
-        # Update the last activity.
-        # self.last_activity = self.session.msg_time
+        
         await self.send_message_to_listeners(channel_name, msg)
 
-    async def handle_iopub_message(self, msg: list[bytes]) -> t.Optional[list[bytes]]:
+    async def handle_document_related_message(self, msg: t.List[bytes]) -> t.Optional[t.List[bytes]]:
         """
-        Handle messages
+        Processes document-related messages received from a Jupyter kernel.
         
-        Parameters
-        ----------
-        dmsg: dict
-            Deserialized message (except concept)
-            
-        Returns
-        ------- 
-        Returns the message if it should be forwarded to listeners. Otherwise,
-        returns `None` and prevents (i.e. intercepts) the message from going
-        to listeners.
-        """
+        Messages are deserialized and handled based on their type. Supported message types
+        include updating language info, kernel status, execution state, execution count,
+        and various output types. Some messages may be processed by an output processor
+        before deciding whether to forward them.
 
+        Returns the original message if it is not processed further, otherwise None to indicate
+        that the message should not be forwarded.
+        """
+        # Begin to deserialize the message safely within a try-except block
         try:
             dmsg = self.session.deserialize(msg, content=False)
         except Exception as e:
             self.log.error(f"Error deserializing message: {e}")
             raise
 
-        if self.output_processor is not None and dmsg["msg_type"] in ("stream", "display_data", "execute_result", "error"):
-            dmsg = self.output_processor.process_outgoing_message(dmsg)
+        parent_msg_id = dmsg["parent_header"]["msg_id"]
+        parent_msg_data = self.message_cache.get(parent_msg_id)
+        cell_id = parent_msg_data.get('cell_id')
 
-        # If process_outgoing_message returns None, return None so the message isn't
-        # sent to clients, otherwise return the original serialized message.
-        if dmsg is None:
-            return None
-        else:
-            return msg
+        # Handle different message types using pattern matching
+        match dmsg["msg_type"]:
+            case "kernel_info_reply":
+                # Unpack the content to extract language info
+                content = self.session.unpack(dmsg["content"])
+                language_info = content["language_info"]
+                # Update the language info metadata for each collaborative room
+                for yroom in self._yrooms:
+                    notebook = await yroom.get_jupyter_ydoc()
+                    # The metadata ydoc is not exposed as a
+                    # public property.
+                    metadata = notebook.ymeta
+                    metadata["metadata"]["language_info"] = language_info
 
-    def send_kernel_awareness(self, kernel_status: dict):
-        """
-        Send kernel status awareness messages to all yrooms
-        """
-        for yroom in self._yrooms:
-            awareness = yroom.get_awareness()
-            if awareness is None:
-                self.log.error(f"awareness cannot be None. room_id: {yroom.room_id}")
-                continue
-            self.log.debug(f"current state: {awareness.get_local_state()} room_id: {yroom.room_id}. kernel status: {kernel_status}")
-            awareness.set_local_state_field("kernel", kernel_status)    
-            self.log.debug(f"current state: {awareness.get_local_state()} room_id: {yroom.room_id}")
+            case "status":
+                # Unpack cell-specific information and determine execution state
+                content = self.session.unpack(dmsg["content"])
+                execution_state = content.get("execution_state")
+                # Update status across all collaborative rooms
+                for yroom in self._yrooms:
+                    # If this status came from the shell channel, update
+                    # the notebook status.
+                    if parent_msg_data["channel"] == "shell":                     
+                        awareness = yroom.get_awareness()
+                        if awareness is not None:
+                            # Update the kernel execution state at the top document level
+                            awareness.set_local_state_field("kernel", {"execution_state": execution_state})
+                    # Specifically update the running cell's execution state if cell_id is provided
+                    if cell_id:
+                        notebook = await yroom.get_jupyter_ydoc()
+                        _, target_cell = notebook.find_cell(cell_id)
+                        if target_cell:
+                            # Adjust state naming convention from 'busy' to 'running' as per JupyterLab expectation
+                            # https://github.com/jupyterlab/jupyterlab/blob/0ad84d93be9cb1318d749ffda27fbcd013304d50/packages/cells/src/widget.ts#L1670-L1678
+                            state = 'running' if execution_state == 'busy' else execution_state
+                            target_cell["execution_state"] = state
+                            break
+
+            case "execute_input":
+                if cell_id:
+                    # Extract execution count and update each collaborative room's notebook
+                    content = self.session.unpack(dmsg["content"])
+                    execution_count = content["execution_count"]
+                    for yroom in self._yrooms:
+                        notebook = await yroom.get_jupyter_ydoc()
+                        _, target_cell = notebook.find_cell(cell_id)
+                        if target_cell:
+                            target_cell["execution_count"] = execution_count
+                            break
+
+            case "stream" | "display_data" | "execute_result" | "error":
+                if cell_id: 
+                    # Process specific output messages through an optional processor
+                    if self.output_processor and cell_id:
+                        cell_id = parent_msg_data.get('cell_id')
+                        content = self.session.unpack(dmsg["content"])
+                        dmsg = self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
+                        # Suppress forwarding of processed messages by returning None
+                        return None
+
+        # Default return if message is processed and does not need forwarding
+        return msg
 
     async def add_yroom(self, yroom: YRoom):
         """
@@ -242,3 +298,6 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         De-register a YRoom from handling kernel client messages.
         """
         self._yrooms.discard(yroom)
+
+
+AbstractDocumentAwareKernelClient.register(DocumentAwareKernelClient)
