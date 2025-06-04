@@ -405,18 +405,23 @@ class YRoom:
         self._broadcast_message(message, message_type="SyncUpdate")
 
 
-    def _on_jupyter_ydoc_update(self, updated_key: str, *_) -> None:
+    def _on_jupyter_ydoc_update(self, updated_key: str, event: Any) -> None:
         """
         This method is an observer on `self._jupyter_ydoc` which saves the file
-        whenever the YDoc changes, unless `updated_key == "state"`.
+        whenever the YDoc changes.
 
-        The `state` key is used by `jupyter_ydoc` to store temporary data like
-        whether a file is 'dirty' (has unsaved changes). This data is not
-        persisted, so changes to the `state` key should be ignored. Otherwise,
-        an infinite loop of saves will result, as saving sets `dirty = False`.
+        - This observer ignores updates to the 'state' dictionary if they have
+        no effect. See `should_ignore_state_update()` documentation for info.
 
-        This observer is separate because `pycrdt.Doc.observe()` does not pass
-        `updated_key` to `self._on_ydoc_update()`.
+        - This observer is separate from the `pycrdt` observer because we must
+        check if the update should be ignored. This requires the `updated_key`
+        and `event` arguments exclusive to `jupyter_ydoc` observers, not
+        available to `pycrdt` observers.
+
+        - The type of the `event` argument depends on the shared type that
+        `updated_key` references. If it references a `pycrdt.Map`, then event
+        will always be of type `pycrdt.MapEvent`. Same applies for other shared
+        types, like `pycrdt.Array` or `pycrdt.Text`.
         """
         # Do nothing if there is no file API for this room (e.g. global awareness)
         if self.file_api is None:
@@ -429,10 +434,16 @@ class YRoom:
         if content_loading:
             return
 
-        # Save only when the content of the YDoc is updated.
-        # See this method's docstring for more context.
-        if updated_key != "state":
-            self.file_api.schedule_save()
+        # Do nothing if the event updates the 'state' dictionary with no effect
+        if updated_key == "state":
+            # The 'state' key always refers to a `pycrdt.Map` shared type, so
+            # event always has type `pycrdt.MapEvent`.
+            map_event = cast(pycrdt.MapEvent, event)
+            if should_ignore_state_update(map_event):
+                return
+
+        # Otherwise, save the file
+        self.file_api.schedule_save()
 
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
@@ -614,3 +625,40 @@ class YRoom:
         # JupyterYDoc in the process.
         if self.file_api:
             await self.file_api.stop_then_save()
+
+def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
+    """
+    Returns whether an update to the `state` dictionary should be ignored by
+    `_on_jupyter_ydoc_update()`. Every Jupyter YDoc includes this dictionary in
+    its YDoc.
+
+    This function returns `False` if the update has no effect, i.e. the event
+    consists of updating each key to the same value it had originally.
+
+    Motivation: `pycrdt` emits update events on the 'state' key even when they have no
+    effect. Without ignoring those updates, saving the file triggers an
+    infinite loop of saves, as setting `jupyter_ydoc.dirty = False` always
+    emits an update, even if that attribute was already `False`. See PR #50 for
+    more info.
+    """
+    # Iterate through the keys added/updated/deleted by this event. Return
+    # `False` immediately if:
+    # - a key was updated to a value different from the previous value
+    # - a key was added with a value different from the previous value
+    for key in event.keys.keys():
+        update_info = event.keys[key]
+        action = update_info.get('action', None)
+        if action == 'update':
+            old_value = update_info.get('oldValue', None)
+            new_value = update_info.get('newValue', None)
+            if old_value != new_value:
+                return False
+        elif action == "add":
+            old_value = event.target.get(key, None)
+            new_value = update_info.get('newValue', None)
+            if old_value != new_value:
+                return False
+        
+    # Otherwise, return `True`.
+    return True
+    

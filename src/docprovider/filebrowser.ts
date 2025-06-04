@@ -25,8 +25,7 @@ import {
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { ITranslator, nullTranslator } from '@jupyterlab/translation';
 
-import { YNotebook } from '@jupyter/ydoc';
-import { YFile } from './custom_ydocs';
+import { YFile, YNotebook } from './custom_ydocs';
 
 import {
   ICollaborativeContentProvider,

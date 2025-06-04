@@ -1,9 +1,15 @@
-import { CodeCell, CodeCellModel, ICellModel, ICodeCellModel } from '@jupyterlab/cells';
-import { NotebookPanel } from '@jupyterlab/notebook';
+import {
+  CodeCell,
+  CodeCellModel,
+  ICellModel,
+  ICodeCellModel
+} from '@jupyterlab/cells';
+import { IChangedArgs } from '@jupyterlab/coreutils';
+import { Notebook, NotebookPanel } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
-import { IChangedArgs } from '@jupyterlab/coreutils';
-import { requestAPI } from './handler';
+import { requestAPI } from '../handler';
+import { ResettableNotebook } from './notebook';
 
 const globalModelDBMutex = createMutex();
 
@@ -11,8 +17,6 @@ const globalModelDBMutex = createMutex();
  * The class name added to the cell when dirty.
  */
 const DIRTY_CLASS = 'jp-mod-dirty';
-
-
 
 (CodeCellModel.prototype as any)._onSharedModelChanged = function (
   slot: ISharedCodeCell,
@@ -142,26 +146,25 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   }
 }
 
-/** 
- * NOTE: We should upstream this fix. This is a bug in JupyterLab. 
- * 
+/**
+ * NOTE: We should upstream this fix. This is a bug in JupyterLab.
+ *
  * The execution count comes back from the kernel immediately
  * when the execute request is made by the client, even thought
  * cell might still be running. JupyterLab holds this value in
- * memory with a Promise to set it later, once the execution 
- * state goes back to Idle. 
- * 
+ * memory with a Promise to set it later, once the execution
+ * state goes back to Idle.
+ *
  * In CRDT world, we don't need to do this gymnastics, holding
- * the state in a Promise. Instead, we can just watch the 
+ * the state in a Promise. Instead, we can just watch the
  * executionState and executionCount in the CRDT being maintained
  * by the server-side model.
- * 
+ *
  * This is a big win! It means user can close and re-open a
- * notebook while a list of executed cells are queued. 
+ * notebook while a list of executed cells are queued.
  */
 (CodeCell.prototype as any).onStateChanged = function (
-
-  model: ICellModel, 
+  model: ICellModel,
   args: IChangedArgs<any>
 ): void {
   switch (args.name) {
@@ -188,7 +191,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
     default:
       break;
   }
-}
+};
 
 CodeCellModel.ContentFactory.prototype.createOutputArea = function (
   options: IOutputAreaModel.IOptions
@@ -202,5 +205,9 @@ export class RtcNotebookContentFactory
 {
   createCodeCell(options: CodeCell.IOptions): CodeCell {
     return new CodeCell(options).initializeState();
+  }
+
+  createNotebook(options: Notebook.IOptions): Notebook {
+    return new ResettableNotebook(options);
   }
 }

@@ -16,7 +16,7 @@ import { DocumentChange, YDocument } from '@jupyter/ydoc';
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
-import { YFile } from './custom_ydocs';
+import { YFile, YNotebook } from './custom_ydocs';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -146,7 +146,7 @@ export class WebSocketProvider implements IDocumentProvider {
     const close_code = event.code;
 
     // 4000 := server close code on out-of-band change
-    if (close_code === 4000 && this._sharedModel instanceof YFile) {
+    if (close_code === 4000) {
       this._handleOobChange();
       return;
     }
@@ -172,9 +172,8 @@ export class WebSocketProvider implements IDocumentProvider {
    */
   private _handleOobChange() {
     // Reset YDoc
-    // TODO: handle YNotebooks.
     // TODO: is it safe to assume that we only need YFile & YNotebook?
-    const sharedModel = this._sharedModel as YFile;
+    const sharedModel = this._sharedModel as YFile | YNotebook;
     sharedModel.reset();
 
     // Re-connect and display a notification to the user
@@ -191,9 +190,6 @@ export class WebSocketProvider implements IDocumentProvider {
     if (isSynced) {
       if (this._yWebsocketProvider) {
         this._yWebsocketProvider.off('sync', this._onSync);
-
-        const state = this._sharedModel.ydoc.getMap('state');
-        state.set('document_id', this._yWebsocketProvider.roomname);
       }
       this._ready.resolve();
     }
