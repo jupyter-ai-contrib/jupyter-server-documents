@@ -92,9 +92,13 @@ class OutputProcessor(LoggingConfigurable):
             # TODO: The session manager may have multiple notebooks connected to the kernel
             # but currently get_session only returns the first. We need to fix this and
             # find the notebook with the right cell_id.
-            kernel_session = await self.session_manager.get_session(kernel_id=self.parent.parent.kernel_id)
+            kernel_session = await self.session_manager.get_session(
+                kernel_id=self.parent.parent.kernel_id
+            )
         except Exception as e:
-            self.log.error(f"An exception occurred when processing output for cell {cell_id}")
+            self.log.error(
+                f"An exception occurred when processing output for cell {cell_id}"
+            )
             self.log.exception(e)
             return
         else:
