@@ -219,7 +219,8 @@ export class WebSocketProvider implements IDocumentProvider {
 
   /**
    * Handles an out-of-band change indicated by close code 4000. This requires
-   * resetting the YDoc, re-connecting, then emitting a notification to the user.
+   * resetting the YDoc and re-connecting. A notification is emitted to the user
+   * if the document widget containing the shared model is open & visible.
    */
   private _handleOobChange() {
     // Reset YDoc
@@ -227,14 +228,20 @@ export class WebSocketProvider implements IDocumentProvider {
     const sharedModel = this._sharedModel as YFile | YNotebook;
     sharedModel.reset();
 
-    // Re-connect and display a notification to the user
+    // Re-connect
     this.reconnect();
-    Notification.info(
-      'The contents of this file were changed on disk. The document state has been reset.',
-      {
-        autoClose: false
-      }
-    );
+
+    // Emit notification if document is open & visible to the user (i.e. the tab
+    // exists & the content of that tab is being shown)
+    const docWidget = this.parentDocumentWidget;
+    if (docWidget && docWidget.isVisible) {
+      Notification.info(
+        `The file '${this._path}' was modified on disk. The document tab has been reset.`,
+        {
+          autoClose: 10000
+        }
+      );
+    }
   }
 
   /**
@@ -249,7 +256,7 @@ export class WebSocketProvider implements IDocumentProvider {
    */
   private _handleOobMove() {
     this._stopCloseAndNotify(
-      `The file at '${this._path}' no longer exists, and was either moved or deleted. The document tab has been closed.`
+      `The file '${this._path}' no longer exists, and was either moved or deleted. The document tab has been closed.`
     );
   }
 
@@ -259,7 +266,7 @@ export class WebSocketProvider implements IDocumentProvider {
    */
   private _handleIbDeletion() {
     this._stopCloseAndNotify(
-      `The file at '${this._path}' was deleted. The document tab has been closed.`
+      `The file '${this._path}' was deleted. The document tab has been closed.`
     );
   }
 
