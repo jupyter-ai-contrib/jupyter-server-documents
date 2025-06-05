@@ -38,7 +38,6 @@ const DIRTY_CLASS = 'jp-mod-dirty';
   }
 
   if (change.outputsChange) {
-    console.trace(change.outputsChange);
     globalModelDBMutex(() => {
       let retain = 0;
       for (const outputsChange of change.outputsChange!) {

@@ -120,17 +120,14 @@ class OutputsManager(LoggingConfigurable):
         return placeholder
 
     def write_output(self, file_id, cell_id, output, display_id=None):
-        print(f"display_id:{display_id} passed into write_output")
         self._ensure_path(file_id, cell_id)
         last_index = self._last_output_index.get(cell_id, -1)
         if display_id:
             index = self._output_index_by_display_id.get(display_id)
-            print(f"Found index: {index} for display_id {display_id}")
             if index is None:
                 index = last_index + 1
                 self._last_output_index[cell_id] = index
                 self._output_index_by_display_id[display_id] = index
-                print(f"Generated new index: {index} for display_id: {display_id}")
         else:
             index = last_index + 1
             self._last_output_index[cell_id] = index
