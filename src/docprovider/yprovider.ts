@@ -197,6 +197,12 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
 
+    // 4002 := indicates in-band deletion
+    if (close_code === 4002) {
+      this._handleIbDeletion();
+      return;
+    }
+
     // If the close code is unhandled, log an error to the browser console and
     // show a popup asking user to refresh the page.
     console.error('WebSocket connection was closed. Close event: ', event);
@@ -234,24 +240,42 @@ export class WebSocketProvider implements IDocumentProvider {
   /**
    * Handles an out-of-band move/deletion indicated by close code 4001.
    *
-   * - If the parent document widget is open, then this closes the tab, emits a
-   * warning notification to the user, and disposes the shared model to halt
-   * reconnection.
+   * This always stops the provider from reconnecting. If the parent document
+   * widget is open, this method also closes the tab and emits a warning
+   * notification to the user.
    *
-   * - Otherwise, this method just disposes the shared model. The user does not
-   * need to be notified if the document isn't open.
+   * No notification is emitted if the document isn't open, since the user does
+   * not need to be notified.
    */
   private _handleOobMove() {
+    this._stopCloseAndNotify(
+      `The file at '${this._path}' no longer exists, and was either moved or deleted. The document tab has been closed.`
+    );
+  }
+
+  /**
+   * Handles an in-band deletion indicated by close code 4002. This behaves
+   * similarly to `_handleOobMove()`, but with a different notification message.
+   */
+  private _handleIbDeletion() {
+    this._stopCloseAndNotify(
+      `The file at '${this._path}' was deleted. The document tab has been closed.`
+    );
+  }
+
+  /**
+   * Stops the provider from reconnecting. If the parent document widget is
+   * open, this method also closes the tab and emits a warning notification to
+   * the user with the given message.
+   */
+  private _stopCloseAndNotify(message: string) {
     this._sharedModel.dispose();
     const documentWidget = this.parentDocumentWidget;
     if (documentWidget) {
       documentWidget.close();
-      Notification.warning(
-        `The file at '${this._path}' no longer exists, and was either moved or deleted. The document tab has been closed.`,
-        {
-          autoClose: 5000
-        }
-      );
+      Notification.warning(message, {
+        autoClose: 10000
+      });
     }
   }
 

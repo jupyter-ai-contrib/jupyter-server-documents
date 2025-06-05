@@ -114,7 +114,8 @@ class YRoom:
                 fileid_manager=self._fileid_manager,
                 contents_manager=self._contents_manager,
                 on_outofband_change=self.reload_ydoc,
-                on_outofband_move=self.handle_outofband_move
+                on_outofband_move=self.handle_outofband_move,
+                on_inband_deletion=self.handle_inband_deletion
             )
 
             # Load the YDoc content after initializing
@@ -598,7 +599,8 @@ class YRoom:
             fileid_manager=self._fileid_manager,
             contents_manager=self._contents_manager,
             on_outofband_change=self.reload_ydoc,
-            on_outofband_move=self.handle_outofband_move
+            on_outofband_move=self.handle_outofband_move,
+            on_inband_deletion=self.handle_inband_deletion
         )
         self.file_api.load_ydoc_content()
 
@@ -618,6 +620,14 @@ class YRoom:
         with close code 4001.
         """
         self.stop_immediately(close_code=4001)
+    
+    
+    def handle_inband_deletion(self) -> None:
+        """
+        Handles an in-band file deletion by stopping the YRoom immediately with
+        close code 4002.
+        """
+        self.stop_immediately(close_code=4002)
     
 
     def stop_immediately(self, close_code: int) -> None:

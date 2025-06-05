@@ -61,16 +61,17 @@ class YRoomFileAPI:
 
     _on_outofband_change: Callable[[], Any]
     """
-    The callback to run when an out-of-band change is detected by this instance.
-    This attribute is only set in the constructor. See `YRoom` for details on
-    how out-of-band changes are handled.
+    The callback to run when an out-of-band file change is detected.
     """
 
     _on_outofband_move: Callable[[], Any]
     """
-    The callback to run when an out-of-band move/deletion is detected by this
-    instance. This attribute is only set in the constructor. See `YRoom` for
-    details on how out-of-band changes are handled.
+    The callback to run when an out-of-band file move/deletion is detected.
+    """
+
+    _on_inband_deletion: Callable[[], Any]
+    """
+    The callback to run when an in-band move file deletion is detected.
     """
 
     _save_loop_task: asyncio.Task
@@ -85,7 +86,8 @@ class YRoomFileAPI:
         contents_manager: AsyncContentsManager | ContentsManager,
         loop: asyncio.AbstractEventLoop,
         on_outofband_change: Callable[[], Any],
-        on_outofband_move: Callable[[], Any]
+        on_outofband_move: Callable[[], Any],
+        on_inband_deletion: Callable[[], Any]
     ):
         # Bind instance attributes
         self.room_id = room_id
@@ -97,6 +99,7 @@ class YRoomFileAPI:
         self._contents_manager = contents_manager
         self._on_outofband_change = on_outofband_change
         self._on_outofband_move = on_outofband_move
+        self._on_inband_deletion = on_inband_deletion
         self._save_scheduled = False
         self._last_path = None
         self._last_modified = None
@@ -209,7 +212,7 @@ class YRoomFileAPI:
         while True:
             try:
                 await asyncio.sleep(0.5)
-                await self._check_oob_changes()
+                await self._check_file()
                 if self._save_scheduled:
                     # `asyncio.shield()` prevents the save task from being
                     # cancelled halfway and corrupting the file. We need to
@@ -233,17 +236,15 @@ class YRoomFileAPI:
             f"for YRoom '{self.room_id}'."
         )
 
-    async def _check_oob_changes(self):
+    async def _check_file(self):
         """
-        TODO: rename this _validate_file_integrity()?
+        Checks for in-band/out-of-band file operations in the
+        `self._watch_file()` background task. This is guaranteed to always run
+        before each save in `self._watch_file()` This detects the following
+        events and acts in response:
 
-        Checks for out-of-band operations in the `self._watch_file()` background
-        task. This is guaranteed to always run before each save in
-        `self._watch_file()` This detects the following events and acts in
-        response:
-
-        - In-band move: calls `self._on_inband_move()` (TODO)
-        - In-band deletion: calls `self._on_inband_deletion()` (TODO)
+        - In-band move: logs warning (no handling needed)
+        - In-band deletion: calls `self._on_inband_deletion()`
         - Out-of-band move/deletion: calls `self._on_outofband_move()`
         - Out-of-band change: calls `self._on_outofband_change()`
         """
@@ -264,17 +265,13 @@ class YRoomFileAPI:
                     f"Room ID: '{self.room_id}', "
                     f"Last known path: '{self._last_path}'."
                 )
-                # TODO
-                # self._on_inband_move()
-                pass
             else:
                 self.log.warning(
                     "File was deleted. "
                     f"Room ID: '{self.room_id}', "
                     f"Last known path: '{self._last_path}'."
                 )
-                # TODO
-                # self._on_inband_delete()
+                self._on_inband_deletion()
                 return
 
         # Otherwise, set the last known path
