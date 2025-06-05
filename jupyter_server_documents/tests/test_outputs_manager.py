@@ -47,7 +47,8 @@ def test_stream():
         file_id = str(uuid4())
         cell_id = str(uuid4())
         for s in streams:
-            op.write_stream(file_id, cell_id, s)
+            placeholder = op.write_output(file_id, cell_id, s)
+            op.write_stream(file_id, cell_id, s, placeholder)
         assert op.get_stream(file_id, cell_id) == text
 
 def test_display_data():
