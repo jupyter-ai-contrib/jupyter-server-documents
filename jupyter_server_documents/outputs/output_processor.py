@@ -106,10 +106,13 @@ class OutputProcessor(LoggingConfigurable):
             return
         self._file_id = file_id
 
+        display_id = content.get("transient", {}).get("display_id")
+        self.log.info(f"display_id: {display_id} found in content")
+        output_index = self.outputs_manager.get_output_index(display_id) if display_id else None
         # Convert from the message spec to the nbformat output structure
-        if self.use_outputs_service:
+        if self.use_outputs_service: 
             output = self.transform_output(msg_type, content, ydoc=False)
-            output = self.outputs_manager.write(file_id, cell_id, output)
+            output = self.outputs_manager.write(file_id, cell_id, output, display_id)
         else:
             output = self.transform_output(msg_type, content, ydoc=True)
 
@@ -125,8 +128,11 @@ class OutputProcessor(LoggingConfigurable):
         # Write the outputs to the ydoc cell.
         _, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None and output is not None:
-            target_cell["outputs"].append(output)
-            self.log.info(f"Write output to ydoc: {path} {cell_id} {output}")
+            if output_index:
+                target_cell["outputs"][output_index] = output
+            else:
+                target_cell["outputs"].append(output)
+            self.log.info(f"Wrote output to ydoc: {path} {cell_id} {output}")
 
     
     def transform_output(self, msg_type, content, ydoc=False):
@@ -141,7 +147,7 @@ class OutputProcessor(LoggingConfigurable):
                 "text": content["text"],
                 "name": content["name"]
             })
-        elif msg_type == "display_data":
+        elif msg_type == "display_data" or msg_type == "update_display_data":
             output = factory({
                 "output_type": "display_data",
                 "data": content["data"],

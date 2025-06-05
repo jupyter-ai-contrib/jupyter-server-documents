@@ -223,6 +223,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         parent_msg_data = self.message_cache.get(parent_msg_id)
         cell_id = parent_msg_data.get('cell_id')
 
+        self.log.info(f"msg_type: {dmsg["msg_type"]}")
         # Handle different message types using pattern matching
         match dmsg["msg_type"]:
             case "kernel_info_reply":
@@ -265,6 +266,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                 if cell_id:
                     # Extract execution count and update each collaborative room's notebook
                     content = self.session.unpack(dmsg["content"])
+                    self.log.info(f"dsmg content: {content}")
                     execution_count = content["execution_count"]
                     for yroom in self._yrooms:
                         notebook = await yroom.get_jupyter_ydoc()
@@ -273,12 +275,13 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             target_cell["execution_count"] = execution_count
                             break
 
-            case "stream" | "display_data" | "execute_result" | "error":
+            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data":
                 if cell_id: 
                     # Process specific output messages through an optional processor
                     if self.output_processor and cell_id:
                         cell_id = parent_msg_data.get('cell_id')
                         content = self.session.unpack(dmsg["content"])
+                        self.log.info(f"dsmg content: {content}")
                         dmsg = self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
                         # Suppress forwarding of processed messages by returning None
                         return None

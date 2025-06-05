@@ -14,6 +14,7 @@ from jupyter_core.paths import jupyter_runtime_dir
 class OutputsManager(LoggingConfigurable):
     _last_output_index = Dict(default_value={})
     _stream_count = Dict(default_value={})
+    _output_index_by_display_id = Dict(default_value={})
 
     outputs_path = Instance(PurePath, help="The local runtime dir")
     stream_limit = Int(default_value=10, config=True, allow_none=True)
@@ -33,6 +34,10 @@ class OutputsManager(LoggingConfigurable):
         if output_index is not None:
             path = path / f"{output_index}.output"
         return path
+
+    def get_output_index(self, display_id: str):
+        """Returns output index for a cell by display_id"""
+        return self._output_index_by_display_id.get(display_id)
 
     def get_output(self, file_id, cell_id, output_index):
         """Get an output by file_id, cell_id, and output_index."""
@@ -102,23 +107,34 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "r", encoding="utf-8") as f:
             output = f.read()
         return output
-
-    def write(self, file_id, cell_id, output):
+    
+    def write(self, file_id, cell_id, output, display_id=None):
         """Write a new output for file_id and cell_id.
 
         Returns a placeholder output (pycrdt.Map) or None if no placeholder
         output should be written to the ydoc.
         """
-        placeholder = self.write_output(file_id, cell_id, output)
+        placeholder = self.write_output(file_id, cell_id, output, display_id)
         if output["output_type"] == "stream" and self.stream_limit is not None:
             placeholder = self.write_stream(file_id, cell_id, output, placeholder)
         return placeholder
 
-    def write_output(self, file_id, cell_id, output):
+    def write_output(self, file_id, cell_id, output, display_id=None):
+        print(f"display_id:{display_id} passed into write_output")
         self._ensure_path(file_id, cell_id)
         last_index = self._last_output_index.get(cell_id, -1)
-        index = last_index + 1
-        self._last_output_index[cell_id] = index
+        if display_id:
+            index = self._output_index_by_display_id.get(display_id)
+            print(f"Found index: {index} for display_id {display_id}")
+            if index is None:
+                index = last_index + 1
+                self._last_output_index[cell_id] = index
+                self._output_index_by_display_id[display_id] = index
+                print(f"Generated new index: {index} for display_id: {display_id}")
+        else:
+            index = last_index + 1
+            self._last_output_index[cell_id] = index
+        
         path = self._build_path(file_id, cell_id, index)
         data = json.dumps(output, ensure_ascii=False)
         with open(path, "w", encoding="utf-8") as f:
@@ -163,6 +179,10 @@ class OutputsManager(LoggingConfigurable):
         else:
             try:
                 del self._stream_count[cell_id]
+            except KeyError:
+                pass
+            try:
+                del self._last_output_index[cell_id]
             except KeyError:
                 pass
             path = self._build_path(file_id, cell_id)
