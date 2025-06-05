@@ -17,6 +17,10 @@ import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
 import { YFile, YNotebook } from './custom_ydocs';
+import { JupyterFrontEnd } from '@jupyterlab/application';
+import { DocumentWidget } from '@jupyterlab/docregistry';
+import { FileEditor } from '@jupyterlab/fileeditor';
+import { Notebook } from '@jupyterlab/notebook';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -32,6 +36,7 @@ export class WebSocketProvider implements IDocumentProvider {
    * @param options The instantiation options for a WebSocketProvider
    */
   constructor(options: WebSocketProvider.IOptions) {
+    this._app = options.app;
     this._isDisposed = false;
     this._path = options.path;
     this._contentType = options.contentType;
@@ -65,6 +70,41 @@ export class WebSocketProvider implements IDocumentProvider {
    */
   get isDisposed(): boolean {
     return this._isDisposed;
+  }
+
+  /**
+   * Returns the **document widget** containing this provider's shared model.
+   * Returns `null` if the document widget is not open (i.e. the tab was already
+   * closed).
+   */
+  get parentDocumentWidget(): DocumentWidget | null {
+    const shell = this._app.shell;
+
+    // Iterate through all main area widgets
+    for (const docWidget of shell.widgets()) {
+      // Skip non-document widgets, i.e. widgets that aren't editing a file
+      if (!(docWidget instanceof DocumentWidget)) {
+        continue;
+      }
+
+      // Skip widgets that don't contain a YFile / YNotebook
+      const widget = docWidget.content;
+      if (!(widget instanceof FileEditor || widget instanceof Notebook)) {
+        continue;
+      }
+
+      // Return the document widget if found in this iteration
+      // @ts-expect-error: TSC complains here, but reference equality checks are
+      // always safe.
+      if (widget.model?.sharedModel === this._sharedModel) {
+        return docWidget;
+      }
+    }
+
+    // If document widget was not found, return `null`.
+    // This indicates that the tab containing this provider's shared model has
+    // already been closed.
+    return null;
   }
 
   /**
@@ -192,15 +232,27 @@ export class WebSocketProvider implements IDocumentProvider {
   }
 
   /**
-   * Handles an out-of-band move/deletion indicated by close code 4001. This
-   * requires closing the affected JupyterLab tab containing the YDoc, then
-   * emitting a notification to the user.
+   * Handles an out-of-band move/deletion indicated by close code 4001.
+   *
+   * - If the parent document widget is open, then this closes the tab, emits a
+   * warning notification to the user, and disposes the shared model to halt
+   * reconnection.
+   *
+   * - Otherwise, this method just disposes the shared model. The user does not
+   * need to be notified if the document isn't open.
    */
   private _handleOobMove() {
     this._sharedModel.dispose();
-    Notification.info('This file has been moved/deleted on disk.', {
-      autoClose: false
-    });
+    const documentWidget = this.parentDocumentWidget;
+    if (documentWidget) {
+      documentWidget.close();
+      Notification.warning(
+        `The file at '${this._path}' no longer exists, and was either moved or deleted. The document tab has been closed.`,
+        {
+          autoClose: 5000
+        }
+      );
+    }
   }
 
   private _onSync = (isSynced: boolean) => {
@@ -212,6 +264,7 @@ export class WebSocketProvider implements IDocumentProvider {
     }
   };
 
+  private _app: JupyterFrontEnd;
   private _contentType: string;
   private _format: string;
   private _isDisposed: boolean;
@@ -219,9 +272,6 @@ export class WebSocketProvider implements IDocumentProvider {
   private _ready = new PromiseDelegate<void>();
   private _serverUrl: string;
   private _sharedModel: YDocument<DocumentChange>;
-  // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-  // @ts-ignore
-  private _sharedModelFactory: ISharedModelFactory;
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
 }
@@ -234,6 +284,11 @@ export namespace WebSocketProvider {
    * The instantiation options for a WebSocketProvider.
    */
   export interface IOptions {
+    /**
+     * The top-level application. Used to close document tabs when the file was
+     * deleted.
+     */
+    app: JupyterFrontEnd;
     /**
      * The server URL
      */
