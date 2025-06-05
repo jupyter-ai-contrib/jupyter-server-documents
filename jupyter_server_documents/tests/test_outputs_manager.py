@@ -91,3 +91,41 @@ def file_not_found():
             op.get_output('a','b',0)
         with pytest.raises(FileNotFoundError):
             op.get_stream('a','b')       
+
+
+@pytest.mark.parametrize(
+    "_last_output_index, _output_index_by_display_id, cell_id, display_id, expected", [
+    # Empty dictionaries, no display_id
+    ({}, {}, "cell1", None, 0),
+    
+    # Empty dictionaries, with display_id
+    ({}, {}, "cell1", "display1", 0),
+    
+    # Existing last_output_index, no display_id
+    ({"cell1": 5}, {}, "cell1", None, 6),
+    ({"cell2": 3}, {}, "cell1", None, 0),
+    
+    # Existing output_index_by_display_id
+    ({}, {"display1": 2}, "cell1", "display1", 2),
+    
+    # Existing last_output_index and display_id
+    ({"cell1": 5}, {"display1": 3}, "cell1", "display1", 3),
+    ({"cell1": 5}, {"display1": 3}, "cell1", "display2", 6),
+    
+    # Multiple cells with different indices
+    ({"cell1": 2, "cell2": 7}, {}, "cell1", None, 3),
+    ({"cell1": 2, "cell2": 7}, {}, "cell3", None, 0),
+])
+def test__determine_output_index(
+    _last_output_index, 
+    _output_index_by_display_id, 
+    cell_id, 
+    display_id,
+    expected
+):
+    op = OutputsManager()
+    op._last_output_index = _last_output_index;
+    op._output_index_by_display_id = _output_index_by_display_id
+    
+    assert expected == op._determine_output_index(cell_id, display_id)
+

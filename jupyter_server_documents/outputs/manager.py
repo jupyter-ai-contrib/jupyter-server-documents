@@ -34,6 +34,30 @@ class OutputsManager(LoggingConfigurable):
         if output_index is not None:
             path = path / f"{output_index}.output"
         return path
+    
+    def _determine_output_index(self, cell_id, display_id=None):
+        """
+        Determines output index for a given cell and optional display ID.
+        
+        Args:
+            cell_id (str): The cell identifier
+            display_id (str, optional): A display identifier. Defaults to None.
+        
+        Returns:
+            int: The allocated output index
+        """
+        last_index = self._last_output_index.get(cell_id, -1)
+        if display_id:
+            index = self._output_index_by_display_id.get(display_id)
+            if index is None:
+                index = last_index + 1
+                self._last_output_index[cell_id] = index
+                self._output_index_by_display_id[display_id] = index
+        else:
+            index = last_index + 1
+            self._last_output_index[cell_id] = index
+        
+        return index
 
     def get_output_index(self, display_id: str):
         """Returns output index for a cell by display_id"""
@@ -121,17 +145,7 @@ class OutputsManager(LoggingConfigurable):
 
     def write_output(self, file_id, cell_id, output, display_id=None):
         self._ensure_path(file_id, cell_id)
-        last_index = self._last_output_index.get(cell_id, -1)
-        if display_id:
-            index = self._output_index_by_display_id.get(display_id)
-            if index is None:
-                index = last_index + 1
-                self._last_output_index[cell_id] = index
-                self._output_index_by_display_id[display_id] = index
-        else:
-            index = last_index + 1
-            self._last_output_index[cell_id] = index
-        
+        index = self._determine_output_index(cell_id, display_id)
         path = self._build_path(file_id, cell_id, index)
         data = json.dumps(output, ensure_ascii=False)
         with open(path, "w", encoding="utf-8") as f:
