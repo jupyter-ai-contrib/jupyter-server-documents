@@ -54,6 +54,7 @@ class YRoomManager():
                 loop=self.loop,
                 fileid_manager=self.fileid_manager,
                 contents_manager=self.contents_manager,
+                on_stop=lambda: self._handle_yroom_stop(room_id),
             )
             self._rooms_by_id[room_id] = yroom
             return yroom
@@ -63,7 +64,16 @@ class YRoomManager():
                 exc_info=True
             )
             return None
-        
+    
+
+    def _handle_yroom_stop(self, room_id: str) -> None:
+        """
+        Callback that is run when the YRoom is stopped. This ensures the room is
+        removed from the dictionary for garbage collection, even if the room was
+        stopped directly without `YRoomManager.delete_room()`.
+        """
+        self._rooms_by_id.pop(room_id, None)
+
         
     async def delete_room(self, room_id: str) -> None:
         """
