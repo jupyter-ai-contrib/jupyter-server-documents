@@ -106,7 +106,8 @@ class YRoom:
                 loop=self._loop,
                 fileid_manager=self._fileid_manager,
                 contents_manager=self._contents_manager,
-                on_outofband_change=self.reload_ydoc
+                on_outofband_change=self.reload_ydoc,
+                on_outofband_move=self.handle_outofband_move
             )
 
             # Load the YDoc content after initializing
@@ -589,7 +590,8 @@ class YRoom:
             loop=self._loop,
             fileid_manager=self._fileid_manager,
             contents_manager=self._contents_manager,
-            on_outofband_change=self.reload_ydoc
+            on_outofband_change=self.reload_ydoc,
+            on_outofband_move=self.handle_outofband_move
         )
         self.file_api.load_ydoc_content()
 
@@ -603,6 +605,36 @@ class YRoom:
         self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
 
         
+    def handle_outofband_move(self) -> None:
+        """
+        Handles an out-of-band move/deletion by stopping the YRoom immediately.
+        This is similar to `self.stop()` with some key differences:
+        
+        - This closes all WS connections with close code 4001, a special close
+          code reserved to indicate out-of-band move/deletion.
+        - This does not apply any pending YDoc updates from other clients.
+        - This does not save the file before exiting (as the new path is unknown).
+        """
+        # Disconnect all clients with close code 4001
+        self.clients.stop(close_code=4001)
+
+        # Remove all observers
+        self._ydoc.unobserve(self._ydoc_subscription)
+        self._awareness.unobserve(self._awareness_subscription)
+
+        # Purge the message queue immediately, dropping all queued messages
+        while not self._message_queue.empty():
+            self._message_queue.get_nowait()
+            self._message_queue.task_done()
+        
+        # Enqueue `None` to stop the `_process_message_queue()` background task
+        self._message_queue.put_nowait(None)
+
+        # Finally, stop FileAPI immediately (without saving) and return.
+        if self.file_api:
+            self.file_api.stop()
+
+
     async def stop(self) -> None:
         """
         Stops the YRoom gracefully.

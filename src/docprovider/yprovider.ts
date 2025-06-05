@@ -145,9 +145,15 @@ export class WebSocketProvider implements IDocumentProvider {
     // Handle close events based on code
     const close_code = event.code;
 
-    // 4000 := server close code on out-of-band change
+    // 4000 := indicates out-of-band change
     if (close_code === 4000) {
       this._handleOobChange();
+      return;
+    }
+
+    // 4001 := indicates out-of-band move/deletion
+    if (close_code === 4001) {
+      this._handleOobMove();
       return;
     }
 
@@ -166,9 +172,8 @@ export class WebSocketProvider implements IDocumentProvider {
   };
 
   /**
-   * Handles an out-of-band change that requires reseting the YDoc before
-   * re-connecting. The server extension indicates this by closing the YRoom
-   * Websocket connection with close code 4000.
+   * Handles an out-of-band change indicated by close code 4000. This requires
+   * resetting the YDoc, re-connecting, then emitting a notification to the user.
    */
   private _handleOobChange() {
     // Reset YDoc
@@ -184,6 +189,18 @@ export class WebSocketProvider implements IDocumentProvider {
         autoClose: false
       }
     );
+  }
+
+  /**
+   * Handles an out-of-band move/deletion indicated by close code 4001. This
+   * requires closing the affected JupyterLab tab containing the YDoc, then
+   * emitting a notification to the user.
+   */
+  private _handleOobMove() {
+    this._sharedModel.dispose();
+    Notification.info('This file has been moved/deleted on disk.', {
+      autoClose: false
+    });
   }
 
   private _onSync = (isSynced: boolean) => {
