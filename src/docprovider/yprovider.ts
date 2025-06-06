@@ -179,7 +179,6 @@ export class WebSocketProvider implements IDocumentProvider {
     }
 
     // Otherwise, initialize the `YWebsocketProvider` to connect
-    console.log({ fileId: this._fileId });
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
       `${this._format}:${this._contentType}:${this._fileId}`,
