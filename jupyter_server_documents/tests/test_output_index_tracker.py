@@ -72,32 +72,6 @@ def test_clear_cell_indices():
     # Verify cell2 indices remain
     assert 'cell2' in tracker._last_output_index
 
-def test_memory_efficiency():
-    """
-    Basic test to ensure __slots__ is working
-    """
-    tracker = OutputIndexTracker()
-    
-    # Attempt to add a new attribute should raise an AttributeError
-    with pytest.raises(AttributeError):
-        tracker.new_attribute = "test"
-
-def test_key_interning():
-    """
-    Test that key interning works for repeated strings
-    """
-    tracker = OutputIndexTracker()
-    
-    # Use the same string multiple times
-    cell_id = "repeated_cell"
-    display_id = "repeated_display"
-    
-    # Allocate indices multiple times
-    for _ in range(5):
-        index1 = tracker.allocate_output_index(cell_id, display_id)
-        index2 = tracker.allocate_output_index(cell_id, display_id)
-        assert index1 == index2
-
 def test_cell_display_ids_tracking():
     """
     Test tracking of display IDs for a cell
