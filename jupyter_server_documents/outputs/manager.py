@@ -147,7 +147,7 @@ class OutputsManager(LoggingConfigurable):
             pass
 
 
-def create_output_url(self, file_id: str, cell_id: str, output_index: int = None) -> str:
+def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:
         """
         Create the URL for an output or stream.
 
