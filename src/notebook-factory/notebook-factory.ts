@@ -110,38 +110,34 @@ const DIRTY_CLASS = 'jp-mod-dirty';
 class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   constructor(options: IOutputAreaModel.IOptions = {}) {
     super({ ...options, values: [] }); // Don't pass values to OutputAreaModel
-    if (options.values) {
-      // Create an array to store promises for each value
-      const valuePromises = options.values.map(value => {
-        console.debug('output #${index}, value: ${value}');
-        if ((value as any).metadata?.url) {
-          return requestAPI((value as any).metadata.url)
-            .then(data => {
-              return data;
-            })
-            .catch(error => {
-              console.error('Error fetching output:', error);
-              return null;
+    if (options.values?.length) {
+      const firstValue = options.values[0];
+      if ((firstValue as any).metadata?.url) {
+        let outputsUrl = (firstValue as any).metadata.url;
+        // Skip the last section with *.output
+        outputsUrl = outputsUrl.substring(0, outputsUrl.lastIndexOf('/'));
+        requestAPI(outputsUrl)
+          .then(outputs => {
+            (outputs as any).forEach((output: any) => {
+              if (!(this as any).isDisposed) {
+                const index = (this as any)._add(output) - 1;
+                const item = (this as any).list.get(index);
+                item.changed.connect((this as any)._onGenericChange, this);
+              }
             });
-        } else {
-          // For values without url, return immediately with original value
-          return Promise.resolve(value);
-        }
-      });
-
-      // Wait for all promises to resolve and add values in original order
-      Promise.all(valuePromises).then(results => {
-        console.log('After fetching from outputs service:');
-        // Add each value in order
-        results.forEach((data, index) => {
-          console.debug('output #${index}, data: ${data}');
-          if (data && !(this as any).isDisposed) {
-            const index = (this as any)._add(data) - 1;
+          })
+          .catch(error => {
+            console.error('Error fetching output:', error);
+          });
+      } else {
+        options.values.forEach((output: any) => {
+          if (!(this as any).isDisposed) {
+            const index = (this as any)._add(output) - 1;
             const item = (this as any).list.get(index);
             item.changed.connect((this as any)._onGenericChange, this);
           }
         });
-      });
+      }
     }
   }
 }

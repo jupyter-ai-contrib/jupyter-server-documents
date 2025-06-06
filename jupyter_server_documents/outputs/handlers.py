@@ -20,14 +20,20 @@ class OutputsAPIHandler(APIHandler):
     @authorized
     async def get(self, file_id=None, cell_id=None, output_index=None):
         try:
-            output = self.outputs.get_output(file_id, cell_id, output_index)
+            if output_index:
+                output = self.outputs.get_output(file_id, cell_id, output_index)
+                content_type = "application/json"
+            else:
+                outputs = self.outputs.get_outputs(file_id, cell_id)
+                output = "\n".join(outputs)
+                content_type = "application/x-ndjson"
         except (FileNotFoundError, KeyError):
             self.set_status(404)
             self.finish({"error": "Output not found."})
         else:
             self.set_status(200)
-            self.set_header("Content-Type", "application/json")
             self.write(output)
+            self.finish(set_content_type=content_type)
 
 
 class StreamAPIHandler(APIHandler):
@@ -71,24 +77,7 @@ _cell_id_regex = rf"(?P<cell_id>{_uuid_regex})"
 _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"
 
 outputs_handlers = [
-    (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/{_output_index_regex}.output", OutputsAPIHandler),
+    (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}(?:/{_output_index_regex}.output)?", OutputsAPIHandler),
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]
 
-# def setup_handlers(web_app):
-#     """Setup the handlers for the outputs service."""
-
-#     handlers = [
-#         (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/{_output_index_regex}.output", OutputsAPIHandler),
-#         (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
-#     ]
-
-#     base_url = web_app.settings["base_url"]
-#     new_handlers = []
-#     for handler in handlers:
-#         pattern = url_path_join(base_url, handler[0])
-#         new_handler = (pattern, *handler[1:])
-#         new_handlers.append(new_handler)
-
-#     # Add the handler for all hosts
-#     web_app.add_handlers(".*$", new_handlers)

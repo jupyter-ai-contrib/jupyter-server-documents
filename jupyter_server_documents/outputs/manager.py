@@ -6,17 +6,12 @@ import shutil
 from pycrdt import Map
 
 from traitlets.config import LoggingConfigurable
-from traitlets import (
-    Dict,
-    Instance,
-    Int,
-    default
-)
+from traitlets import Dict, Instance, Int, default
 
 from jupyter_core.paths import jupyter_runtime_dir
 
-class OutputsManager(LoggingConfigurable):
 
+class OutputsManager(LoggingConfigurable):
     _last_output_index = Dict(default_value={})
     _stream_count = Dict(default_value={})
 
@@ -26,7 +21,7 @@ class OutputsManager(LoggingConfigurable):
     @default("outputs_path")
     def _default_outputs_path(self):
         return Path(jupyter_runtime_dir()) / "outputs"
-    
+
     def _ensure_path(self, file_id, cell_id):
         nested_dir = self.outputs_path / file_id / cell_id
         nested_dir.mkdir(parents=True, exist_ok=True)
@@ -38,15 +33,41 @@ class OutputsManager(LoggingConfigurable):
         if output_index is not None:
             path = path / f"{output_index}.output"
         return path
-    
+
     def get_output(self, file_id, cell_id, output_index):
-        """Get an outputs by file_id, cell_id, and output_index."""
+        """Get an output by file_id, cell_id, and output_index."""
         path = self._build_path(file_id, cell_id, output_index)
         if not os.path.isfile(path):
             raise FileNotFoundError(f"The output file doesn't exist: {path}")
         with open(path, "r", encoding="utf-8") as f:
             output = json.loads(f.read())
         return output
+
+    def get_outputs(self, file_id, cell_id):
+        """Get all outputs by file_id, cell_id."""
+        path = self._build_path(file_id, cell_id)
+        if not os.path.isdir(path):
+            raise FileNotFoundError(f"The output dir doesn't exist: {path}")
+
+        outputs = []
+
+        output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
+        output_files.sort(key=lambda x: x[1])
+        output_files = output_files[: self.stream_limit]
+        has_more_files = len(output_files) >= self.stream_limit
+
+        outputs = []
+        for file_path, _ in output_files:
+            with open(file_path, "r", encoding="utf-8") as f:
+                output = f.read()
+                outputs.append(output)
+
+        if has_more_files:
+            url = create_output_url(file_id, cell_id)
+            placeholder = create_placeholder_dict("display_data", url, full=True)
+            outputs.append(json.dumps(placeholder))
+
+        return outputs
 
     def get_stream(self, file_id, cell_id):
         "Get the stream output for a cell by file_id and cell_id."
@@ -59,7 +80,7 @@ class OutputsManager(LoggingConfigurable):
 
     def write(self, file_id, cell_id, output):
         """Write a new output for file_id and cell_id.
-        
+
         Returns a placeholder output (pycrdt.Map) or None if no placeholder
         output should be written to the ydoc.
         """
@@ -77,10 +98,10 @@ class OutputsManager(LoggingConfigurable):
         data = json.dumps(output, ensure_ascii=False)
         with open(path, "w", encoding="utf-8") as f:
             f.write(data)
-        url = f"/api/outputs/{file_id}/{cell_id}/{index}.output"
+        url = create_output_url(file_id, cell_id, index)
         self.log.info(f"Wrote output: {url}")
         return create_placeholder_output(output["output_type"], url)
-
+    
     def write_stream(self, file_id, cell_id, output, placeholder) -> Map:
         # How many stream outputs have been written for this cell previously
         count = self._stream_count.get(cell_id, 0)
@@ -89,12 +110,10 @@ class OutputsManager(LoggingConfigurable):
         self._ensure_path(file_id, cell_id)
         path = self._build_path(file_id, cell_id) / "stream"
         text = output["text"]
-        mode = 'a' if os.path.isfile(path) else 'w'
         with open(path, "a", encoding="utf-8") as f:
             f.write(text)
-        url = f"/api/outputs/{file_id}/{cell_id}/stream"
+        url = create_output_url(file_id, cell_id)
         self.log.info(f"Wrote stream: {url}")
-
         # Increment the count
         count = count + 1
         self._stream_count[cell_id] = count
@@ -105,12 +124,7 @@ class OutputsManager(LoggingConfigurable):
             placeholder = placeholder
         elif count == self.stream_limit:
             # Return a link to the full stream output
-            placeholder = Map({
-                "output_type": "display_data",
-                "data": {
-                    'text/html': f'<a href="{url}">Click this link to see the full stream output</a>'
-                }
-            })
+            placeholder = create_placeholder_output("display_data", url, full=True)
         elif count > self.stream_limit:
             # Return None to indicate that no placeholder should be written to the ydoc
             placeholder = None
@@ -133,27 +147,71 @@ class OutputsManager(LoggingConfigurable):
             pass
 
 
-def create_placeholder_output(output_type: str, url: str):
+def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:
+        """
+        Create the URL for an output or stream.
+
+        Parameters:
+        - file_id (str): The ID of the file.
+        - cell_id (str): The ID of the cell.
+        - output_index (int, optional): The index of the output. If None, returns the stream URL.
+
+        Returns:
+        - str: The URL string for the output or stream.
+        """
+        if output_index is None:
+            return f"/api/outputs/{file_id}/{cell_id}/stream"
+        else:
+            return f"/api/outputs/{file_id}/{cell_id}/{output_index}.output"
+
+def create_placeholder_dict(output_type: str, url: str, full: bool = False):
+    """
+    Build a placeholder output dict for the given output_type and url.
+    If full is True and output_type is "display_data", returns a display_data output
+    with an HTML link to the full stream output.
+
+    Parameters:
+    - output_type (str): The type of the output.
+    - url (str): The URL associated with the output.
+    - full (bool): Whether to create a full output placeholder with a link.
+
+    Returns:
+    - dict: The placeholder output dictionary.
+
+    Raises:
+    - ValueError: If the output_type is unknown.
+    """
     metadata = dict(url=url)
-    if output_type == "stream":
-        output = Map({
-            "output_type": "stream",
-            "text": "",
-            "metadata": metadata
-        })
-    elif output_type == "display_data":
-        output = Map({
+    if full and output_type == "display_data":
+        return {
             "output_type": "display_data",
-            "metadata": metadata
-        })
+            "data": {
+                "text/html": f'<a href="{url}">Click this link to see the full stream output</a>'
+            },
+        }
+    if output_type == "stream":
+        return {"output_type": "stream", "text": "", "metadata": metadata}
+    elif output_type == "display_data":
+        return {"output_type": "display_data", "metadata": metadata}
     elif output_type == "execute_result":
-        output = Map({
-            "output_type": "execute_result",
-            "metadata": metadata
-        })
+        return {"output_type": "execute_result", "metadata": metadata}
     elif output_type == "error":
-        output = Map({
-            "output_type": "error",
-            "metadata": metadata
-        })
-    return output
+        return {"output_type": "error", "metadata": metadata}
+    else:
+        raise ValueError(f"Unknown output_type: {output_type}")
+
+def create_placeholder_output(output_type: str, url: str, full: bool = False):
+    """
+    Creates a placeholder output Map for the given output_type and url.
+    If full is True and output_type is "display_data", creates a display_data output with an HTML link.
+
+    Parameters:
+    - output_type (str): The type of the output.
+    - url (str): The URL associated with the output.
+    - full (bool): Whether to create a full output placeholder with a link.
+
+    Returns:
+    - Map: The placeholder output `ycrdt.Map`.
+    """
+    output_dict = create_placeholder_dict(output_type, url, full=full)
+    return Map(output_dict)
