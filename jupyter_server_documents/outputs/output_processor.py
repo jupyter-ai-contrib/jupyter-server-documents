@@ -1,9 +1,8 @@
 import asyncio
-import json
 
 from pycrdt import Map
 
-from traitlets import Dict, Unicode, Bool, Instance
+from traitlets import Unicode, Bool
 from traitlets.config import LoggingConfigurable
 from jupyter_server_documents.kernels.message_cache import KernelMessageCache
 
