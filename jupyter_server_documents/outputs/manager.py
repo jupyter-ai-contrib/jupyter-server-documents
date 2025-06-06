@@ -98,32 +98,6 @@ class OutputsManager(LoggingConfigurable):
 
         return outputs
 
-    def get_outputs(self, file_id, cell_id):
-        """Get all outputs by file_id, cell_id."""
-        path = self._build_path(file_id, cell_id)
-        if not os.path.isdir(path):
-            raise FileNotFoundError(f"The output dir doesn't exist: {path}")
-
-        outputs = []
-
-        output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
-        output_files.sort(key=lambda x: x[1])
-        output_files = output_files[: self.stream_limit]
-        has_more_files = len(output_files) >= self.stream_limit
-
-        outputs = []
-        for file_path, _ in output_files:
-            with open(file_path, "r", encoding="utf-8") as f:
-                output = f.read()
-                outputs.append(output)
-
-        if has_more_files:
-            url = create_output_url(file_id, cell_id)
-            placeholder = create_placeholder_dict("display_data", url, full=True)
-            outputs.append(json.dumps(placeholder))
-
-        return outputs
-
     def get_stream(self, file_id, cell_id):
         "Get the stream output for a cell by file_id and cell_id."
         path = self._build_path(file_id, cell_id) / "stream"
