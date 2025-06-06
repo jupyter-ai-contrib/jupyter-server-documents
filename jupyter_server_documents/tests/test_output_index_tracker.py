@@ -1,5 +1,3 @@
-import pytest
-import sys
 from jupyter_server_documents.outputs.output_index_tracker import OutputIndexTracker
 
 def test_basic_output_index_allocation():
