@@ -140,16 +140,49 @@ export class WebSocketProvider implements IDocumentProvider {
     this._connect();
   }
 
-  private async _connect(): Promise<void> {
-    // Fetch file ID from the file ID service.
-    const resp = await requestAPI(`api/fileid/index?path=${this._path}`, {
-      method: 'POST'
-    });
-    const fileId: string = resp['id'];
+  /**
+   * Gets the file ID for this path. This should only be called once when the
+   * provider connects for the first time, because any future in-band moves may
+   * cause `this._path` to not refer to the correct file.
+   */
+  private async _getFileId(): Promise<string | null> {
+    let fileId: string | null = null;
+    try {
+      const resp = await requestAPI(`api/fileid/index?path=${this._path}`, {
+        method: 'POST'
+      });
+      if (resp && 'id' in resp && typeof resp['id'] === 'string') {
+        fileId = resp['id'];
+      }
+    } catch (e) {
+      console.error(`Could not get file ID for path '${this._path}'.`);
+      return null;
+    }
+    return fileId;
+  }
 
+  private async _connect(): Promise<void> {
+    // Fetch file ID from the file ID service, if not cached
+    if (!this._fileId) {
+      this._fileId = await this._getFileId();
+    }
+
+    // If file ID could not be retrieved, show an error dialog asking for a bug
+    // report, as this error is irrecoverable.
+    if (!this._fileId) {
+      showErrorMessage(
+        this._trans.__('File ID error'),
+        `The file '${this._path}' cannot be opened because its file ID could not be retrieved. Please report this issue on GitHub.`,
+        [Dialog.okButton()]
+      );
+      return;
+    }
+
+    // Otherwise, initialize the `YWebsocketProvider` to connect
+    console.log({ fileId: this._fileId });
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
-      `${this._format}:${this._contentType}:${fileId}`,
+      `${this._format}:${this._contentType}:${this._fileId}`,
       this._sharedModel.ydoc,
       {
         disableBc: true,
@@ -305,6 +338,7 @@ export class WebSocketProvider implements IDocumentProvider {
   private _sharedModel: YDocument<DocumentChange>;
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
+  private _fileId: string | null = null;
 }
 
 /**

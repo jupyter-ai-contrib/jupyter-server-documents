@@ -155,7 +155,6 @@ class YRoomFileAPI:
         if self._ydoc_content_loaded.is_set() or self._ydoc_content_loading:
             return
         
-        self.log.info(f"Loading content for room ID '{self.room_id}'.")
         self._ydoc_content_loading = True
         self._loop.create_task(self._load_ydoc_content())
 
@@ -168,6 +167,7 @@ class YRoomFileAPI:
         self._last_path = path
 
         # Load the content of the file from the path
+        self.log.info(f"Loading content for room ID '{self.room_id}', found at path: '{path}'.")
         file_data = await ensure_async(self._contents_manager.get(
             path,
             type=self.file_type,
