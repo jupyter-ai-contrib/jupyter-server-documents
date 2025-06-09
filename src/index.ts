@@ -23,6 +23,7 @@ import {
 } from '@jupyterlab/apputils';
 import { KeyboardEvent } from 'react';
 import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
+import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { AwarenessExecutionIndicator } from './executionindicator';
 
 import { requestAPI } from './handler';
@@ -281,6 +282,28 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
   }
 };
 
+/**
+ * Notebook cell executor plugin, provided by JupyterLab by default. Re-provided
+ * to ensure compatibility with `jupyter_collaboration`.
+ *
+ * The `@jupyter/docprovider-extension` disables this plugin to override it, but
+ * we disable that labextension, leaving `INotebookCellExecutor` un-implemented.
+ * This plugin fixes that issue by re-providing this plugin with `autoStart:
+ * false`, which specifies that this plugin only gets activated if no other
+ * implementation exists, e.g. only when `jupyter_collaboration` is installed.
+ */
+export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
+  {
+    id: '@jupyter/server-documents:backup-cell-executor',
+    description:
+      'Provides a backup default implementation of the notebook cell executor.',
+    autoStart: false,
+    provides: INotebookCellExecutor,
+    activate: (): INotebookCellExecutor => {
+      return Object.freeze({ runCell });
+    }
+  };
+
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcContentProvider,
   yfile,
@@ -291,7 +314,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   executionIndicator,
   kernelStatus,
   notebookFactoryPlugin,
-  codemirrorYjsPlugin
+  codemirrorYjsPlugin,
+  backupCellExecutorPlugin
 ];
 
 export default plugins;
