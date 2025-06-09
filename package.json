@@ -132,7 +132,8 @@
         "outputDir": "jupyter_server_documents/labextension",
         "schemaDir": "schema",
         "disabledExtensions": [
-            "@jupyterlab/codemirror-extension:binding"
+            "@jupyterlab/codemirror-extension:binding",
+            "@jupyter/docprovider-extension"
         ]
     },
     "eslintIgnore": [
