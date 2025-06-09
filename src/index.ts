@@ -90,7 +90,7 @@ export const plugin: JupyterFrontEndPlugin<void> = {
  * Jupyter plugin creating a global awareness for RTC.
  */
 export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
-  id: '@jupyter/server-documents/collaboration-extension:rtcGlobalAwareness',
+  id: '@jupyter/server-documents:rtc-global-awareness',
   description: 'Add global awareness to share working document of users.',
   requires: [IStateDB],
   provides: IGlobalAwareness,
@@ -172,7 +172,7 @@ export const executionIndicator: JupyterFrontEndPlugin<void> = {
  * A plugin that provides a kernel status item to the status bar.
  */
 export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
-  id: '@jupyterlab/apputils-extension:awareness-kernel-status',
+  id: '@jupyter/server-documents:awareness-kernel-status',
   description: 'Provides the kernel status indicator model.',
   autoStart: true,
   requires: [IStatusBar],
