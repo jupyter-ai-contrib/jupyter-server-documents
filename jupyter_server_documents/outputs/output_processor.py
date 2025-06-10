@@ -110,7 +110,6 @@ class OutputProcessor(LoggingConfigurable):
         self._file_id = file_id
 
         display_id = content.get("transient", {}).get("display_id")
-        output_index = self.outputs_manager.get_output_index(display_id) if display_id else None
         # Convert from the message spec to the nbformat output structure
         if self.use_outputs_service: 
             output = self.transform_output(msg_type, content, ydoc=False)
@@ -130,6 +129,7 @@ class OutputProcessor(LoggingConfigurable):
         # Write the outputs to the ydoc cell.
         _, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None and output is not None:
+            output_index = self.outputs_manager.get_output_index(display_id) if display_id else None
             if output_index is not None:
                 target_cell["outputs"][output_index] = output
             else:
