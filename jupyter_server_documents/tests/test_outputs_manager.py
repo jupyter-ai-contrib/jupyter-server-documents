@@ -154,12 +154,12 @@ def test_display_ids():
     op._compute_output_index('cell1', 'display2')
     
     # Verify display IDs are tracked
-    assert 'cell1' in op._display_ids
-    assert set(op._display_ids['cell1']) == {'display1', 'display2'}
+    assert 'cell1' in op._display_ids_by_cell_id
+    assert set(op._display_ids_by_cell_id['cell1']) == {'display1', 'display2'}
     
     # Clear cell indices
     op.clear('file1', 'cell1')
     
     # Verify display IDs are cleared
-    assert 'display1' not in op._display_ids
-    assert 'display2' not in op._display_ids
+    assert 'display1' not in op._display_ids_by_cell_id
+    assert 'display2' not in op._display_ids_by_cell_id

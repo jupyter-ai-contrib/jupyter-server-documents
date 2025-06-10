@@ -13,8 +13,8 @@ from jupyter_core.paths import jupyter_runtime_dir
 
 class OutputsManager(LoggingConfigurable):
     _last_output_index = Dict(default_value={})
-    _display_id_output_index = Dict(default_value={})
-    _display_ids = Dict(default_value={})
+    _output_index_by_display_id = Dict(default_value={})
+    _display_ids_by_cell_id = Dict(default_value={})
     _stream_count = Dict(default_value={})
 
     outputs_path = Instance(PurePath, help="The local runtime dir")
@@ -49,15 +49,15 @@ class OutputsManager(LoggingConfigurable):
         """
         last_index = self._last_output_index.get(cell_id, -1)
         if display_id:
-            if cell_id not in self._display_ids:
-                self._display_ids[cell_id] = set([display_id])
+            if cell_id not in self._display_ids_by_cell_id:
+                self._display_ids_by_cell_id[cell_id] = set([display_id])
             else:
-                self._display_ids[cell_id].add(display_id)
-            index = self._display_id_output_index.get(display_id)
+                self._display_ids_by_cell_id[cell_id].add(display_id)
+            index = self._output_index_by_display_id.get(display_id)
             if index is None:
                 index = last_index + 1
                 self._last_output_index[cell_id] = index
-                self._display_id_output_index[display_id] = index
+                self._output_index_by_display_id[display_id] = index
         else:
             index = last_index + 1
             self._last_output_index[cell_id] = index
@@ -66,7 +66,7 @@ class OutputsManager(LoggingConfigurable):
 
     def get_output_index(self, display_id: str):
         """Returns output index for a cell by display_id"""
-        return self._display_id_output_index.get(display_id)
+        return self._output_index_by_display_id.get(display_id)
 
     def get_output(self, file_id, cell_id, output_index):
         """Get an output by file_id, cell_id, and output_index."""
@@ -170,9 +170,9 @@ class OutputsManager(LoggingConfigurable):
             self._stream_count.pop(cell_id, None)
             self._last_output_index.pop(cell_id, None)
             
-            display_ids = self._display_ids.get(cell_id, [])
+            display_ids = self._display_ids_by_cell_id.get(cell_id, [])
             for display_id in display_ids:
-                self._display_id_output_index.pop(display_id, None)
+                self._output_index_by_display_id.pop(display_id, None)
 
         path = self._build_path(file_id, cell_id)    
         try:
