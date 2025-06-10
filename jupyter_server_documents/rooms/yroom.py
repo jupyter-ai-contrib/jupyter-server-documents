@@ -29,7 +29,7 @@ class YRoom:
     """
     The ID of the room. This is a composite ID following the format:
 
-    room_id := "{file_type}:{file_format}:{file_id}"
+    room_id := "{file_format}:{file_type}:{file_id}"
     """
 
     file_api: YRoomFileAPI | None
