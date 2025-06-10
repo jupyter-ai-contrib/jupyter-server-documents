@@ -11,9 +11,8 @@ class YRoomEventsAPI:
     `jupyter_events.EventLogger` singleton in `jupyter_server`.
 
     JSD room and awareness events have the same structure as
-    `jupyter_collaboration` v4 session and awareness events. The only difference
-    is that JSD emits to a different schema ID/URI. This is defined in the `$id`
-    property of the corresponding event schema.
+    `jupyter_collaboration` v4 session and awareness events and emit on the same
+    schema IDs. Fork events are not emitted.
 
     The event schemas must be registered via
     `event_logger.register_event_schema()` in advance. This should be done when
