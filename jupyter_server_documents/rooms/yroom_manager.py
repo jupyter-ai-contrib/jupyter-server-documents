@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     import logging
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_events import EventLogger
 
 class YRoomManager():
     _rooms_by_id: dict[str, YRoom]
@@ -17,12 +18,14 @@ class YRoomManager():
         *,
         get_fileid_manager: callable[[], BaseFileIdManager],
         contents_manager: AsyncContentsManager | ContentsManager,
+        event_logger: EventLogger,
         loop: asyncio.AbstractEventLoop,
         log: logging.Logger,
     ):
         # Bind instance attributes
         self._get_fileid_manager = get_fileid_manager
         self.contents_manager = contents_manager
+        self.event_logger = event_logger
         self.loop = loop
         self.log = log
 
@@ -55,6 +58,7 @@ class YRoomManager():
                 fileid_manager=self.fileid_manager,
                 contents_manager=self.contents_manager,
                 on_stop=lambda: self._handle_yroom_stop(room_id),
+                event_logger=self.event_logger,
             )
             self._rooms_by_id[room_id] = yroom
             return yroom

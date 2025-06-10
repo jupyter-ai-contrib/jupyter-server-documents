@@ -8,8 +8,10 @@ import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
+from jupyter_events import EventLogger
 from tornado.websocket import WebSocketHandler
 from .yroom_file_api import YRoomFileAPI
+from .yroom_events_api import YRoomEventsAPI
 
 if TYPE_CHECKING:
     from typing import Literal, Tuple, Any
@@ -32,7 +34,7 @@ class YRoom:
 
     file_api: YRoomFileAPI | None
     """
-    The `YRoomFileAPI` instance for this room. This is set to `None` if & only
+    The `YRoomFileAPI` instance for this room. This is set to `None` only
     if `self.room_id == "JupyterLab:globalAwareness"`.
 
     The file API provides `load_ydoc_content()` for loading the YDoc content
@@ -41,8 +43,16 @@ class YRoom:
     out-of-band changes.
     """
 
+    events_api: YRoomEventsAPI | None
+    """
+    A `YRoomEventsAPI` instance for this room that provides methods for emitting
+    events through the `jupyter_events.EventLogger` singleton. This is set to
+    `None` only if `self.room_id == "JupyterLab:globalAwareness"`.
+    """
+
     _jupyter_ydoc: YBaseDoc | None
     """JupyterYDoc"""
+
     _ydoc: pycrdt.Doc
     """Ydoc"""
     _awareness: pycrdt.Awareness
@@ -83,7 +93,8 @@ class YRoom:
         loop: asyncio.AbstractEventLoop,
         fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
-        on_stop: callable[[], Any] | None = None
+        on_stop: callable[[], Any] | None = None,
+        event_logger: EventLogger
     ):
         # Bind instance attributes
         self.room_id = room_id
@@ -98,14 +109,18 @@ class YRoom:
         self._ydoc = pycrdt.Doc()
         self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
 
-        # If this room is providing global awareness, set `file_api` and
-        # `_jupyter_ydoc` to `None` as the YDoc is unused.
+        # If this room is providing global awareness, set unused optional
+        # attributes to `None`.
         if self.room_id == "JupyterLab:globalAwareness":
             self.file_api = None
             self._jupyter_ydoc = None
+            self.events_api = None
         else:
-            # Otherwise, initialize `_jupyter_ydoc` and `file_api`.
+            # Otherwise, initialize optional attributes for document rooms
+            # Initialize JupyterYDoc
             self._jupyter_ydoc = self._init_jupyter_ydoc()
+
+            # Initialize YRoomFileAPI, start loading content
             self.file_api = YRoomFileAPI(
                 room_id=self.room_id,
                 jupyter_ydoc=self._jupyter_ydoc,
@@ -117,12 +132,18 @@ class YRoom:
                 on_outofband_move=self.handle_outofband_move,
                 on_inband_deletion=self.handle_inband_deletion
             )
-
-            # Load the YDoc content after initializing
             self.file_api.load_ydoc_content()
 
             # Attach Jupyter YDoc observer to automatically save on change
             self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+
+            # Initialize YRoomEventsAPI
+            self.events_api = YRoomEventsAPI(
+                event_logger=event_logger,
+                fileid_manager=fileid_manager,
+                room_id=self.room_id,
+                log=self.log,
+            )
         
         # Start observers on `self.ydoc` and `self.awareness` to ensure new
         # updates are always broadcast to all clients.
@@ -140,6 +161,18 @@ class YRoom:
 
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
+
+        # Emit events if defined
+        if self.events_api:
+            # Emit 'initialize' event
+            self.events_api.emit_room_event("initialize")
+
+            # Emit 'load' event once content is loaded
+            assert self.file_api
+            async def emit_load_event():
+                await self.file_api.ydoc_content_loaded.wait()
+                self.events_api.emit_room_event("load")
+            self._loop.create_task(emit_load_event())
     
 
     def _init_jupyter_ydoc(self) -> YBaseDoc:
@@ -163,7 +196,7 @@ class YRoom:
             jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
         )
 
-        # Initialize Jupyter YDoc, add an observer to save it on change, return
+        # Initialize Jupyter YDoc and return it
         jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
         return jupyter_ydoc
 
@@ -612,6 +645,10 @@ class YRoom:
             self._on_ydoc_update
         )
         self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+
+        # Emit 'overwrite' event as the YDoc content has been overwritten
+        if self.events_api:
+            self.events_api.emit_room_event("overwrite")
 
         
     def handle_outofband_move(self) -> None:
