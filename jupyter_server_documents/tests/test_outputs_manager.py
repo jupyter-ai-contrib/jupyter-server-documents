@@ -47,7 +47,8 @@ def test_stream():
         file_id = str(uuid4())
         cell_id = str(uuid4())
         for s in streams:
-            op.write_stream(file_id, cell_id, s)
+            placeholder = op.write_output(file_id, cell_id, s)
+            op.write_stream(file_id, cell_id, s, placeholder)
         assert op.get_stream(file_id, cell_id) == text
 
 def test_display_data():
@@ -91,3 +92,74 @@ def file_not_found():
             op.get_output('a','b',0)
         with pytest.raises(FileNotFoundError):
             op.get_stream('a','b')       
+
+
+def test__compute_output_index_basic():
+    """
+    Test basic output index allocation for a cell without display ID
+    """
+    op = OutputsManager()
+    
+    # First output for a cell should be 0
+    assert op._compute_output_index('cell1') == 0
+    assert op._compute_output_index('cell1') == 1
+    assert op._compute_output_index('cell1') == 2
+
+def test__compute_output_index_with_display_id():
+    """
+    Test output index allocation with display IDs
+    """
+    op = OutputsManager()
+    
+    # First output for a cell with display ID
+    assert op._compute_output_index('cell1', 'display1') == 0
+    
+    # Subsequent calls with same display ID should return the same index
+    assert op._compute_output_index('cell1', 'display1') == 0
+    
+    # Different display ID should get a new index
+    assert op._compute_output_index('cell1', 'display2') == 1
+
+
+def test__compute_output_index_multiple_cells():
+    """
+    Test output index allocation across multiple cells
+    """
+    op = OutputsManager()
+    
+    assert op._compute_output_index('cell1') == 0
+    assert op._compute_output_index('cell1') == 1
+    assert op._compute_output_index('cell2') == 0
+    assert op._compute_output_index('cell2') == 1
+
+def test_display_id_index_retrieval():
+    """
+    Test retrieving output index for a display ID
+    """
+    op = OutputsManager()
+    
+    op._compute_output_index('cell1', 'display1')
+    
+    assert op.get_output_index('display1') == 0
+    assert op.get_output_index('non_existent_display') is None
+
+def test_display_ids():
+    """
+    Test tracking of display IDs for a cell
+    """
+    op = OutputsManager()
+    
+    # Allocate multiple display IDs for a cell
+    op._compute_output_index('cell1', 'display1')
+    op._compute_output_index('cell1', 'display2')
+    
+    # Verify display IDs are tracked
+    assert 'cell1' in op._display_ids_by_cell_id
+    assert set(op._display_ids_by_cell_id['cell1']) == {'display1', 'display2'}
+    
+    # Clear cell indices
+    op.clear('file1', 'cell1')
+    
+    # Verify display IDs are cleared
+    assert 'display1' not in op._display_ids_by_cell_id
+    assert 'display2' not in op._display_ids_by_cell_id

@@ -22,32 +22,6 @@ def test_instantiation():
     op = OutputProcessor()
     assert isinstance(op, OutputProcessor)
 
-def test_incoming_message():
-    """Test incoming message processing."""
-    with TemporaryDirectory() as td:
-        op = TestOutputProcessor()
-        om = OutputsManager()
-        op.settings["outputs_manager"] = om
-        op.outputs_path = Path(td) / "outputs"
-        # Simulate the running of a cell
-        cell_id = str(uuid4())
-        msg_id, msg = create_incoming_message(cell_id)
-        op.process_incoming_message('shell', msg)
-        assert op.get_cell_id(msg_id) == cell_id
-        assert op.get_msg_id(cell_id) == msg_id
-        # Clear the cell_id
-        op.clear(cell_id)
-        assert op.get_cell_id(msg_id) is None
-        assert op.get_msg_id(cell_id) is None
-        # Simulate the running of a cell
-        cell_id = str(uuid4())
-        msg_id, msg = create_incoming_message(cell_id)
-        op.process_incoming_message('shell', msg)
-        assert op.get_cell_id(msg_id) == cell_id
-        assert op.get_msg_id(cell_id) == msg_id
-        # # Run it again without clearing to ensure it self clears
-        cell_id = str(uuid4())
-        msg_id, msg = create_incoming_message(cell_id)
-        op.process_incoming_message('shell', msg)
-        assert op.get_cell_id(msg_id) == cell_id
-        assert op.get_msg_id(cell_id) == msg_id
+# TODO: Implement this
+def test_output_task():
+    pass

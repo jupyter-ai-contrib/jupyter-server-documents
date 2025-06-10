@@ -273,7 +273,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             target_cell["execution_count"] = execution_count
                             break
 
-            case "stream" | "display_data" | "execute_result" | "error":
+            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data":
                 if cell_id: 
                     # Process specific output messages through an optional processor
                     if self.output_processor and cell_id:
