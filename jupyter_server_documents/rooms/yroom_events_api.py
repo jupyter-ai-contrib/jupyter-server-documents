@@ -1,8 +1,9 @@
 from jupyter_events import EventLogger
-from ..events import JSD_ROOM_EVENT_URI, EventLevel, RoomAction
+from ..events import JSD_ROOM_EVENT_URI
 from typing import Optional
 from jupyter_server_fileid.manager import BaseFileIdManager
 from logging import Logger
+from typing import Literal
 
 
 class YRoomEventsAPI:
@@ -32,8 +33,8 @@ class YRoomEventsAPI:
     
     def emit_room_event(
         self,
-        action: RoomAction,
-        level: Optional[EventLevel] = "INFO"
+        action: Literal["initialize", "load", "save", "overwrite", "clean"],
+        level: Optional[Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]] = "INFO"
     ):
         """
         Emits a room event. This method is guaranteed to log any caught
