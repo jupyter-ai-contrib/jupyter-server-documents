@@ -47,6 +47,12 @@ class YRoomEventsAPI:
                 "path": path,
                 "action": action
             }
+
+            # TODO: Jupyter AI requires the `msg` field to be set to 'Room
+            # initialized' on 'initialize' room events. Remove this when the
+            # Jupyter AI issue is fixed.
+            if action == "initialize":
+                event_data["msg"] = "Room initialized"
             self._event_logger.emit(schema_id=JSD_ROOM_EVENT_URI, data=event_data)
         except:
             self.log.exception("Exception occurred when emitting a room event.")
