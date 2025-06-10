@@ -21,6 +21,7 @@ import {
   ISharedModelFactory
 } from '@jupyter/collaborative-drive';
 import { Awareness } from 'y-protocols/awareness';
+import { JupyterFrontEnd } from '@jupyterlab/application';
 
 const DISABLE_RTC =
   PageConfig.getOption('disableRTC') === 'true' ? true : false;
@@ -32,6 +33,7 @@ const DOCUMENT_PROVIDER_URL = 'api/collaboration/room';
 
 namespace RtcContentProvider {
   export interface IOptions extends RestContentProvider.IOptions {
+    app: JupyterFrontEnd;
     user: User.IManager;
     trans: TranslationBundle;
     globalAwareness: Awareness | null;
@@ -44,6 +46,7 @@ export class RtcContentProvider
 {
   constructor(options: RtcContentProvider.IOptions) {
     super(options);
+    this._app = options.app;
     this._user = options.user;
     this._trans = options.trans;
     this._globalAwareness = options.globalAwareness;
@@ -146,6 +149,7 @@ export class RtcContentProvider
 
     try {
       const provider = new WebSocketProvider({
+        app: this._app,
         url: URLExt.join(this._serverSettings.wsUrl, DOCUMENT_PROVIDER_URL),
         path: options.path,
         format: options.format,
@@ -223,6 +227,7 @@ export class RtcContentProvider
     }
   };
 
+  private _app: JupyterFrontEnd;
   private _user: User.IManager;
   private _trans: TranslationBundle;
   private _globalAwareness: Awareness | null;

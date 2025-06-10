@@ -66,6 +66,11 @@ class YRoom:
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
+    _on_stop: callable[[], Any] | None
+    """
+    Callback to run after stopping, provided in the constructor.
+    """
+
     _fileid_manager: BaseFileIdManager
     _contents_manager: AsyncContentsManager | ContentsManager
 
@@ -78,6 +83,7 @@ class YRoom:
         loop: asyncio.AbstractEventLoop,
         fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
+        on_stop: callable[[], Any] | None = None
     ):
         # Bind instance attributes
         self.room_id = room_id
@@ -85,6 +91,7 @@ class YRoom:
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
+        self._on_stop = on_stop
 
         # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -106,7 +113,9 @@ class YRoom:
                 loop=self._loop,
                 fileid_manager=self._fileid_manager,
                 contents_manager=self._contents_manager,
-                on_outofband_change=self.reload_ydoc
+                on_outofband_change=self.reload_ydoc,
+                on_outofband_move=self.handle_outofband_move,
+                on_inband_deletion=self.handle_inband_deletion
             )
 
             # Load the YDoc content after initializing
@@ -589,7 +598,9 @@ class YRoom:
             loop=self._loop,
             fileid_manager=self._fileid_manager,
             contents_manager=self._contents_manager,
-            on_outofband_change=self.reload_ydoc
+            on_outofband_change=self.reload_ydoc,
+            on_outofband_move=self.handle_outofband_move,
+            on_inband_deletion=self.handle_inband_deletion
         )
         self.file_api.load_ydoc_content()
 
@@ -603,9 +614,63 @@ class YRoom:
         self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
 
         
+    def handle_outofband_move(self) -> None:
+        """
+        Handles an out-of-band move/deletion by stopping the YRoom immediately
+        with close code 4001.
+        """
+        self.stop_immediately(close_code=4001)
+    
+    
+    def handle_inband_deletion(self) -> None:
+        """
+        Handles an in-band file deletion by stopping the YRoom immediately with
+        close code 4002.
+        """
+        self.stop_immediately(close_code=4002)
+    
+
+    def stop_immediately(self, close_code: int) -> None:
+        """
+        Stops the YRoom immediately, closing all Websockets with the given
+        `close_code`. This is similar to `self.stop()` with some key
+        differences:
+        
+        - This does not apply any pending YDoc updates from other clients.
+        - This does not save the file before exiting.
+
+        This should be reserved for scenarios where it does not make sense to
+        apply pending updates or save the file, e.g. when the file has been
+        deleted from disk.
+        """
+        # Disconnect all clients with given `close_code`
+        self.clients.stop(close_code=close_code)
+
+        # Remove all observers
+        self._ydoc.unobserve(self._ydoc_subscription)
+        self._awareness.unobserve(self._awareness_subscription)
+
+        # Purge the message queue immediately, dropping all queued messages
+        while not self._message_queue.empty():
+            self._message_queue.get_nowait()
+            self._message_queue.task_done()
+        
+        # Enqueue `None` to stop the `_process_message_queue()` background task
+        self._message_queue.put_nowait(None)
+
+        # Stop FileAPI immediately (without saving)
+        if self.file_api:
+            self.file_api.stop()
+
+        # Finally, run the provided callback (if any) and return
+        if self._on_stop:
+            self._on_stop()
+
+
     async def stop(self) -> None:
         """
-        Stops the YRoom gracefully.
+        Stops the YRoom gracefully by disconnecting all clients with close code
+        1001, applying all pending updates, and saving the YDoc before exiting.
         """
         # First, disconnect all clients by stopping the client group.
         self.clients.stop()
@@ -616,15 +681,18 @@ class YRoom:
         if self._jupyter_ydoc:
             self._jupyter_ydoc.unobserve()
 
-        # Finish processing all messages, then stop the queue to end the
+        # Finish processing all messages, then enqueue `None` to stop the
         # `_process_message_queue()` background task.
         await self._message_queue.join()
         self._message_queue.put_nowait(None)
 
-        # Finally, stop FileAPI and return. This saves the final content of the
-        # JupyterYDoc in the process.
+        # Stop FileAPI, saving the content before doing so
         if self.file_api:
             await self.file_api.stop_then_save()
+
+        # Finally, run the provided callback (if any) and return
+        if self._on_stop:
+            self._on_stop()
 
 def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
     """

@@ -197,14 +197,16 @@ class YjsClientGroup:
         for client in clients:
             client.websocket.close(code=close_code)
 
-    def stop(self):
+    def stop(self, close_code: int = 1001):
         """
-        Closes all Websocket connections with close code 1001 (server
-        shutting down), removes all clients from this group, and ignores any
-        future calls to `add()`.
+        Closes all Websocket connections with the given close code, removes all
+        clients from this group, and ignores any future calls to `add()`.
+         
+        If a close code is not specified, it defaults to 1001 (indicates server
+        shutting down).
         """
-        # Close all Websockets with code 1001
-        self.close_all(close_code=1001)
+        # Close all Websockets with given close code
+        self.close_all(close_code)
 
         # Set `_stopped` to `True` to ignore future calls to `add()`
         self._stopped = True
