@@ -1,0 +1,11 @@
+name: serverdocs-jcollab
+channels:
+  - conda-forge
+dependencies:
+  - python
+  - nodejs=22
+  - uv
+  - jupyterlab
+  - pip:
+      - jupyterlab>=4.4.0,<5.0.0
+      - jupyter_collaboration~=4.0

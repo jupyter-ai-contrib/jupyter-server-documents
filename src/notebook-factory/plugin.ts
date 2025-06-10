@@ -14,7 +14,7 @@ type NotebookFactoryPlugin =
  * Custom `Notebook` factory plugin.
  */
 export const notebookFactoryPlugin: NotebookFactoryPlugin = {
-  id: '@jupyter/server-documents/notebook-extension:factory',
+  id: '@jupyter/server-documents:notebook-factory',
   description: 'Provides the notebook cell factory.',
   provides: NotebookPanel.IContentFactory,
   requires: [IEditorServices],

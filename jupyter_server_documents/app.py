@@ -7,6 +7,8 @@ from .handlers import RouteHandler, FileIDIndexHandler
 from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
 from .outputs import OutputsManager, outputs_handlers
+from .events import JSD_AWARENESS_EVENT_SCHEMA, JSD_ROOM_EVENT_SCHEMA
+from .jcollab_api import JCollabAPI
 
 class ServerDocsApp(ExtensionApp):
     name = "jupyter_server_documents"
@@ -51,6 +53,10 @@ class ServerDocsApp(ExtensionApp):
         super().initialize()
 
     def initialize_settings(self):
+        # Register event schemas
+        self.serverapp.event_logger.register_event_schema(JSD_ROOM_EVENT_SCHEMA)
+        self.serverapp.event_logger.register_event_schema(JSD_AWARENESS_EVENT_SCHEMA)
+
         # Get YRoomManager arguments from server extension context.
         # We cannot access the 'file_id_manager' key immediately because server
         # extensions initialize in alphabetical order. 'jupyter_server_documents' <
@@ -65,13 +71,22 @@ class ServerDocsApp(ExtensionApp):
         self.settings["yroom_manager"] = YRoomManager(
             get_fileid_manager=get_fileid_manager,
             contents_manager=contents_manager,
+            event_logger=self.serverapp.event_logger,
             loop=loop,
             log=log
         )
-        
+
         # Initialize OutputsManager
         self.outputs_manager = self.outputs_manager_class(config=self.config)
         self.settings["outputs_manager"] = self.outputs_manager
+
+        # Serve Jupyter Collaboration API on
+        # `self.settings["jupyter_server_ydoc"]` for compatibility with
+        # extensions depending on Jupyter Collaboration
+        self.settings["jupyter_server_ydoc"] = JCollabAPI(
+            get_fileid_manager=get_fileid_manager,
+            yroom_manager=self.settings["yroom_manager"]
+        )
     
     def _link_jupyter_server_extension(self, server_app):
         """Setup custom config needed by this extension."""

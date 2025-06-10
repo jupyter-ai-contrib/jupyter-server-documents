@@ -10,6 +10,7 @@ except ImportError:
 
 
 from .app import ServerDocsApp
+from .events import JSD_AWARENESS_EVENT_URI, JSD_ROOM_EVENT_URI
 
 
 def _jupyter_labextension_paths():
