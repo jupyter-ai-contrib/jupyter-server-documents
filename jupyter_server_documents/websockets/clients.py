@@ -157,9 +157,10 @@ class YjsClientGroup:
         
         return all_clients
 
-    def is_empty(self) -> bool:
-        """Returns whether the client group is empty."""
-        return len(self.synced) == 0 and len(self.desynced) == 0
+    @property
+    def count(self) -> int:
+        """Returns the number of clients synced / syncing to the room."""
+        return len(self.synced) + len(self.desynced)
     
     async def _clean_desynced(self) -> None:
         while True: 
