@@ -124,14 +124,12 @@ class YRoomManager():
     
     async def _watch_rooms(self) -> None:
         """
-        Background task that checks all `YRoom` instances every 5 seconds, and
+        Background task that checks all `YRoom` instances every 10 seconds, and
         deletes any rooms that are empty.
-
-        TODO: Notebooks?
         """
         while True:
-            # Check every 5 seconds
-            await asyncio.sleep(5)
+            # Check every 10 seconds
+            await asyncio.sleep(10)
 
             # Get room IDs from the room dictionary in advance, as the
             # dictionary will mutate if rooms are deleted.
@@ -139,17 +137,20 @@ class YRoomManager():
 
             # Iterate through all rooms. If any rooms are empty, stop the rooms.
             for room_id in room_ids:
-                # If room_id is not in this dictionary, then the room was
-                # stopped by someone else while this `for` loop was still
-                # running. Continue, as the room is already being stopped.
+                # Continue if `room_id`` is not in the rooms dictionary. This
+                # happens if the room was stopped by something else while this
+                # `for` loop is still running, so we must check.
                 if room_id not in self._rooms_by_id:
                     continue
 
-                # Otherwise, stop the room if it's empty
+                # Continue if the room is not empty
                 room = self._rooms_by_id[room_id]
-                if room.clients.count == 0:
-                    self.log.info(f"Found empty YRoom '{room_id}'.")
-                    self.loop.create_task(self.delete_room(room_id))
+                if room.clients.count != 0:
+                    continue
+
+                # Otherwise, delete the room
+                self.log.info(f"Found empty YRoom '{room_id}'.")
+                self.loop.create_task(self.delete_room(room_id))
                 
 
     async def stop(self) -> None:
