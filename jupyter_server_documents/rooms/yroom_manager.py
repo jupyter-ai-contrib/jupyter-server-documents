@@ -12,6 +12,12 @@ if TYPE_CHECKING:
 
 class YRoomManager():
     _rooms_by_id: dict[str, YRoom]
+    """
+    Dictionary of active `YRoom` instances, keyed by room ID.
+
+    It is guaranteed that if a room is present in the dictionary, the room is
+    not currently stopping. This is ensured by `_handle_yroom_stopping()`.
+    """
 
     def __init__(
         self,
@@ -44,7 +50,7 @@ class YRoomManager():
         method will initialize a new YRoom.
         """
 
-        # If room exists, then return it immediately
+        # If room exists, return the room
         if room_id in self._rooms_by_id:
             return self._rooms_by_id[room_id]
         
@@ -57,7 +63,7 @@ class YRoomManager():
                 loop=self.loop,
                 fileid_manager=self.fileid_manager,
                 contents_manager=self.contents_manager,
-                on_stop=lambda: self._handle_yroom_stop(room_id),
+                on_stopping=lambda: self._handle_yroom_stopping(room_id),
                 event_logger=self.event_logger,
             )
             self._rooms_by_id[room_id] = yroom
@@ -70,11 +76,15 @@ class YRoomManager():
             return None
     
 
-    def _handle_yroom_stop(self, room_id: str) -> None:
+    def _handle_yroom_stopping(self, room_id: str) -> None:
         """
-        Callback that is run when the YRoom is stopped. This ensures the room is
-        removed from the dictionary for garbage collection, even if the room was
+        Callback that is run when the YRoom starts stopping. This callback:
+        
+        - Ensures the room is removed from the dictionary, even if the room was
         stopped directly without `YRoomManager.delete_room()`.
+
+        - Prevents future connections to the stopping room and allows its memory
+        to be freed once complete.
         """
         self._rooms_by_id.pop(room_id, None)
 

@@ -76,9 +76,10 @@ class YRoom:
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
-    _on_stop: callable[[], Any] | None
+    _on_stopping: callable[[], Any] | None
     """
-    Callback to run after stopping, provided in the constructor.
+    Callback to run as soon as `stop()` or `stop_immediately()` are called. Only
+    set in the constructor.
     """
 
     _fileid_manager: BaseFileIdManager
@@ -93,8 +94,8 @@ class YRoom:
         loop: asyncio.AbstractEventLoop,
         fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
-        on_stop: callable[[], Any] | None = None,
-        event_logger: EventLogger
+        event_logger: EventLogger,
+        on_stopping: callable[[], Any] | None = None,
     ):
         # Bind instance attributes
         self.room_id = room_id
@@ -102,7 +103,7 @@ class YRoom:
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
-        self._on_stop = on_stop
+        self._on_stopping = on_stopping
 
         # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -680,12 +681,18 @@ class YRoom:
         apply pending updates or save the file, e.g. when the file has been
         deleted from disk.
         """
+        # First, run the 'stopping' callback to inform the consumer
+        if self._on_stopping:
+            self._on_stopping()
+
         # Disconnect all clients with given `close_code`
         self.clients.stop(close_code=close_code)
 
         # Remove all observers
         self._ydoc.unobserve(self._ydoc_subscription)
         self._awareness.unobserve(self._awareness_subscription)
+        if self._jupyter_ydoc:
+            self._jupyter_ydoc.unobserve()
 
         # Purge the message queue immediately, dropping all queued messages
         while not self._message_queue.empty():
@@ -699,17 +706,17 @@ class YRoom:
         if self.file_api:
             self.file_api.stop()
 
-        # Finally, run the provided callback (if any) and return
-        if self._on_stop:
-            self._on_stop()
-
 
     async def stop(self) -> None:
         """
         Stops the YRoom gracefully by disconnecting all clients with close code
         1001, applying all pending updates, and saving the YDoc before exiting.
         """
-        # First, disconnect all clients by stopping the client group.
+        # First, run the 'stopping' callback to inform the consumer
+        if self._on_stopping:
+            self._on_stopping()
+
+        # Disconnect all clients by stopping the client group.
         self.clients.stop()
         
         # Remove all observers, as updates no longer need to be broadcast
@@ -727,9 +734,6 @@ class YRoom:
         if self.file_api:
             await self.file_api.stop_then_save()
 
-        # Finally, run the provided callback (if any) and return
-        if self._on_stop:
-            self._on_stop()
 
 def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
     """
