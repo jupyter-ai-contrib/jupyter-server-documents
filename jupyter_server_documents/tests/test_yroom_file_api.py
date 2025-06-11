@@ -13,6 +13,14 @@ from jupyter_server.services.contents.filemanager import AsyncFileContentsManage
 from jupyter_server_fileid.manager import ArbitraryFileIdManager, BaseFileIdManager
 from jupyter_ydoc import YUnicode
 
+
+@pytest.fixture
+def jp_contents_manager(tmp_path):
+    """A copy of the fixture from jupyter_server, to avoid duplicate runs
+    due to parameters in the original fixture"""
+    return AsyncFileContentsManager(root_dir=str(tmp_path), use_atomic_writing=False)
+
+
 @pytest.fixture
 def mock_plaintext_file(tmp_path):
     # Copy mock file to /tmp
@@ -26,6 +34,9 @@ def mock_plaintext_file(tmp_path):
     # Cleanup
     os.remove(target_path)
 
+def noop():
+    pass
+
 @pytest_asyncio.fixture(loop_scope="module")
 async def plaintext_file_api(mock_plaintext_file: str, jp_contents_manager: AsyncFileContentsManager):
     """
@@ -38,7 +49,8 @@ async def plaintext_file_api(mock_plaintext_file: str, jp_contents_manager: Asyn
     contents_manager = jp_contents_manager
     loop = asyncio.get_running_loop()
 
-    file_id = fileid_manager.index(mock_plaintext_file)
+    filename = os.path.basename(mock_plaintext_file)
+    file_id = fileid_manager.index(filename)
     room_id = f"text:file:{file_id}"
     ydoc = pycrdt.Doc()
     awareness = pycrdt.Awareness(ydoc=ydoc)
@@ -50,6 +62,9 @@ async def plaintext_file_api(mock_plaintext_file: str, jp_contents_manager: Asyn
         fileid_manager=fileid_manager,
         log=log,
         loop=loop,
+        on_inband_deletion=noop,
+        on_outofband_change=noop,
+        on_outofband_move=noop
     )
     return yroom_file_api
 
@@ -59,7 +74,7 @@ async def test_load_plaintext_file(plaintext_file_api: Awaitable[YRoomFileAPI], 
     file_api = await plaintext_file_api
     jupyter_ydoc = file_api.jupyter_ydoc
     file_api.load_ydoc_content()
-    await file_api.ydoc_content_loaded
+    await asyncio.wait_for(file_api.ydoc_content_loaded.wait(), 2)
     
     # Assert that `get_jupyter_ydoc()` returns a `jupyter_ydoc.YUnicode` object
     # for plaintext files
@@ -69,4 +84,7 @@ async def test_load_plaintext_file(plaintext_file_api: Awaitable[YRoomFileAPI], 
     with open(mock_plaintext_file) as f:
         content = f.read()
     assert jupyter_ydoc.source == content
+    
+    # stop file file api to avoid coroutine warnings
+    file_api.stop()
 
