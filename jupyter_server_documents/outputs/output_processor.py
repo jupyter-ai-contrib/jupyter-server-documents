@@ -2,13 +2,14 @@ import asyncio
 
 from pycrdt import Map
 
-from traitlets import Unicode, Bool
+from traitlets import Unicode, Bool, Dict
 from traitlets.config import LoggingConfigurable
 from jupyter_server_documents.kernels.message_cache import KernelMessageCache
 
 class OutputProcessor(LoggingConfigurable):
     
     _file_id = Unicode(default_value=None, allow_none=True)
+    _clear_output_cells = Dict(default_value={})
 
     use_outputs_service = Bool(
         default_value=True,
@@ -46,6 +47,17 @@ class OutputProcessor(LoggingConfigurable):
         """A shortcut for the jupyter server ydoc manager."""
         return self.settings["yroom_manager"]
 
+
+    async def get_notebook_ydoc(self, file_id):
+        room_id = f"json:notebook:{file_id}"
+        room = self.yroom_manager.get_room(room_id)
+        if room is None:
+            self.log.error(f"YRoom not found: {room_id}")
+            return
+        notebook = await room.get_jupyter_ydoc()
+        
+        return notebook
+
     async def clear_cell_outputs(self, cell_id, room_id):
         """Clears the outputs of a cell in ydoc"""
         room = self.yroom_manager.get_room(room_id)
@@ -62,11 +74,19 @@ class OutputProcessor(LoggingConfigurable):
 
     def clear(self, cell_id):
         """Clear all outputs for a given cell Id."""
+
+        task = None
+
         if self._file_id is not None:
             if self.use_outputs_service:
                 room_id = f"json:notebook:{self._file_id}"
-                asyncio.create_task(self.clear_cell_outputs(cell_id, room_id))
+                task = asyncio.create_task(self.clear_cell_outputs(cell_id, room_id))
                 self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
+            
+            # Remove any pending delayed clear for this cell
+            self._clear_output_cells.pop(cell_id, None)
+        
+        return task
 
     # Outgoing messages
     def process_output(self, msg_type: str, cell_id: str, content: dict):
@@ -87,6 +107,23 @@ class OutputProcessor(LoggingConfigurable):
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
+
+        if msg_type == "clear_output":
+            if not content.get("wait", False):
+                # Clear immediately
+                self.clear(cell_id)
+            else:
+                # Mark for delayed clear, overriding any previous pending clear
+                self._clear_output_cells[cell_id] = True
+
+            return
+
+        # Check for delayed clear before processing output
+        if cell_id in self._clear_output_cells and msg_type != "clear_output":
+            clear_task = self.clear(cell_id)
+            if clear_task is not None:
+                await clear_task
+
         try:
             # TODO: The session manager may have multiple notebooks connected to the kernel
             # but currently get_session only returns the first. We need to fix this and
