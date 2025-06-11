@@ -19,6 +19,13 @@ class YRoomManager():
     not currently stopping. This is ensured by `_handle_yroom_stopping()`.
     """
 
+    _get_fileid_manager: callable[[], BaseFileIdManager]
+    contents_manager: AsyncContentsManager | ContentsManager
+    event_logger: EventLogger
+    loop: asyncio.AbstractEventLoop
+    log: logging.Logger
+    _watch_rooms_task: asyncio.Task
+
     def __init__(
         self,
         *,
@@ -37,7 +44,11 @@ class YRoomManager():
 
         # Initialize dictionary of YRooms, keyed by room ID
         self._rooms_by_id = {}
-    
+
+        # Start `self._watch_rooms()` background task to automatically stop
+        # empty rooms
+        self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
+
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
@@ -111,24 +122,56 @@ class YRoomManager():
             self.log.exception(e)
             return False
     
+    async def _watch_rooms(self) -> None:
+        """
+        Background task that checks all `YRoom` instances every 5 seconds, and
+        deletes any rooms that are empty.
+
+        TODO: Notebooks?
+        """
+        while True:
+            # Check every 5 seconds
+            await asyncio.sleep(5)
+
+            # Get room IDs from the room dictionary in advance, as the
+            # dictionary will mutate if rooms are deleted.
+            room_ids = set(self._rooms_by_id.keys())
+
+            # Iterate through all rooms. If any rooms are empty, stop the rooms.
+            for room_id in room_ids:
+                # If room_id is not in this dictionary, then the room was
+                # stopped by someone else while this `for` loop was still
+                # running. Continue, as the room is already being stopped.
+                if room_id not in self._rooms_by_id:
+                    continue
+
+                # Otherwise, stop the room if it's empty
+                room = self._rooms_by_id[room_id]
+                if room.clients.count == 0:
+                    self.log.info(f"Found empty YRoom '{room_id}'.")
+                    self.loop.create_task(self.delete_room(room_id))
+                
 
     async def stop(self) -> None:
         """
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
         """
+        # First, stop all background tasks
+        self._watch_rooms_task.cancel()
+
+        # Get all room IDs. If there are none, return early, as all rooms are
+        # already stopped.
         room_ids = list(self._rooms_by_id.keys())
         room_count = len(room_ids)
-
         if room_count == 0:
             return
-
-        self.log.info(
-            f"Stopping `YRoomManager` and deleting all {room_count} YRooms."
-        )
 
         # Delete rooms in parallel.
         # Note that we do not use `asyncio.TaskGroup` here because that cancels
         # all other tasks when any task raises an exception.
+        self.log.info(
+            f"Stopping `YRoomManager` and deleting all {room_count} YRooms."
+        )
         deletion_tasks = []
         for room_id in room_ids:
             dt = asyncio.create_task(self.delete_room(room_id))
