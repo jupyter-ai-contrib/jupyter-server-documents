@@ -1,7 +1,5 @@
 # jupyter_server_documents
 
-[![Github Actions Status](https://github.com/jupyter-ai-contrib/jupyter_server_documents/workflows/Build/badge.svg)](https://github.com/jupyter-ai-contrib/jupyter_server_documents/actions/workflows/build.yml)
-
 A JupyterLab extension that provides RTC capabilities.
 
 This extension is composed of a Python package named `jupyter_server_documents`
