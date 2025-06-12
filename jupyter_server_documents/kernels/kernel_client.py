@@ -105,12 +105,12 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         msg_id = header["msg_id"]                
         metadata = self.session.unpack(msg[2])
         cell_id = metadata.get("cellId")
-        # Clear output processor if this cell already has 
-        # an existing request.
+        
+        # Clear cell outputs if cell is re-executedq
         if cell_id:
             existing = self.message_cache.get(cell_id=cell_id)
             if existing and existing['msg_id'] != msg_id:
-                self.output_processor.clear(cell_id)
+                self.output_processor.clear_cell_outputs(cell_id)
         
         self.message_cache.add({
             "msg_id": msg_id,

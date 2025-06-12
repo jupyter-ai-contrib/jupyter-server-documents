@@ -9,7 +9,7 @@ from jupyter_server_documents.kernels.message_cache import KernelMessageCache
 class OutputProcessor(LoggingConfigurable):
     
     _file_id = Unicode(default_value=None, allow_none=True)
-    _clear_output_cells = Dict(default_value={})
+    _pending_clear_output_cells = Dict(default_value={})
 
     use_outputs_service = Bool(
         default_value=True,
@@ -47,48 +47,54 @@ class OutputProcessor(LoggingConfigurable):
         """A shortcut for the jupyter server ydoc manager."""
         return self.settings["yroom_manager"]
 
-
-    async def get_notebook_ydoc(self, file_id):
+    async def get_jupyter_ydoc(self, file_id):
         room_id = f"json:notebook:{file_id}"
         room = self.yroom_manager.get_room(room_id)
         if room is None:
             self.log.error(f"YRoom not found: {room_id}")
             return
-        notebook = await room.get_jupyter_ydoc()
+        ydoc = await room.get_jupyter_ydoc()
         
-        return notebook
+        return ydoc
 
-    async def clear_cell_outputs(self, cell_id, room_id):
+    async def _clear_ydoc_outputs(self, cell_id):
         """Clears the outputs of a cell in ydoc"""
-        room = self.yroom_manager.get_room(room_id)
-        if room is None:
-            self.log.error(f"YRoom not found: {room_id}")
+        
+        if not self._file_id:
             return
-        notebook = await room.get_jupyter_ydoc()
-        self.log.info(f"Notebook: {notebook}")
- 
+        
+        notebook = self.get_jupyter_ydoc(self._file_id)
         cell_index, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None:
             target_cell["outputs"].clear()
-            self.log.info(f"Cleared outputs for ydoc: {room_id} {cell_index}")
+            self.log.info(f"Cleared outputs for {self._file_id=}, {cell_index=}")
 
-    def clear(self, cell_id):
-        """Clear all outputs for a given cell Id."""
+    def clear_cell_outputs(self, cell_id) -> asyncio.Task | None:
+        """
+        Clears all outputs for a cell on disk and in ydoc. Returns an 
+        `asyncio.Task` that clears outputs for the cell in ydoc. Callers
+        should wait for this task to complete, if they expect to update 
+        the ydoc.
 
-        task = None
+        ```
+        clear_output_task = clear("cellid")
+        await clear_outputs_task
+        ```
+        """
+
+        clear_outputs_task = None
 
         if self._file_id is not None:
             if self.use_outputs_service:
-                room_id = f"json:notebook:{self._file_id}"
-                task = asyncio.create_task(self.clear_cell_outputs(cell_id, room_id))
+                clear_outputs_task = asyncio.create_task(
+                    self._clear_ydoc_outputs(cell_id)
+                )
                 self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
             
-            # Remove any pending delayed clear for this cell
-            self._clear_output_cells.pop(cell_id, None)
+            self._pending_clear_output_cells.pop(cell_id, None)
         
-        return task
+        return clear_outputs_task
 
-    # Outgoing messages
     def process_output(self, msg_type: str, cell_id: str, content: dict):
         """Process outgoing messages from the kernel.
         
@@ -109,20 +115,19 @@ class OutputProcessor(LoggingConfigurable):
         """A coroutine to handle output messages."""
 
         if msg_type == "clear_output":
-            if not content.get("wait", False):
-                # Clear immediately
-                self.clear(cell_id)
+            wait = content.get("wait", False)
+            if not wait:
+                self.clear_cell_outputs(cell_id)
             else:
-                # Mark for delayed clear, overriding any previous pending clear
-                self._clear_output_cells[cell_id] = True
+                self._pending_clear_output_cells[cell_id] = True
 
             return
 
-        # Check for delayed clear before processing output
-        if cell_id in self._clear_output_cells and msg_type != "clear_output":
-            clear_task = self.clear(cell_id)
-            if clear_task is not None:
-                await clear_task
+        # Check for pending clear_output before processing output
+        if cell_id in self._pending_clear_output_cells and (
+            clear_task := self.clear_cell_outputs(cell_id)
+        ):
+            await clear_task
 
         try:
             # TODO: The session manager may have multiple notebooks connected to the kernel
