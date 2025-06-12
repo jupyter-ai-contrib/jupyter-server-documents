@@ -11,6 +11,17 @@ if TYPE_CHECKING:
     from jupyter_events import EventLogger
 
 class YRoomManager():
+    """
+    A singleton that manages all `YRoom` instances in the server extension. This
+    automatically deletes empty `YRoom`s with no connected clients or active
+    kernel every 10 seconds.
+
+    Because rooms may be deleted due to inactivity, consumers should only store
+    a reference to the room ID and call `get_room(room_id)` each time a
+    reference to the room is needed. This method is cheap as long as the room
+    still exists.
+    """
+
     _rooms_by_id: dict[str, YRoom]
     """
     Dictionary of active `YRoom` instances, keyed by room ID.
@@ -86,6 +97,12 @@ class YRoomManager():
             )
             return None
     
+    def has_room(self, room_id: str) -> bool:
+        """
+        Returns whether a `YRoom` instance with a matching `room_id` already
+        exists.
+        """
+        return room_id in self._rooms_by_id
 
     def _handle_yroom_stopping(self, room_id: str) -> None:
         """
@@ -124,28 +141,48 @@ class YRoomManager():
     
     async def _watch_rooms(self) -> None:
         """
-        Background task that checks all `YRoom` instances every 10 seconds, and
-        deletes any rooms that are empty.
+        Background task that checks all `YRoom` instances every 10 seconds,
+        deleting any rooms that are totally inactive.
+
+        - For rooms providing notebooks: This task deletes the room if it has no
+        connected clients and its kernel execution status is either 'idle' or
+        'dead'.
+
+        - For all other rooms: This task deletes the room if it has no connected
+        clients.
         """
         while True:
             # Check every 10 seconds
             await asyncio.sleep(10)
 
-            # Get room IDs from the room dictionary in advance, as the
+            # Get all room IDs from the room dictionary in advance, as the
             # dictionary will mutate if rooms are deleted.
             room_ids = set(self._rooms_by_id.keys())
 
+            # Remove the global awareness room ID from this set, as that room
+            # should not be stopped until the server extension is stopped.
+            room_ids.discard("JupyterLab:globalAwareness")
+
             # Iterate through all rooms. If any rooms are empty, stop the rooms.
             for room_id in room_ids:
-                # Continue if `room_id`` is not in the rooms dictionary. This
+                # Continue if `room_id` is not in the rooms dictionary. This
                 # happens if the room was stopped by something else while this
                 # `for` loop is still running, so we must check.
                 if room_id not in self._rooms_by_id:
                     continue
 
-                # Continue if the room is not empty
+                # Continue if the room has any connected clients.
                 room = self._rooms_by_id[room_id]
                 if room.clients.count != 0:
+                    continue
+                
+                # Continue if the room contains a notebook with kernel execution
+                # state neither 'idle' nor 'dead'.
+                # In this case, the notebook kernel may still be running code
+                # cells, so the room should not be closed.
+                awareness = room.get_awareness().get_local_state() or {}
+                execution_state = awareness.get("kernel", {}).get("execution_state", None)
+                if execution_state not in { "idle", "dead" }:
                     continue
 
                 # Otherwise, delete the room
