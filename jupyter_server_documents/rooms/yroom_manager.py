@@ -13,13 +13,12 @@ if TYPE_CHECKING:
 class YRoomManager():
     """
     A singleton that manages all `YRoom` instances in the server extension. This
-    automatically deletes empty `YRoom`s with no connected clients or active
-    kernel every 10 seconds.
+    automatically deletes `YRoom` instances if they have had no connected
+    clients or active kernel for >10 seconds.
 
     Because rooms may be deleted due to inactivity, consumers should only store
     a reference to the room ID and call `get_room(room_id)` each time a
-    reference to the room is needed. This method is cheap as long as the room
-    still exists.
+    reference to the room is needed. See `get_room()` for more details.
     """
 
     _rooms_by_id: dict[str, YRoom]
@@ -79,12 +78,17 @@ class YRoomManager():
 
     def get_room(self, room_id: str) -> YRoom | None:
         """
-        Retrieves a YRoom given a room ID. If the YRoom does not exist, this
-        method will initialize a new YRoom.
+        Returns the `YRoom` instance for a given room ID. If the instance does
+        not exist, this method will initialize one and return it. Otherwise,
+        this method returns the instance from its cache, ensuring that this
+        method is fast in almost all cases.
 
-        This method ensures that the returned room will be alive for >10
+        Consumers should always call this method each time a reference to the
+        `YRoom` is needed, since rooms may be deleted due to inactivity.
+
+        This method also ensures that the returned room will be alive for >10
         seconds. This prevents the room from being deleted shortly after the
-        consumer receives it via this method, even if it is inactive.
+        consumer receives it via this method, even if it was inactive.
         """
         # First, ensure this room stays open for >10 seconds by removing it from
         # the inactive set of rooms if it is present.
