@@ -63,7 +63,7 @@ class OutputProcessor(LoggingConfigurable):
         if not self._file_id:
             return
         
-        notebook = self.get_jupyter_ydoc(self._file_id)
+        notebook = await self.get_jupyter_ydoc(self._file_id)
         cell_index, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None:
             target_cell["outputs"].clear()
@@ -117,7 +117,9 @@ class OutputProcessor(LoggingConfigurable):
         if msg_type == "clear_output":
             wait = content.get("wait", False)
             if not wait:
-                self.clear_cell_outputs(cell_id)
+                clear_task = self.clear_cell_outputs(cell_id)
+                if clear_task:
+                    await clear_task
             else:
                 self._pending_clear_output_cells[cell_id] = True
 
@@ -159,15 +161,10 @@ class OutputProcessor(LoggingConfigurable):
         else:
             output = self.transform_output(msg_type, content, ydoc=True)
 
-        # Get the notebook ydoc from the room
-        room_id = f"json:notebook:{file_id}"
-        room = self.yroom_manager.get_room(room_id)
-        if room is None:
-            self.log.error(f"YRoom not found: {room_id}")
+        notebook = await self.get_jupyter_ydoc(file_id)
+        if not notebook:
             return
-        notebook = await room.get_jupyter_ydoc()
-        self.log.info(f"Notebook: {notebook}")
- 
+        
         # Write the outputs to the ydoc cell.
         _, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None and output is not None:
