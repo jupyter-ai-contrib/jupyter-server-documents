@@ -212,7 +212,7 @@ class YRoom:
         return self._client_group
 
 
-    async def get_jupyter_ydoc(self):
+    async def get_jupyter_ydoc(self) -> YBaseDoc:
         """
         Returns a reference to the room's JupyterYDoc
         (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
@@ -227,7 +227,7 @@ class YRoom:
         return self._jupyter_ydoc
     
 
-    async def get_ydoc(self):
+    async def get_ydoc(self) -> pycrdt.Doc:
         """
         Returns a reference to the room's YDoc (`pycrdt.Doc`) after
         waiting for its content to be loaded from the ContentsManager.
@@ -237,7 +237,7 @@ class YRoom:
         return self._ydoc
 
     
-    def get_awareness(self):
+    def get_awareness(self) -> pycrdt.Awareness:
         """
         Returns a reference to the room's awareness (`pycrdt.Awareness`).
         """
