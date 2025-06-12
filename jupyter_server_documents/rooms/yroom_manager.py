@@ -30,6 +30,14 @@ class YRoomManager():
     not currently stopping. This is ensured by `_handle_yroom_stopping()`.
     """
 
+    _inactive_rooms: set[str]
+    """
+    Set of room IDs that were marked inactive on the last iteration of
+    `_watch_rooms()`. If a room is inactive and its ID is present in this set,
+    then the room has been inactive for >10 seconds, and the room should be
+    deleted in `_watch_rooms()`.
+    """
+
     _get_fileid_manager: callable[[], BaseFileIdManager]
     contents_manager: AsyncContentsManager | ContentsManager
     event_logger: EventLogger
@@ -56,6 +64,9 @@ class YRoomManager():
         # Initialize dictionary of YRooms, keyed by room ID
         self._rooms_by_id = {}
 
+        # Initialize set of inactive rooms tracked by `self._watch_rooms()`
+        self._inactive_rooms = set()
+
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
         self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
@@ -70,7 +81,14 @@ class YRoomManager():
         """
         Retrieves a YRoom given a room ID. If the YRoom does not exist, this
         method will initialize a new YRoom.
+
+        This method ensures that the returned room will be alive for >10
+        seconds. This prevents the room from being deleted shortly after the
+        consumer receives it via this method, even if it is inactive.
         """
+        # First, ensure this room stays open for >10 seconds by removing it from
+        # the inactive set of rooms if it is present.
+        self._inactive_rooms.discard(room_id)
 
         # If room exists, return the room
         if room_id in self._rooms_by_id:
@@ -142,7 +160,7 @@ class YRoomManager():
     async def _watch_rooms(self) -> None:
         """
         Background task that checks all `YRoom` instances every 10 seconds,
-        deleting any rooms that are totally inactive.
+        deleting any rooms that have been inactive for >10 seconds.
 
         - For rooms providing notebooks: This task deletes the room if it has no
         connected clients and its kernel execution status is either 'idle' or
@@ -169,11 +187,13 @@ class YRoomManager():
                 # happens if the room was stopped by something else while this
                 # `for` loop is still running, so we must check.
                 if room_id not in self._rooms_by_id:
+                    self._inactive_rooms.discard(room_id)
                     continue
 
                 # Continue if the room has any connected clients.
                 room = self._rooms_by_id[room_id]
                 if room.clients.count != 0:
+                    self._inactive_rooms.discard(room_id)
                     continue
                 
                 # Continue if the room contains a notebook with kernel execution
@@ -183,11 +203,20 @@ class YRoomManager():
                 awareness = room.get_awareness().get_local_state() or {}
                 execution_state = awareness.get("kernel", {}).get("execution_state", None)
                 if execution_state not in { "idle", "dead", None }:
+                    self._inactive_rooms.discard(room_id)
                     continue
 
-                # Otherwise, delete the room
-                self.log.info(f"Found empty YRoom '{room_id}'.")
-                self.loop.create_task(self.delete_room(room_id))
+                # The room is inactive if this statement is reached
+                # Delete the room if was marked as inactive in the last
+                # iteration, otherwise mark it as inactive.
+                if room_id in self._inactive_rooms:
+                    self.log.info(
+                        f"YRoom '{room_id}' has been inactive for >10 seconds. "
+                    )
+                    self.loop.create_task(self.delete_room(room_id))
+                    self._inactive_rooms.discard(room_id)
+                else:
+                    self._inactive_rooms.add(room_id)
                 
 
     async def stop(self) -> None:
