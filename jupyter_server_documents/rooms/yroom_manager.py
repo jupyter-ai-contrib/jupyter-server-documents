@@ -182,7 +182,7 @@ class YRoomManager():
                 # cells, so the room should not be closed.
                 awareness = room.get_awareness().get_local_state() or {}
                 execution_state = awareness.get("kernel", {}).get("execution_state", None)
-                if execution_state not in { "idle", "dead" }:
+                if execution_state not in { "idle", "dead", None }:
                     continue
 
                 # Otherwise, delete the room
