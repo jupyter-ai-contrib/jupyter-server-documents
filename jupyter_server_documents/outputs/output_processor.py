@@ -2,14 +2,14 @@ import asyncio
 
 from pycrdt import Map
 
-from traitlets import Unicode, Bool, Dict
+from traitlets import Unicode, Bool, Set
 from traitlets.config import LoggingConfigurable
 from jupyter_server_documents.kernels.message_cache import KernelMessageCache
 
 class OutputProcessor(LoggingConfigurable):
     
     _file_id = Unicode(default_value=None, allow_none=True)
-    _pending_clear_output_cells = Dict(default_value={})
+    _pending_clear_output_cells = Set(default_value=set())
 
     use_outputs_service = Bool(
         default_value=True,
@@ -91,7 +91,7 @@ class OutputProcessor(LoggingConfigurable):
                 )
                 self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
             
-            self._pending_clear_output_cells.pop(cell_id, None)
+            self._pending_clear_output_cells.discard(cell_id)
         
         return clear_outputs_task
 
@@ -121,7 +121,7 @@ class OutputProcessor(LoggingConfigurable):
                 if clear_task:
                     await clear_task
             else:
-                self._pending_clear_output_cells[cell_id] = True
+                self._pending_clear_output_cells.add(cell_id)
 
             return
 
