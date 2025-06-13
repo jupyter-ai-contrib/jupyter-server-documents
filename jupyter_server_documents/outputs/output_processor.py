@@ -69,31 +69,16 @@ class OutputProcessor(LoggingConfigurable):
             target_cell["outputs"].clear()
             self.log.info(f"Cleared outputs for {self._file_id=}, {cell_index=}")
 
-    def clear_cell_outputs(self, cell_id) -> asyncio.Task | None:
-        """
-        Clears all outputs for a cell on disk and in ydoc. Returns an 
-        `asyncio.Task` that clears outputs for the cell in ydoc. Callers
-        should wait for this task to complete, if they expect to update 
-        the ydoc.
-
-        ```
-        clear_output_task = clear("cellid")
-        await clear_outputs_task
-        ```
-        """
-
-        clear_outputs_task = None
+    async def clear_cell_outputs(self, cell_id):
+        """Clears all outputs for a cell on disk and in ydoc."""
 
         if self._file_id is not None:
+            await self._clear_ydoc_outputs(cell_id)
+            self._pending_clear_output_cells.discard(cell_id)
+            
             if self.use_outputs_service:
-                clear_outputs_task = asyncio.create_task(
-                    self._clear_ydoc_outputs(cell_id)
-                )
                 self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
             
-            self._pending_clear_output_cells.discard(cell_id)
-        
-        return clear_outputs_task
 
     def process_output(self, msg_type: str, cell_id: str, content: dict):
         """Process outgoing messages from the kernel.
@@ -108,28 +93,28 @@ class OutputProcessor(LoggingConfigurable):
         The content has not been deserialized yet as we need to verify we
         should process it.
         """
-        asyncio.create_task(self.output_task(msg_type, cell_id, content))
+        if msg_type == "clear_output":
+            asyncio.create_task(self.clear_output_task(cell_id, content))
+        else:
+            asyncio.create_task(self.output_task(msg_type, cell_id, content))
+        
         return None # Don't allow the original message to propagate to the frontend
+
+    async def clear_output_task(self, cell_id, content):
+        """A courotine to handle clear_output messages"""
+
+        wait = content.get("wait", False)
+        if wait:
+            self._pending_clear_output_cells.add(cell_id)
+        else:
+            await self.clear_cell_outputs(cell_id)
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
 
-        if msg_type == "clear_output":
-            wait = content.get("wait", False)
-            if not wait:
-                clear_task = self.clear_cell_outputs(cell_id)
-                if clear_task:
-                    await clear_task
-            else:
-                self._pending_clear_output_cells.add(cell_id)
-
-            return
-
         # Check for pending clear_output before processing output
-        if cell_id in self._pending_clear_output_cells and (
-            clear_task := self.clear_cell_outputs(cell_id)
-        ):
-            await clear_task
+        if cell_id in self._pending_clear_output_cells:
+            await self.clear_cell_outputs(cell_id)
 
         try:
             # TODO: The session manager may have multiple notebooks connected to the kernel

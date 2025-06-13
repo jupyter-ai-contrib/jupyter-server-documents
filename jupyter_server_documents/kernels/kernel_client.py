@@ -110,7 +110,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         if cell_id:
             existing = self.message_cache.get(cell_id=cell_id)
             if existing and existing['msg_id'] != msg_id:
-                self.output_processor.clear_cell_outputs(cell_id)
+                asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
         
         self.message_cache.add({
             "msg_id": msg_id,
