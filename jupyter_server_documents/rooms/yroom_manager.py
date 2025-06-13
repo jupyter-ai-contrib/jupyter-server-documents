@@ -139,10 +139,11 @@ class YRoomManager():
         self._rooms_by_id.pop(room_id, None)
 
         
-    async def delete_room(self, room_id: str) -> None:
+    def delete_room(self, room_id: str) -> None:
         """
-        Gracefully deletes a YRoom given a room ID. This stops the YRoom first,
-        which finishes applying all updates & saves the content automatically.
+        Gracefully deletes a YRoom given a room ID. This stops the YRoom,
+        closing all Websockets, applying remaining updates, and saves the final
+        content of the YDoc in a background task.
 
         Returns `True` if the room was deleted successfully. Returns `False` if
         an exception was raised.
@@ -153,12 +154,12 @@ class YRoomManager():
         
         self.log.info(f"Stopping YRoom '{room_id}'.")
         try:
-            await yroom.stop()
-            self.log.info(f"Stopped YRoom '{room_id}'.")
+            yroom.stop()
             return True
         except Exception as e:
-            self.log.error(f"Exception raised when stopping YRoom '{room_id}:")
-            self.log.exception(e)
+            self.log.exception(
+                f"Exception raised when stopping YRoom '{room_id}: "
+            )
             return False
     
     async def _watch_rooms(self) -> None:
@@ -223,35 +224,30 @@ class YRoomManager():
                     self._inactive_rooms.add(room_id)
                 
 
-    async def stop(self) -> None:
+    def stop(self) -> None:
         """
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
         """
         # First, stop all background tasks
         self._watch_rooms_task.cancel()
 
-        # Get all room IDs. If there are none, return early, as all rooms are
-        # already stopped.
+        # Get all room IDs. If there are none, return early.
         room_ids = list(self._rooms_by_id.keys())
         room_count = len(room_ids)
         if room_count == 0:
             return
 
-        # Delete rooms in parallel.
-        # Note that we do not use `asyncio.TaskGroup` here because that cancels
-        # all other tasks when any task raises an exception.
+        # Otherwise, delete all rooms.
         self.log.info(
             f"Stopping `YRoomManager` and deleting all {room_count} YRooms."
         )
-        deletion_tasks = []
+        failures = 0
         for room_id in room_ids:
-            dt = asyncio.create_task(self.delete_room(room_id))
-            deletion_tasks.append(dt)
-        
-        # Use returned values to log success/failure of room deletion
-        results: list[bool] = await asyncio.gather(*deletion_tasks)
-        failures = results.count(False)
+            result = self.delete_room(room_id)
+            if not result:
+                failures += 1
 
+        # Log the aggregate status before returning.
         if failures:
             self.log.error(
                 "An exception occurred when stopping `YRoomManager`. "
