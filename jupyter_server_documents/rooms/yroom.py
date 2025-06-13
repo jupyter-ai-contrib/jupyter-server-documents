@@ -76,12 +76,6 @@ class YRoom:
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
-    _on_stopping: callable[[], Any] | None
-    """
-    Callback to run as soon as `stop()` or `stop_immediately()` are called. Only
-    set in the constructor.
-    """
-
     _stopped: bool = False
     """
     Whether the YRoom is stopped. Set to `True` when `stop()` is called and set
@@ -101,7 +95,6 @@ class YRoom:
         fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
         event_logger: EventLogger,
-        on_stopping: callable[[], Any] | None = None,
     ):
         # Bind instance attributes
         self.room_id = room_id
@@ -109,7 +102,6 @@ class YRoom:
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
-        self._on_stopping = on_stopping
         self._stopped = False
 
         # Initialize YjsClientGroup, YDoc, and Awareness
@@ -671,11 +663,6 @@ class YRoom:
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
         """
-
-        # TODO: delete dis?
-        if self._on_stopping:
-            self._on_stopping()
-        
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
 
@@ -733,7 +720,7 @@ class YRoom:
         """
         Saves the JupyterYDoc, then calls `self._clear_ydoc()`.
 
-        This can be run safely in the background because the FileAPI uses an
+        This can be run safely in the background because the FileAPI uses a
         lock to prevent overlapping reads & writes to a single file.
         """
         await self.file_api.save(self._jupyter_ydoc)
