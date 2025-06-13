@@ -15,14 +15,16 @@ if TYPE_CHECKING:
 class YRoomFileAPI:
     """
     Provides an API to 1 file from Jupyter Server's ContentsManager for a YRoom,
-    given the the room's JupyterYDoc and ID in the constructor.
+    given the the room ID in the constructor.
 
-    To load the content, consumers should call `file_api.load_ydoc_content()`,
-    then `await file_api.ydoc_content_loaded` before performing any operations
-    on the YDoc.
+    - To load the content, consumers call `load_content_into()` with a
+    JupyterYDoc. This also starts the `_watch_file()` loop.
 
-    To save a JupyterYDoc to the file, call
-    `file_api.schedule_save(jupyter_ydoc)`.
+    - Consumers should `await file_api.until_content_loaded` before performing
+    any operations on the YDoc.
+
+    - To save a JupyterYDoc to the file, call
+    `file_api.schedule_save(jupyter_ydoc)` after calling `load_content_into()`.
     """
 
     # See `filemanager.py` in `jupyter_server` for references on supported file
@@ -220,7 +222,7 @@ class YRoomFileAPI:
                     # cancelled halfway and corrupting the file. We need to
                     # store a reference to the shielded task to prevent it from
                     # being garbage collected (see `asyncio.shield()` docs).
-                    save_task = self.save_immediately(jupyter_ydoc)
+                    save_task = self.save(jupyter_ydoc)
                     await asyncio.shield(save_task)
             except asyncio.CancelledError:
                 break
@@ -319,15 +321,15 @@ class YRoomFileAPI:
             self._on_outofband_change()
 
     
-    async def save_immediately(self, jupyter_ydoc: YBaseDoc):
+    async def save(self, jupyter_ydoc: YBaseDoc):
         """
-        Saves the given JupyterYDoc to disk immediately.
+        Saves the given JupyterYDoc to disk. This method works even if the
+        FileAPI is stopped.
 
         This method should only be called by consumers if the YDoc needs to be
         saved while the FileAPI is stopped, e.g. when the parent room is
         stopping. In all other cases, consumers should call `schedule_save()`
-        instead to save the YDoc on the next tick of the `self._watch_file()`
-        background task.
+        instead.
         """
         try:
             # Build arguments to `CM.save()`
@@ -386,11 +388,11 @@ class YRoomFileAPI:
 
     def restart(self) -> None:
         """
-        Restarts the instance by stopping the `_watch_file()` background task
-        and clearing its internal state. This can be called before or after the
-        instance is stopped. 
+        Restarts the instance by stopping if the room is not stopped, then
+        clearing its internal state.
 
-        Consumers should call `load_content_into()` again after this method.
+        Consumers should call `load_content_into()` again after this method to
+        restart the `_watch_file()` task.
         """
         # Stop if not stopped already
         if not self.stopped:

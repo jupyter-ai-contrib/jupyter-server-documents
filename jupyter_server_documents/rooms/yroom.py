@@ -82,6 +82,12 @@ class YRoom:
     set in the constructor.
     """
 
+    _stopped: bool = False
+    """
+    Whether the YRoom is stopped. Set to `True` when `stop()` is called and set
+    to `False` when `restart()` is called.
+    """
+
     _fileid_manager: BaseFileIdManager
     _contents_manager: AsyncContentsManager | ContentsManager
 
@@ -104,6 +110,7 @@ class YRoom:
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
         self._on_stopping = on_stopping
+        self._stopped = False
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -131,7 +138,7 @@ class YRoom:
                 loop=self._loop,
                 fileid_manager=self._fileid_manager,
                 contents_manager=self._contents_manager,
-                on_outofband_change=self.reload_ydoc,
+                on_outofband_change=self.handle_outofband_change,
                 on_outofband_move=self.handle_outofband_move,
                 on_inband_deletion=self.handle_inband_deletion
             )
@@ -292,50 +299,9 @@ class YRoom:
             if queue_item is None:
                 break
 
-            # Otherwise, process the new message
+            # Otherwise, process & handle the new message
             client_id, message = queue_item
-        
-            # Determine message type & subtype from header
-            message_type = message[0]
-            sync_message_subtype = "*"
-            # message subtypes only exist on sync messages, hence this condition
-            if message_type == YMessageType.SYNC and len(message) >= 2:
-                sync_message_subtype = message[1]
-
-            # Determine if message is invalid
-            # NOTE: In Python 3.12+, we can drop list(...) call 
-            # according to https://docs.python.org/3/library/enum.html#enum.EnumType.__contains__
-            invalid_message_type = message_type not in list(YMessageType)
-            invalid_sync_message_type = message_type == YMessageType.SYNC and sync_message_subtype not in list(YSyncMessageSubtype)
-            invalid_message = invalid_message_type or invalid_sync_message_type
-
-            # Handle invalid messages by logging a warning and ignoring
-            if invalid_message:
-                self.log.warning(
-                    "Ignoring an unrecognized message with header "
-                    f"'{message_type},{sync_message_subtype}' from client "
-                    f"'{client_id}'. Messages must have one of the following "
-                    "headers: '0,0' (SyncStep1), '0,1' (SyncStep2), "
-                    "'0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
-                )
-            # Handle Awareness messages
-            elif message_type == YMessageType.AWARENESS:
-                self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
-                self.handle_awareness_update(client_id, message)
-                self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
-            # Handle Sync messages
-            elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
-                self.log.info(f"Received SS1 from '{client_id}'.")
-                self.handle_sync_step1(client_id, message)
-                self.log.info(f"Handled SS1 from '{client_id}'.")
-            elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-                self.log.info(f"Received SS2 from '{client_id}'.")
-                self.handle_sync_step2(client_id, message)
-                self.log.info(f"Handled SS2 from '{client_id}'.")
-            elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
-                self.log.info(f"Received SyncUpdate from '{client_id}'.")
-                self.handle_sync_update(client_id, message)
-                self.log.info(f"Handled SyncUpdate from '{client_id}'.")
+            self.handle_message(client_id, message)
             
             # Finally, inform the asyncio Queue that the task was complete
             # This is required for `self._message_queue.join()` to unblock once
@@ -347,6 +313,60 @@ class YRoom:
             f"for YRoom '{self.room_id}'."
         )
     
+    def handle_message(self, client_id: str, message: bytes) -> None:
+        """
+        Handles all messages from every client received in the message queue by
+        calling the appropriate handler based on the message type. This method
+        routes the message to one of the following methods:
+
+        - `handle_sync_step1()`
+        - `handle_sync_step2()`
+        - `handle_sync_update()`
+        - `handle_awareness_update()`
+        """
+
+        # Determine message type & subtype from header
+        message_type = message[0]
+        sync_message_subtype = "*"
+        # message subtypes only exist on sync messages, hence this condition
+        if message_type == YMessageType.SYNC and len(message) >= 2:
+            sync_message_subtype = message[1]
+
+        # Determine if message is invalid
+        # NOTE: In Python 3.12+, we can drop list(...) call 
+        # according to https://docs.python.org/3/library/enum.html#enum.EnumType.__contains__
+        invalid_message_type = message_type not in list(YMessageType)
+        invalid_sync_message_type = message_type == YMessageType.SYNC and sync_message_subtype not in list(YSyncMessageSubtype)
+        invalid_message = invalid_message_type or invalid_sync_message_type
+
+        # Handle invalid messages by logging a warning and ignoring
+        if invalid_message:
+            self.log.warning(
+                "Ignoring an unrecognized message with header "
+                f"'{message_type},{sync_message_subtype}' from client "
+                f"'{client_id}'. Messages must have one of the following "
+                "headers: '0,0' (SyncStep1), '0,1' (SyncStep2), "
+                "'0,2' (SyncUpdate), or '1,*' (AwarenessUpdate)."
+            )
+        # Handle Awareness messages
+        elif message_type == YMessageType.AWARENESS:
+            self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
+            self.handle_awareness_update(client_id, message)
+            self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
+        # Handle Sync messages
+        elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
+            self.log.info(f"Received SS1 from '{client_id}'.")
+            self.handle_sync_step1(client_id, message)
+            self.log.info(f"Handled SS1 from '{client_id}'.")
+        elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
+            self.log.info(f"Received SS2 from '{client_id}'.")
+            self.handle_sync_step2(client_id, message)
+            self.log.info(f"Handled SS2 from '{client_id}'.")
+        elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
+            self.log.info(f"Received SyncUpdate from '{client_id}'.")
+            self.handle_sync_update(client_id, message)
+            self.log.info(f"Handled SyncUpdate from '{client_id}'.")
+
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
         """
@@ -595,96 +615,68 @@ class YRoom:
 
     def reload_ydoc(self) -> None:
         """
-        Reloads the YDoc from the `ContentsManager`. This method:
-
-        - Is called in response to out-of-band changes.
-
-        - Disconnects all clients with close code 4000.
-
-        - Empties the message queue, as the updates can no longer be applied.
-
-        - Resets `self._ydoc`, `self._awareness`, and `self._jupyter_ydoc`.
-
-        - Resets `self.file_api` to reload the YDoc from the `ContentsManager`.
-
-        This method is deliberately synchronous so it cannot interrupted by
-        another coroutine.
+        Alias for `self.restart(close_code=4000, immediately=True)`.
+        
+        TODO: Use a designated close code to distinguish YDoc reloads from
+        out-of-band changes.
         """
-        # Do nothing if this is a global awareness room, since the YDoc is never
-        # used anyways.
-        if self.room_id == "JupyterLab:globalAwareness":
-            return
-
-        # Stop the existing `YRoomFileAPI` immediately
-        assert self.file_api
-        self.file_api.stop()
-
-        # Disconnect all clients with close code 4000.
-        # This is a special code defined by our extension, informing each client
-        # to purge their existing YDoc & re-connect.
-        self.clients.close_all(4000)
-
-        # Empty message queue
-        while not self._message_queue.empty():
-            self._message_queue.get_nowait()
-            self._message_queue.task_done()
-
-        # Remove existing observers
-        self._ydoc.unobserve(self._ydoc_subscription)
-        self._awareness.unobserve(self._awareness_subscription)
-        self._jupyter_ydoc.unobserve()
-
-        # Re-initialize YDoc, YAwareness, JupyterYDoc
-        self._ydoc = self._init_ydoc()
-        self._awareness = self._init_awareness(ydoc=self._ydoc)
-        self._jupyter_ydoc = self._init_jupyter_ydoc(
-            ydoc=self._ydoc,
-            awareness=self._awareness
-        )
-
-        # Reset `YRoomFileAPI` & reload the document
-        self.file_api.restart()
-        self.file_api.load_content_into(self._jupyter_ydoc)
-
-        # Emit 'overwrite' event as the YDoc content has been overwritten
-        if self.events_api:
-            self.events_api.emit_room_event("overwrite")
+        self.restart(close_code=4000, immediately=True)
 
         
+    def handle_outofband_change(self) -> None:
+        """
+        Handles an out-of-band change by restarting the YRoom immediately,
+        closing all Websockets with close code 4000.
+
+        See `restart()` for more info.
+        """
+        self.restart(close_code=4000, immediately=True)
+    
+
     def handle_outofband_move(self) -> None:
         """
-        Handles an out-of-band move/deletion by stopping the YRoom immediately
-        with close code 4001.
+        Handles an out-of-band move/deletion by stopping the YRoom immediately,
+        closing all Websockets with close code 4001.
+
+        See `stop()` for more info.
         """
-        self.stop_immediately(close_code=4001)
+        self.stop(close_code=4001, immediately=True)
     
     
     def handle_inband_deletion(self) -> None:
         """
-        Handles an in-band file deletion by stopping the YRoom immediately with
-        close code 4002.
+        Handles an in-band file deletion by stopping the YRoom immediately,
+        closing all Websockets with close code 4002.
+
+        See `stop()` for more info.
         """
-        self.stop_immediately(close_code=4002)
+        self.stop(close_code=4002, immediately=True)
     
 
-    def stop_immediately(self, close_code: int) -> None:
+    def stop(self, close_code: int = 1001, immediately: bool = False):
         """
-        Stops the YRoom immediately, closing all Websockets with the given
-        `close_code`. This is similar to `self.stop()` with some key
-        differences:
+        Stops the YRoom. This method:
+         
+        - Disconnects all clients with the given `close_code`,
+        defaulting to `1001` (server shutting down) if not given.
         
-        - This does not apply any pending YDoc updates from other clients.
-        - This does not save the file before exiting.
+        - Removes all observers and stops the `_process_message_queue()`
+        background task.
 
-        This should be reserved for scenarios where it does not make sense to
-        apply pending updates or save the file, e.g. when the file has been
-        deleted from disk.
+        - If `immediately=False` (default), this method will finish applying all
+        pending updates in the message queue and save the YDoc before returning.
+        Otherwise, if `immediately=True`, this method will drop all pending
+        updates and not save the YDoc before returning.
+
+        - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
+        the server. This deletes the YDoc history.
         """
-        # First, run the 'stopping' callback to inform the consumer
+
+        # TODO: delete dis?
         if self._on_stopping:
             self._on_stopping()
-
-        # Disconnect all clients with given `close_code`
+        
+        # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
 
         # Remove all observers
@@ -692,50 +684,86 @@ class YRoom:
         self._awareness.unobserve(self._awareness_subscription)
         if self._jupyter_ydoc:
             self._jupyter_ydoc.unobserve()
-
-        # Purge the message queue immediately, dropping all queued messages
+        
+        # Empty the message queue based on `immediately` argument
         while not self._message_queue.empty():
-            self._message_queue.get_nowait()
-            self._message_queue.task_done()
+            if immediately:
+                self._message_queue.get_nowait()
+                self._message_queue.task_done()
+            else:
+                client_id, message = self._message.queue.get_nowait()
+                self.handle_message(client_id, message)
         
-        # Enqueue `None` to stop the `_process_message_queue()` background task
+        # Stop the `_process_message_queue` task by enqueueing `None`
         self._message_queue.put_nowait(None)
-
-        # Stop FileAPI immediately (without saving)
-        if self.file_api:
-            self.file_api.stop()
-    
-
-    async def stop(self) -> None:
-        """
-        Stops the YRoom gracefully by disconnecting all clients with close code
-        1001, applying all pending updates, and saving the YDoc before exiting.
-        """
-        # First, run the 'stopping' callback to inform the consumer
-        if self._on_stopping:
-            self._on_stopping()
-
-        # Disconnect all clients by stopping the client group.
-        self.clients.stop()
         
-        # Remove all observers, as updates no longer need to be broadcast
-        self._ydoc.unobserve(self._ydoc_subscription)
-        self._awareness.unobserve(self._awareness_subscription)
-        if self._jupyter_ydoc:
-            self._jupyter_ydoc.unobserve()
+        # Return early if the room is not a document room, as no more action is
+        # needed.
+        if not self.file_api or not self._jupyter_ydoc:
+            return
 
-        # Finish processing all messages, then enqueue `None` to stop the
-        # `_process_message_queue()` background task.
-        await self._message_queue.join()
-        self._message_queue.put_nowait(None)
+        # Otherwise, stop the file API.
+        self.file_api.stop()
 
-        # Stop FileAPI, saving the content after doing so
-        if self.file_api:
-            self.file_api.stop()
-            await self.file_api.save_immediately(self._jupyter_ydoc)
+        # Clear the YDoc, saving beforehand unless `immediately=True`
+        if immediately:
+            self._clear_ydoc()
+        else:
+            # TODO: how to handle restarts after this safely?
+            self._loop.create_task(
+                self._save_then_clear_ydoc()
+            )
 
+        self._stopped = True
     
+    def _clear_ydoc(self):
+        """
+        Clears the YDoc, awareness, and JupyterYDoc, freeing their memory to the
+        server. This deletes the YDoc history.
+        """
+        self._ydoc = self._init_ydoc()
+        self._awareness = self._init_awareness(ydoc=self._ydoc)
+        self._jupyter_ydoc = self._init_jupyter_ydoc(
+            ydoc=self._ydoc,
+            awareness=self._awareness
+        )
 
+    async def _save_then_clear_ydoc(self):
+        await self.file_api.save(self._jupyter_ydoc)
+        self._clear_ydoc()
+    
+    @property
+    def stopped(self) -> bool:
+        """
+        Returns whether the room is stopped.
+        """
+        return self._stopped
+    
+    def restart(self, close_code: int = 1001, immediately: bool = False):
+        """
+        Restarts the YRoom. This method re-initializes & reloads the YDoc,
+        Awareness, and the JupyterYDoc. After this method is called, this
+        instance behaves as if it were just initialized.
+
+        If the YRoom was not stopped beforehand, then `self.stop(close_code,
+        immediately)` with the given arguments. Otherwise, `close_code` and
+        `immediately` are ignored.
+        """
+        # Stop if not stopped already, then reset `stopped` state
+        if not self._stopped:
+            self.stop(close_code=close_code, immediately=immediately)
+        self._stopped = False
+
+        # Restart client group
+        self.clients.restart()
+
+        # Restart `YRoomFileAPI` & reload the document
+        self.file_api.restart()
+        self.file_api.load_content_into(self._jupyter_ydoc)
+
+        # Restart `_process_message_queue()` task
+        self._loop.create_task(self._process_message_queue())
+    
 
 def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
     """
