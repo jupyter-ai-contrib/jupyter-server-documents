@@ -308,7 +308,7 @@ class YRoom:
             # queue is empty in `self.stop()`.
             self._message_queue.task_done()
 
-        self.log.info(
+        self.log.debug(
             "Stopped `self._process_message_queue()` background task "
             f"for YRoom '{self.room_id}'."
         )
@@ -709,13 +709,13 @@ class YRoom:
         if immediately:
             self._clear_ydoc()
         else:
-            # TODO: how to handle restarts after this safely?
             self._loop.create_task(
                 self._save_then_clear_ydoc()
             )
 
         self._stopped = True
     
+
     def _clear_ydoc(self):
         """
         Clears the YDoc, awareness, and JupyterYDoc, freeing their memory to the
@@ -727,11 +727,19 @@ class YRoom:
             ydoc=self._ydoc,
             awareness=self._awareness
         )
+    
 
     async def _save_then_clear_ydoc(self):
+        """
+        Saves the JupyterYDoc, then calls `self._clear_ydoc()`.
+
+        This can be run safely in the background because the FileAPI uses an
+        lock to prevent overlapping reads & writes to a single file.
+        """
         await self.file_api.save(self._jupyter_ydoc)
         self._clear_ydoc()
-    
+
+
     @property
     def stopped(self) -> bool:
         """
@@ -739,6 +747,7 @@ class YRoom:
         """
         return self._stopped
     
+
     def restart(self, close_code: int = 1001, immediately: bool = False):
         """
         Restarts the YRoom. This method re-initializes & reloads the YDoc,

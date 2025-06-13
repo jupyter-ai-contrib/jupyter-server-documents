@@ -36,7 +36,18 @@ class YRoomFileAPI:
     log: logging.Logger
 
     _fileid_manager: BaseFileIdManager
+    """
+    Stores a reference to the Jupyter Server's File ID Manager.
+    """
+
     _contents_manager: AsyncContentsManager | ContentsManager
+    """
+    Stores a reference to the Jupyter Server's ContentsManager.
+
+    NOTE: any calls made on this attribute should acquire & release the
+    `_content_lock`. See `_content_lock` for more info.
+    """
+
     _loop: asyncio.AbstractEventLoop
     _save_scheduled: bool
     _content_loading: bool
@@ -81,6 +92,13 @@ class YRoomFileAPI:
     not running.
     """
 
+    _content_lock: asyncio.Lock
+    """
+    An `asyncio.Lock` that ensures `ContentsManager` calls reading/writing for a
+    single file do not overlap. This prevents file corruption scenarios like
+    dual-writes or dirty-reads.
+    """
+
     def __init__(
         self,
         *,
@@ -108,9 +126,10 @@ class YRoomFileAPI:
         self._last_modified = None
         self._stopped = False
 
-        # Initialize loading & loaded states
+        # Initialize content-related primitives
         self._content_loading = False
         self._content_load_event = asyncio.Event()
+        self._content_lock = asyncio.Lock()
 
 
     def get_path(self) -> str | None:
@@ -169,11 +188,12 @@ class YRoomFileAPI:
 
         # Load the content of the file from the path
         self.log.info(f"Loading content for room ID '{self.room_id}', found at path: '{path}'.")
-        file_data = await ensure_async(self._contents_manager.get(
-            path,
-            type=self.file_type,
-            format=self.file_format
-        ))
+        async with self._content_lock:
+            file_data = await ensure_async(self._contents_manager.get(
+                path,
+                type=self.file_type,
+                format=self.file_format
+            ))
 
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
         # changes" icon in the UI
@@ -289,9 +309,10 @@ class YRoomFileAPI:
         # If this raises `HTTPError(404)`, that indicates the file was
         # moved/deleted out-of-band.
         try:
-            file_data = await ensure_async(self._contents_manager.get(
-                path=path, format=file_format, type=file_type, content=False
-            ))
+            async with self._content_lock:
+                file_data = await ensure_async(self._contents_manager.get(
+                    path=path, format=file_format, type=file_type, content=False
+                ))
         except HTTPError as e:
             # If not 404, re-raise the exception as it is unknown
             if (e.status_code != 404):
@@ -344,14 +365,15 @@ class YRoomFileAPI:
             self._save_scheduled = False
 
             # Save the YDoc via the ContentsManager
-            file_data = await ensure_async(self._contents_manager.save(
-                {
-                    "format": file_format,
-                    "type": file_type,
-                    "content": content,
-                },
-                path
-            ))
+            async with self._content_lock:
+                file_data = await ensure_async(self._contents_manager.save(
+                    {
+                        "format": file_format,
+                        "type": file_type,
+                        "content": content,
+                    },
+                    path
+                ))
 
             # Set most recent `last_modified` timestamp
             if file_data['last_modified']:
