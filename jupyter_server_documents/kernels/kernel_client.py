@@ -1,9 +1,9 @@
 """
 A new Kernel client that is aware of ydocuments.
 """
-from __future__ import annotations
 import anyio
 import asyncio
+import json
 import typing as t
 
 from traitlets import Set, Instance, Any, Type, default
@@ -15,9 +15,6 @@ from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server.utils import ensure_async
 
 from .kernel_client_abc import AbstractDocumentAwareKernelClient
-
-if t.TYPE_CHECKING:
-    from jupyter_server_documents.rooms.yroom_manager import YRoomManager
 
 
 class DocumentAwareKernelClient(AsyncKernelClient):
@@ -42,6 +39,11 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     # message is received.
     _listeners = Set(allow_none=True)
 
+    # A set of YRooms that will intercept output and kernel
+    # status messages.
+    _yrooms: t.Set[YRoom] = Set(trait=Instance(YRoom), default_value=set())
+
+
     output_processor = Instance(
         OutputProcessor,
         allow_none=True
@@ -56,24 +58,6 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     def _default_output_processor(self) -> OutputProcessor:
         self.log.info("Creating output processor")
         return self.output_process_class(parent=self, config=self.config)
-    
-    _yroom_manager: YRoomManager | None
-    """
-    The YRoomManager registered via `self.bind_yroom_manager()`, which must be
-    called before adding any `YRoom` via `self.add_yroom()`.
-    """
-
-    _yroom_ids: set[str]
-    """
-    The set of room IDs that are registered with this kernel client. This class
-    stores room IDs instead of `YRoom` instances because `YRoom` instances may
-    be deleted once inactive.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._yroom_manager = None
-        self._yroom_ids = set()
 
     async def start_listening(self):
         """Start listening to messages coming from the kernel.
@@ -302,63 +286,18 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Default return if message is processed and does not need forwarding
         return msg
 
-    @property
-    def _yrooms(self) -> list[YRoom]:
-        """
-        Returns the list of YRoom instances registered to this kernel client.
-        """
-        if len(self._yroom_ids) == 0:
-            return []
-
-        assert self._yroom_manager
-        rooms: list[YRoom] = []
-
-        # Always call `get_room()` to get the latest reference to the room. We
-        # must do this since rooms may be deleted upon inactivity. The
-        # `get_room()` method returns a cached value as long as the room was not
-        # deleted, so this is very fast in most cases.
-        for room_id in self._yroom_ids:
-            room = self._yroom_manager.get_room(room_id)
-            rooms.append(room)
-
-        return rooms
-
     async def add_yroom(self, yroom: YRoom):
         """
-        Register a `YRoom` with this kernel client, given the room ID.
-        Registered `YRoom`s will intercept display and kernel status messages.
-
-        `self.bind_yroom_manager()` must be called before using this method.
+        Register a YRoom with this kernel client. YRooms will
+        intercept display and kernel status messages.
         """
-        assert self._yroom_manager
-        self._yroom_ids.add(yroom.room_id)
-        self.log.info(
-            f"Added room '{yroom.room_id}' to kernel '{self.kernel_name}'. "
-            f"Total rooms: {len(self._yroom_ids)}"
-        )
+        self._yrooms.add(yroom)
 
     async def remove_yroom(self, yroom: YRoom):
         """
-        De-register a `YRoom` from this kernel client, given the room ID.
-
-        `self.bind_yroom_manager()` must be called before using this method.
+        De-register a YRoom from handling kernel client messages.
         """
-        self._yrooms_ids.discard(yroom.room_id)
-        self.log.info(
-            f"Removed room '{yroom.room_id}' from kernel '{self.kernel_name}'. "
-            f"Total rooms: {len(self._yroom_ids)}"
-        )
-    
-    @property
-    def yroom_manager(self) -> YRoomManager:
-        return self._yroom_manager
-
-    def bind_yroom_manager(self, yroom_manager: YRoomManager):
-        """
-        Binds a reference to the `YRoomManager` singleton to this instance. This
-        method must be called before adding a room.
-        """
-        self._yroom_manager = yroom_manager
+        self._yrooms.discard(yroom)
 
 
 AbstractDocumentAwareKernelClient.register(DocumentAwareKernelClient)

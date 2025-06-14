@@ -122,16 +122,13 @@ class YDocSessionManager(SessionManager):
         # Get YRoom for this session and store its ID in `self._room_ids`
         yroom = self._init_session_yroom(session_id, real_path)
 
-        # Bind `YRoomManager` to the kernel client
-        kernel_client = self.get_kernel_client(kernel_id)
-        kernel_client.bind_yroom_manager(yroom_manager=self.yroom_manager)
-
         # Add YRoom to this session's kernel client
         # TODO: we likely have a race condition here... need to 
         # think about it more. Currently, the kernel client gets
         # created after the kernel starts fully. We need the 
         # kernel client instantiated _before_ trying to connect
         # the yroom.
+        kernel_client = self.get_kernel_client(kernel_id)
         await kernel_client.add_yroom(yroom)
         self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
         return session_model
