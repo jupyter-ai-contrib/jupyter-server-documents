@@ -701,14 +701,13 @@ class YRoom:
         # Otherwise, stop the file API.
         self.file_api.stop()
 
-        # Clear the YDoc, saving beforehand unless `immediately=True`
-        if immediately:
-            self._clear_ydoc()
-        else:
+        # Clear the YDoc, saving the previous content unless `immediately=True`
+        if not immediately:
+            prev_jupyter_ydoc = self._jupyter_ydoc
             self._loop.create_task(
-                self._save_then_clear_ydoc()
+                self.file_api.save(prev_jupyter_ydoc)
             )
-
+        self._clear_ydoc()
         self._stopped = True
     
 
@@ -725,17 +724,6 @@ class YRoom:
         )
     
 
-    async def _save_then_clear_ydoc(self):
-        """
-        Saves the JupyterYDoc, then calls `self._clear_ydoc()`.
-
-        This can be run safely in the background because the FileAPI uses a
-        lock to prevent overlapping reads & writes to a single file.
-        """
-        await self.file_api.save(self._jupyter_ydoc)
-        self._clear_ydoc()
-
-
     @property
     def stopped(self) -> bool:
         """
@@ -743,6 +731,7 @@ class YRoom:
         """
         return self._stopped
     
+
     @property
     def updated(self) -> bool:
         """
@@ -754,6 +743,7 @@ class YRoom:
         `restart()` is called.
         """
         return self._updated
+
 
     def restart(self, close_code: int = 1001, immediately: bool = False):
         """
