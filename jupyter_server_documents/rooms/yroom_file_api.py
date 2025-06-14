@@ -396,7 +396,6 @@ class YRoomFileAPI:
         To save the YDoc after stopping, call `await
         file_api.save_immediately()` after calling this method.
         """
-        self.log.info(f"Stopping FileAPI for room '{self.room_id}'.")
         if self._watch_file_task:
             self._watch_file_task.cancel()
         self._stopped = True

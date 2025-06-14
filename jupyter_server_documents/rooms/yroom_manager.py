@@ -12,15 +12,17 @@ if TYPE_CHECKING:
 
 class YRoomManager():
     """
-    A singleton that manages all `YRoom` instances in the server extension. This
-    automatically stops `YRoom` instances if they have had no connected clients
-    or active kernel for >10 seconds.
+    A singleton that manages all `YRoom` instances in the server extension.
+
+    This manager automatically restarts updated `YRoom` instances if they have
+    had no connected clients or active kernel for >10 seconds. This deletes the
+    YDoc history to free its memory to the server.
     """
 
     _rooms_by_id: dict[str, YRoom]
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
-    deleted from this dictionary, even if stopped due to inactivity.
+    deleted from this dictionary.
 
     TODO: Delete a room if its file was deleted in/out-of-band or moved
     out-of-band. See #116.
@@ -30,8 +32,7 @@ class YRoomManager():
     """
     Set of room IDs that were marked inactive on the last iteration of
     `_watch_rooms()`. If a room is inactive and its ID is present in this set,
-    then the room the room should be stopped as it has been inactive for >10
-    seconds.
+    then the room should be restarted as it has been inactive for >10 seconds.
     """
 
     _get_fileid_manager: callable[[], BaseFileIdManager]
@@ -79,8 +80,7 @@ class YRoomManager():
         not exist, this method will initialize one and return it. Otherwise,
         this method returns the instance from its cache.
         """
-        # First, ensure this room stays open for >10 seconds by removing it from
-        # the inactive set of rooms if it is present.
+        # First, ensure the room is not considered inactive.
         self._inactive_rooms.discard(room_id)
 
         # If room exists, return the room
@@ -144,14 +144,16 @@ class YRoomManager():
     async def _watch_rooms(self) -> None:
         """
         Background task that checks all `YRoom` instances every 10 seconds,
-        stopping any rooms that have been inactive for >10 seconds.
+        restarting any updated rooms that have been inactive for >10 seconds.
+        This frees the memory occupied by the room's YDoc history, discarding it
+        in the process.
 
-        - For rooms providing notebooks: This task stops the room if it has no
-        connected clients and its kernel execution status is either 'idle' or
-        'dead'.
+        - For rooms providing notebooks: This task restarts the room if it has
+        been updated, has no connected clients, and its kernel execution status
+        is either 'idle' or 'dead'.
 
-        - For all other rooms: This task stops the room if it has no connected
-        clients.
+        - For all other rooms: This task restarts the room if it has been
+        updated and has no connected clients.
         """
         while True:
             # Check every 10 seconds
@@ -161,7 +163,7 @@ class YRoomManager():
             room_ids = set(self._rooms_by_id.keys())
             room_ids.discard("JupyterLab:globalAwareness")
 
-            # Iterate through all rooms. If any rooms are empty, stop the room.
+            # Check all rooms and restart it if inactive for >10 seconds.
             for room_id in room_ids:
                 self._check_room(room_id)
                 
@@ -170,12 +172,15 @@ class YRoomManager():
         """
         Checks a room for inactivity.
 
+        - Rooms that have not been updated are not restarted, as there is no
+        YDoc history to free.
+
         - If a room is inactive and not in `_inactive_rooms`, this method adds
         the room to `_inactive_rooms`. 
 
         - If a room is inactive and is listed in `_inactive_rooms`, this method
-        stops the room, as it has been inactive for 2 consecutive iterations of
-        `_watch_rooms()`.
+        restarts the room, as it has been inactive for 2 consecutive iterations
+        of `_watch_rooms()`.
         """
         # Do nothing if the room has any connected clients.
         room = self._rooms_by_id[room_id]
@@ -192,15 +197,22 @@ class YRoomManager():
         if execution_state not in { "idle", "dead", None }:
             self._inactive_rooms.discard(room_id)
             return
+        
+        # Do nothing if the room has not been updated. This prevents empty rooms
+        # from being restarted every 10 seconds.
+        if not room.updated:
+            self._inactive_rooms.discard(room_id)
+            return
 
-        # The room is inactive if this line is reached.
-        # Stop the room if was marked as inactive in the last iteration,
+        # The room is updated (with history) & inactive if this line is reached.
+        # Restart the room if was marked as inactive in the last iteration,
         # otherwise mark it as inactive.
         if room_id in self._inactive_rooms:
             self.log.info(
-                f"YRoom '{room_id}' has been inactive for >10 seconds. "
+                f"Room '{room_id}' has been inactive for >10 seconds. "
+                "Restarting the room to free memory occupied by its history."
             )
-            room.stop()
+            room.restart()
             self._inactive_rooms.discard(room_id)
         else:
             self._inactive_rooms.add(room_id)

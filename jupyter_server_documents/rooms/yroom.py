@@ -76,10 +76,15 @@ class YRoom:
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
-    _stopped: bool = False
+    _stopped: bool
     """
     Whether the YRoom is stopped. Set to `True` when `stop()` is called and set
     to `False` when `restart()` is called.
+    """
+
+    _updated: bool
+    """
+    See `self.updated` for more info.
     """
 
     _fileid_manager: BaseFileIdManager
@@ -103,6 +108,7 @@ class YRoom:
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
         self._stopped = False
+        self._updated = False
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
@@ -511,8 +517,9 @@ class YRoom:
             map_event = cast(pycrdt.MapEvent, event)
             if should_ignore_state_update(map_event):
                 return
-
-        # Otherwise, save the file
+        
+        # Otherwise, a change was made. Set `updated=True` and save the file
+        self._updated = True
         self.file_api.schedule_save()
 
 
@@ -663,6 +670,8 @@ class YRoom:
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
         """
+        self.log.info(f"Stopping YRoom '{self.room_id}'.")
+
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
 
@@ -734,6 +743,17 @@ class YRoom:
         """
         return self._stopped
     
+    @property
+    def updated(self) -> bool:
+        """
+        Returns whether the room has been updated since the last restart, or
+        since initialization if the room was not restarted.
+
+        This initializes to `False` and is set to `True` whenever a meaningful
+        update that needs to be saved occurs. This is reset to `False` when
+        `restart()` is called.
+        """
+        return self._updated
 
     def restart(self, close_code: int = 1001, immediately: bool = False):
         """
@@ -745,10 +765,13 @@ class YRoom:
         immediately)` with the given arguments. Otherwise, `close_code` and
         `immediately` are ignored.
         """
-        # Stop if not stopped already, then reset `stopped` state
+        # Stop if not stopped already
         if not self._stopped:
             self.stop(close_code=close_code, immediately=immediately)
+        
+        # Reset internal state
         self._stopped = False
+        self._updated = False
 
         # Restart client group
         self.clients.restart()
@@ -759,6 +782,8 @@ class YRoom:
 
         # Restart `_process_message_queue()` task
         self._loop.create_task(self._process_message_queue())
+
+        self.log.info(f"Restarted YRoom '{self.room_id}'.")
     
 
 def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
