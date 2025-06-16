@@ -198,7 +198,7 @@ class YjsClientGroup:
         for client in clients:
             client.websocket.close(code=close_code)
 
-    def stop(self, close_code: int = 1001):
+    def stop(self, close_code: int = 1001) -> None:
         """
         Closes all Websocket connections with the given close code, removes all
         clients from this group. Future calls to `add()` are ignored until the
@@ -214,14 +214,14 @@ class YjsClientGroup:
         self._stopped = True
     
     @property
-    def stopped(self):
+    def stopped(self) -> bool:
         """
         Returns whether the client group is stopped.
         """
 
         return self._stopped
     
-    def restart(self, close_code: int = 1001):
+    def restart(self, close_code: int = 1001) -> None:
         """
         Restarts the client group by setting `stopped` to `False`. Future calls
         to `add()` will *not* be ignored after this method is called.

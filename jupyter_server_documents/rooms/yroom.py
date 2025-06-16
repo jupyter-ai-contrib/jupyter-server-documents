@@ -184,7 +184,7 @@ class YRoom:
     def _init_ydoc(self) -> pycrdt.Doc:
         """
         Initializes a YDoc, automatically binding its `_on_ydoc_update()`
-        observer to `self._ydoc_subscription`. The observer can removed via
+        observer to `self._ydoc_subscription`. The observer can be removed via
         `ydoc.unobserve(self._ydoc_subscription)`.
         """
         self._ydoc = pycrdt.Doc()
@@ -698,7 +698,7 @@ class YRoom:
         self.stop(close_code=4002, immediately=True)
     
 
-    def stop(self, close_code: int = 1001, immediately: bool = False):
+    def stop(self, close_code: int = 1001, immediately: bool = False) -> None:
         """
         Stops the YRoom. This method:
          
@@ -757,7 +757,7 @@ class YRoom:
         self._stopped = True
     
 
-    def _reset_ydoc(self):
+    def _reset_ydoc(self) -> None:
         """
         Deletes and re-initializes the YDoc, awareness, and JupyterYDoc. This
         frees the memory occupied by their histories.
@@ -790,7 +790,7 @@ class YRoom:
         return self._updated
 
 
-    def restart(self, close_code: int = 1001, immediately: bool = False):
+    def restart(self, close_code: int = 1001, immediately: bool = False) -> None:
         """
         Restarts the YRoom. This method re-initializes & reloads the YDoc,
         Awareness, and the JupyterYDoc. After this method is called, this

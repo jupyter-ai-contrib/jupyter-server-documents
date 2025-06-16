@@ -134,7 +134,7 @@ class YDocSessionManager(SessionManager):
         return session_model
     
 
-    async def update_session(self, session_id, **update) -> None:
+    async def update_session(self, session_id: str, **update) -> None:
         """
         Updates the session identified by `session_id` using the keyword
         arguments passed to this method. Each keyword argument should correspond
