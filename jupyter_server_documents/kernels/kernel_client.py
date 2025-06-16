@@ -106,12 +106,11 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         metadata = self.session.unpack(msg[2])
         cell_id = metadata.get("cellId")
         
-        # Clear output processor if this cell already has 
-        # an existing request.
+        # Clear cell outputs if cell is re-executedq
         if cell_id:
             existing = self.message_cache.get(cell_id=cell_id)
             if existing and existing['msg_id'] != msg_id:
-                self.output_processor.clear(cell_id)
+                asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
         
         self.message_cache.add({
             "msg_id": msg_id,
@@ -218,7 +217,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         except Exception as e:
             self.log.error(f"Error deserializing message: {e}")
             raise
-
+        
         parent_msg_id = dmsg["parent_header"]["msg_id"]
         parent_msg_data = self.message_cache.get(parent_msg_id)
         cell_id = parent_msg_data.get('cell_id')
@@ -273,13 +272,14 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             target_cell["execution_count"] = execution_count
                             break
 
-            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data":
+            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 if cell_id: 
                     # Process specific output messages through an optional processor
                     if self.output_processor and cell_id:
                         cell_id = parent_msg_data.get('cell_id')
                         content = self.session.unpack(dmsg["content"])
-                        dmsg = self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
+                        self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
+                        
                         # Suppress forwarding of processed messages by returning None
                         return None
 
