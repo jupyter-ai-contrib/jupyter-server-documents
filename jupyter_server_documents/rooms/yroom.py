@@ -5,6 +5,7 @@ import asyncio
 from ..websockets import YjsClientGroup
 
 import pycrdt
+import uuid
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
@@ -52,6 +53,14 @@ class YRoom:
 
     _jupyter_ydoc: YBaseDoc | None
     """JupyterYDoc"""
+
+    _jupyter_ydoc_observers: dict[str, callable[[str, Any], Any]]
+    """
+    Dictionary of JupyterYDoc observers added by consumers of this room.
+
+    Added to via `observe_jupyter_ydoc()`. Removed from via
+    `unobserve_jupyter_ydoc()`.
+    """
 
     _ydoc: pycrdt.Doc
     """Ydoc"""
@@ -107,6 +116,7 @@ class YRoom:
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
+        self._jupyter_ydoc_observers = {}
         self._stopped = False
         self._updated = False
 
@@ -482,6 +492,37 @@ class YRoom:
         self._broadcast_message(message, message_type="SyncUpdate")
 
 
+    def observe_jupyter_ydoc(self, observer: callable[[str, Any], Any]) -> str:
+        """
+        Adds an observer callback to the JupyterYDoc that fires on change.
+        The callback should accept 2 arguments:
+
+        1. `updated_key: str`: the key of the shared type that was updated, e.g.
+        "cells", "state", or "metadata".
+
+        2. `event: Any`: The `pycrdt` event corresponding to the shared type.
+        For example, if "state" refers to a `pycrdt.Map`, `event` will take the
+        type `pycrdt.MapEvent`.
+
+        Consumers should use this method instead of calling `observe()` directly
+        on the `jupyter_ydoc.YBaseDoc` instance, because JupyterYDocs generally
+        only allow for a single observer.
+
+        Returns an `observer_id: str` that can be passed to
+        `unobserve_jupyter_ydoc()` to remove the observer.
+        """
+        observer_id = uuid.uuid4()
+        self._jupyter_ydoc_observers[observer_id] = observer
+    
+
+    def unobserve_jupyter_ydoc(self, observer_id: str):
+        """
+        Removes an observer from the JupyterYDoc previously added by
+        `observe_jupyter_ydoc()`, given the returned `observer_id`.
+        """
+        self._jupyter_ydoc_observers.pop(observer_id, None)
+
+
     def _on_jupyter_ydoc_update(self, updated_key: str, event: Any) -> None:
         """
         This method is an observer on `self._jupyter_ydoc` which saves the file
@@ -518,10 +559,15 @@ class YRoom:
             if should_ignore_state_update(map_event):
                 return
         
-        # Otherwise, a change was made. Set `updated=True` and save the file
+        # Otherwise, a change was made.
+        # Call all observers added by consumers first.
+        for observer in self._jupyter_ydoc_observers.values():
+            observer(updated_key, event)
+
+        # Then set `updated=True` and save the file.
         self._updated = True
         self.file_api.schedule_save()
-
+    
 
     def handle_awareness_update(self, client_id: str, message: bytes) -> None:
         # Apply the AwarenessUpdate message
@@ -707,14 +753,14 @@ class YRoom:
             self._loop.create_task(
                 self.file_api.save(prev_jupyter_ydoc)
             )
-        self._clear_ydoc()
+        self._reset_ydoc()
         self._stopped = True
     
 
-    def _clear_ydoc(self):
+    def _reset_ydoc(self):
         """
-        Clears the YDoc, awareness, and JupyterYDoc, freeing their memory to the
-        server. This deletes the YDoc history.
+        Deletes and re-initializes the YDoc, awareness, and JupyterYDoc. This
+        frees the memory occupied by their histories.
         """
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
@@ -723,7 +769,6 @@ class YRoom:
             awareness=self._awareness
         )
     
-
     @property
     def stopped(self) -> bool:
         """
