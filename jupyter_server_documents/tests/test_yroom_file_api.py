@@ -73,8 +73,8 @@ async def plaintext_file_api(mock_plaintext_file: str, jp_contents_manager: Asyn
 async def test_load_plaintext_file(plaintext_file_api: Awaitable[YRoomFileAPI], mock_plaintext_file: str):
     file_api = await plaintext_file_api
     jupyter_ydoc = file_api.jupyter_ydoc
-    file_api.load_ydoc_content()
-    await file_api.ydoc_content_loaded.wait()
+    file_api.load_content_into(jupyter_ydoc)
+    await file_api.until_content_loaded
     
     # Assert that `get_jupyter_ydoc()` returns a `jupyter_ydoc.YUnicode` object
     # for plaintext files

@@ -37,10 +37,10 @@ class YRoom:
     The `YRoomFileAPI` instance for this room. This is set to `None` only
     if `self.room_id == "JupyterLab:globalAwareness"`.
 
-    The file API provides `load_ydoc_content()` for loading the YDoc content
-    from the `ContentsManager`, accepts & handles save requests via
-    `file_api.schedule_save()`, and automatically watches the file for
-    out-of-band changes.
+    The file API provides `load_content_into()` for loading the content
+    from the `ContentsManager` into the JupyterYDoc. It accepts & handles save
+    requests via `file_api.schedule_save()`, and automatically watches the file
+    for out-of-band changes.
     """
 
     events_api: YRoomEventsAPI | None
@@ -105,26 +105,28 @@ class YRoom:
         self._contents_manager = contents_manager
         self._on_stopping = on_stopping
 
-        # Initialize YjsClientGroup, YDoc, YAwareness, JupyterYDoc
+        # Initialize YjsClientGroup, YDoc, and Awareness
         self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
-        self._ydoc = pycrdt.Doc()
-        self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
+        self._ydoc = self._init_ydoc()
+        self._awareness = self._init_awareness(ydoc=self._ydoc)
 
         # If this room is providing global awareness, set unused optional
         # attributes to `None`.
         if self.room_id == "JupyterLab:globalAwareness":
-            self.file_api = None
             self._jupyter_ydoc = None
+            self.file_api = None
             self.events_api = None
         else:
-            # Otherwise, initialize optional attributes for document rooms
+            # Otherwise, initialize optional attributes for document rooms.
             # Initialize JupyterYDoc
-            self._jupyter_ydoc = self._init_jupyter_ydoc()
+            self._jupyter_ydoc = self._init_jupyter_ydoc(
+                ydoc=self._ydoc,
+                awareness=self._awareness
+            )
 
             # Initialize YRoomFileAPI, start loading content
             self.file_api = YRoomFileAPI(
                 room_id=self.room_id,
-                jupyter_ydoc=self._jupyter_ydoc,
                 log=self.log,
                 loop=self._loop,
                 fileid_manager=self._fileid_manager,
@@ -133,10 +135,7 @@ class YRoom:
                 on_outofband_move=self.handle_outofband_move,
                 on_inband_deletion=self.handle_inband_deletion
             )
-            self.file_api.load_ydoc_content()
-
-            # Attach Jupyter YDoc observer to automatically save on change
-            self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+            self.file_api.load_content_into(self._jupyter_ydoc)
 
             # Initialize YRoomEventsAPI
             self.events_api = YRoomEventsAPI(
@@ -146,15 +145,6 @@ class YRoom:
                 log=self.log,
             )
         
-        # Start observers on `self.ydoc` and `self.awareness` to ensure new
-        # updates are always broadcast to all clients.
-        self._awareness_subscription = self._awareness.observe(
-            self._on_awareness_update
-        )
-        self._ydoc_subscription = self._ydoc.observe(
-            self._on_ydoc_update
-        )
-
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
@@ -171,23 +161,48 @@ class YRoom:
             # Emit 'load' event once content is loaded
             assert self.file_api
             async def emit_load_event():
-                await self.file_api.ydoc_content_loaded.wait()
+                await self.file_api.until_content_loaded
                 self.events_api.emit_room_event("load")
             self._loop.create_task(emit_load_event())
     
 
-    def _init_jupyter_ydoc(self) -> YBaseDoc:
+    def _init_ydoc(self) -> pycrdt.Doc:
         """
-        Initializes a Jupyter YDoc (instance of `pycrdt.YBaseDoc`). This
-        should not be called in global awareness rooms, and requires
-        `self._ydoc` and `self._awareness` to be set prior.
+        Initializes a YDoc, automatically binding its `_on_ydoc_update()`
+        observer to `self._ydoc_subscription`. The observer can removed via
+        `ydoc.unobserve(self._ydoc_subscription)`.
+        """
+        self._ydoc = pycrdt.Doc()
+        self._ydoc_subscription = self._ydoc.observe(
+            self._on_ydoc_update
+        )
+        return self._ydoc
+    
 
-        Raises `AssertionError` if the room ID is "JupyterLab:globalAwareness"
-        or if either `self._ydoc` or `self._awareness` are not set.
+    def _init_awareness(self, ydoc: pycrdt.Doc) -> pycrdt.Awareness:
+        """
+        Initializes an Awareness instance, automatically binding its
+        `_on_awareness_update()` observer to `self._awareness_subscription`.
+        The observer can be removed via
+        `awareness.unobserve(self._awareness_subscription)`.
+        """
+        self._awareness = pycrdt.Awareness(ydoc=ydoc)
+        self._awareness_subscription = self._awareness.observe(
+            self._on_awareness_update
+        )
+        return self._awareness
+
+
+    def _init_jupyter_ydoc(self, ydoc: pycrdt.Doc, awareness: pycrdt.Awareness) -> YBaseDoc:
+        """
+        Initializes a Jupyter YDoc (instance of `pycrdt.YBaseDoc`),
+        automatically attaching its `_on_jupyter_ydoc_update()` observer.
+        The observer can be removed via `jupyter_ydoc.unobserve()`.
+
+        Raises `AssertionError` if the room ID is "JupyterLab:globalAwareness",
+        as a JupyterYDoc is not needed for global awareness rooms.
         """
         assert self.room_id != "JupyterLab:globalAwareness"
-        assert self._ydoc
-        assert self._awareness
 
         # Get Jupyter YDoc class, defaulting to `YFile` if the file type is
         # unrecognized
@@ -198,8 +213,9 @@ class YRoom:
         )
 
         # Initialize Jupyter YDoc and return it
-        jupyter_ydoc = JupyterYDocClass(ydoc=self._ydoc, awareness=self._awareness)
-        return jupyter_ydoc
+        self._jupyter_ydoc = JupyterYDocClass(ydoc=ydoc, awareness=awareness)
+        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+        return self._jupyter_ydoc
 
 
     @property
@@ -218,12 +234,12 @@ class YRoom:
         (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
         loaded from the ContentsManager.
         """
-        if self.file_api:
-            await self.file_api.ydoc_content_loaded.wait()
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
             self.log.error(message)
             raise Exception(message)
+        if self.file_api:
+            await self.file_api.until_content_loaded
         return self._jupyter_ydoc
     
 
@@ -233,7 +249,7 @@ class YRoom:
         waiting for its content to be loaded from the ContentsManager.
         """
         if self.file_api:
-            await self.file_api.ydoc_content_loaded.wait()
+            await self.file_api.until_content_loaded
         return self._ydoc
 
     
@@ -265,7 +281,7 @@ class YRoom:
         # Wait for content to be loaded before processing any messages in the
         # message queue
         if self.file_api:
-            await self.file_api.ydoc_content_loaded.wait()
+            await self.file_api.until_content_loaded
 
         # Begin processing messages from the message queue
         while True:
@@ -330,7 +346,7 @@ class YRoom:
             "Stopped `self._process_message_queue()` background task "
             f"for YRoom '{self.room_id}'."
         )
-
+    
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
         """
@@ -473,8 +489,7 @@ class YRoom:
         # Do nothing if the content is still loading. Clients cannot make
         # updates until the content is loaded, so this safely prevents an extra
         # save upon loading/reloading the YDoc.
-        content_loading = not self.file_api.ydoc_content_loaded.is_set()
-        if content_loading:
+        if not self.file_api.content_loaded:
             return
 
         # Do nothing if the event updates the 'state' dictionary with no effect
@@ -619,33 +634,17 @@ class YRoom:
         self._awareness.unobserve(self._awareness_subscription)
         self._jupyter_ydoc.unobserve()
 
-        # Reset YDoc, YAwareness, JupyterYDoc to empty states
-        self._ydoc = pycrdt.Doc()
-        self._awareness = pycrdt.Awareness(ydoc=self._ydoc)
-        self._jupyter_ydoc = self._init_jupyter_ydoc()
+        # Re-initialize YDoc, YAwareness, JupyterYDoc
+        self._ydoc = self._init_ydoc()
+        self._awareness = self._init_awareness(ydoc=self._ydoc)
+        self._jupyter_ydoc = self._init_jupyter_ydoc(
+            ydoc=self._ydoc,
+            awareness=self._awareness
+        )
 
         # Reset `YRoomFileAPI` & reload the document
-        self.file_api = YRoomFileAPI(
-            room_id=self.room_id,
-            jupyter_ydoc=self._jupyter_ydoc,
-            log=self.log,
-            loop=self._loop,
-            fileid_manager=self._fileid_manager,
-            contents_manager=self._contents_manager,
-            on_outofband_change=self.reload_ydoc,
-            on_outofband_move=self.handle_outofband_move,
-            on_inband_deletion=self.handle_inband_deletion
-        )
-        self.file_api.load_ydoc_content()
-
-        # Add observers to new YDoc, YAwareness, and JupyterYDoc instances
-        self._awareness_subscription = self._awareness.observe(
-            self._on_awareness_update
-        )
-        self._ydoc_subscription = self._ydoc.observe(
-            self._on_ydoc_update
-        )
-        self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
+        self.file_api.restart()
+        self.file_api.load_content_into(self._jupyter_ydoc)
 
         # Emit 'overwrite' event as the YDoc content has been overwritten
         if self.events_api:
@@ -705,7 +704,7 @@ class YRoom:
         # Stop FileAPI immediately (without saving)
         if self.file_api:
             self.file_api.stop()
-
+    
 
     async def stop(self) -> None:
         """
@@ -730,9 +729,12 @@ class YRoom:
         await self._message_queue.join()
         self._message_queue.put_nowait(None)
 
-        # Stop FileAPI, saving the content before doing so
+        # Stop FileAPI, saving the content after doing so
         if self.file_api:
-            await self.file_api.stop_then_save()
+            self.file_api.stop()
+            await self.file_api.save_immediately(self._jupyter_ydoc)
+
+    
 
 
 def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
