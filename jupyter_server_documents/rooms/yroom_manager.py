@@ -40,7 +40,7 @@ class YRoomManager():
     event_logger: EventLogger
     loop: asyncio.AbstractEventLoop
     log: logging.Logger
-    _watch_rooms_task: asyncio.Task
+    _watch_rooms_task: asyncio.Task | None
 
     def __init__(
         self,
@@ -66,7 +66,8 @@ class YRoomManager():
 
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
-        self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
+        # TODO: Do not enable this until #120 is addressed.
+        # self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
 
 
     @property
@@ -223,7 +224,8 @@ class YRoomManager():
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
         """
         # First, stop all background tasks
-        self._watch_rooms_task.cancel()
+        if self._watch_rooms_task:
+            self._watch_rooms_task.cancel()
 
         # Get all room IDs. If there are none, return early.
         room_ids = list(self._rooms_by_id.keys())
