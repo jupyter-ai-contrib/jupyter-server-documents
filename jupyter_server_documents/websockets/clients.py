@@ -157,9 +157,10 @@ class YjsClientGroup:
         
         return all_clients
 
-    def is_empty(self) -> bool:
-        """Returns whether the client group is empty."""
-        return len(self.synced) == 0 and len(self.desynced) == 0
+    @property
+    def count(self) -> int:
+        """Returns the number of clients synced / syncing to the room."""
+        return len(self.synced) + len(self.desynced)
     
     async def _clean_desynced(self) -> None:
         while True: 
@@ -197,10 +198,11 @@ class YjsClientGroup:
         for client in clients:
             client.websocket.close(code=close_code)
 
-    def stop(self, close_code: int = 1001):
+    def stop(self, close_code: int = 1001) -> None:
         """
         Closes all Websocket connections with the given close code, removes all
-        clients from this group, and ignores any future calls to `add()`.
+        clients from this group. Future calls to `add()` are ignored until the
+        client group is restarted via `restart()`.
          
         If a close code is not specified, it defaults to 1001 (indicates server
         shutting down).
@@ -210,4 +212,25 @@ class YjsClientGroup:
 
         # Set `_stopped` to `True` to ignore future calls to `add()`
         self._stopped = True
+    
+    @property
+    def stopped(self) -> bool:
+        """
+        Returns whether the client group is stopped.
+        """
+
+        return self._stopped
+    
+    def restart(self, close_code: int = 1001) -> None:
+        """
+        Restarts the client group by setting `stopped` to `False`. Future calls
+        to `add()` will *not* be ignored after this method is called.
+
+        If the client group is not stopped, `self.stop(close_code)` will be
+        called with the given argument. Otherwise, `close_code` will be ignored.
+        """
+        if not self.stopped:
+            self.stop(close_code=close_code)
+
+        self._stopped = False
             
