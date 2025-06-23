@@ -1,12 +1,16 @@
+from __future__ import annotations
 from jupyter_events import EventLogger
-from ..events import JSD_ROOM_EVENT_URI
-from typing import Optional
 from jupyter_server_fileid.manager import BaseFileIdManager
-from logging import Logger
-from typing import Literal
+from traitlets.config import LoggingConfigurable
+from typing import TYPE_CHECKING
 
+from ..events import JSD_ROOM_EVENT_URI
 
-class YRoomEventsAPI:
+if TYPE_CHECKING:
+    from typing import Literal, Optional
+    import logging
+
+class YRoomEventsAPI(LoggingConfigurable):
     """
     Class that provides an API to emit events to the
     `jupyter_events.EventLogger` singleton in `jupyter_server`.
@@ -20,16 +24,32 @@ class YRoomEventsAPI:
     the server extension initializes.
     """
 
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class. This is automatically set
+    by the `LoggingConfigurable` parent class; this declaration only hints the
+    type for type checkers.
+    """
+
     _event_logger: EventLogger
     _fileid_manager: BaseFileIdManager
     room_id: str
-    log: Logger
 
-    def __init__(self, event_logger: EventLogger, fileid_manager: BaseFileIdManager, room_id: str, log: Logger):
+    def __init__(
+        self,
+        *args,
+        event_logger: EventLogger,
+        fileid_manager: BaseFileIdManager,
+        room_id: str,
+        **kwargs
+    ):
+        # Forward other arguments to parent class
+        super().__init__(*args, **kwargs)
+
+        # Bind instance attributes
         self._event_logger = event_logger
         self._fileid_manager = fileid_manager
         self.room_id = room_id
-        self.log = log
     
     def emit_room_event(
         self,

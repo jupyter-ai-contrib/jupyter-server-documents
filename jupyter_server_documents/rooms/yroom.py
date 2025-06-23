@@ -230,10 +230,10 @@ class YRoom(LoggingConfigurable):
             # Initialize YRoomEventsAPI
             EventsAPIClass = self.events_api_class
             self.events_api = EventsAPIClass(
+                parent=self,
                 event_logger=event_logger,
                 fileid_manager=fileid_manager,
                 room_id=self.room_id,
-                log=self.log,
             )
         
         # Initialize message queue and start background task that routes new
