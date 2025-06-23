@@ -1,6 +1,5 @@
 from jupyter_server.extension.application import ExtensionApp
 from traitlets.config import Config
-import asyncio
 
 from traitlets import Instance, Type
 from .handlers import RouteHandler, FileIDIndexHandler
