@@ -17,7 +17,7 @@ from .yroom_events_api import YRoomEventsAPI
 
 if TYPE_CHECKING:
     import logging
-    from typing import Literal, Tuple, Any
+    from typing import Coroutine, Literal, Tuple, Any
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
     from pycrdt import TransactionEvent
@@ -160,6 +160,12 @@ class YRoom(LoggingConfigurable):
     See `self.updated` for more info.
     """
 
+    _save_task: asyncio.Task | None
+    """
+    The task that is saving the final content of the YDoc to disk before
+    stopping. See `self.until_saved` documentation for more info.
+    """
+
     _fileid_manager: BaseFileIdManager
     _contents_manager: AsyncContentsManager | ContentsManager
 
@@ -185,6 +191,7 @@ class YRoom(LoggingConfigurable):
         self._jupyter_ydoc_observers = {}
         self._stopped = False
         self._updated = False
+        self._save_task = None
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         ClientGroupClass = self.client_group_class
@@ -784,6 +791,9 @@ class YRoom(LoggingConfigurable):
 
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
+
+        IMPORTANT: If the server is shutting down, the YRoomManager should call
+        `await room.until_saved`. See `until_saved` documentation for more info.
         """
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
@@ -819,11 +829,29 @@ class YRoom(LoggingConfigurable):
         # Clear the YDoc, saving the previous content unless `immediately=True`
         if not immediately:
             prev_jupyter_ydoc = self._jupyter_ydoc
-            self._loop.create_task(
+            self._save_task = self._loop.create_task(
                 self.file_api.save(prev_jupyter_ydoc)
             )
         self._reset_ydoc()
         self._stopped = True
+    
+
+    @property
+    def until_saved(self) -> Coroutine[Any, Any, None]:
+        """
+        Returns an Awaitable that resolves when the save is complete after the
+        room was stopped with `immediately=False`.
+
+        If the server is shutting down, this property must be awaited by
+        `YRoomManager`. Otherwise, the `ContentsManager` will shut down before
+        the final save completes, resulting in an empty file.
+        """
+        return self._until_saved()
+    
+
+    async def _until_saved(self) -> None:
+        if self._save_task:
+            await self._save_task
     
 
     def _reset_ydoc(self) -> None:

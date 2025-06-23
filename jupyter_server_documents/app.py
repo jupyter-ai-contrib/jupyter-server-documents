@@ -102,5 +102,5 @@ class ServerDocsApp(ExtensionApp):
     async def stop_extension(self):
         self.log.info("Stopping `jupyter_server_documents` server extension.")
         if self.yroom_manager:
-            self.yroom_manager.stop()
+            await self.yroom_manager.stop()
         self.log.info("`jupyter_server_documents` server extension is shut down. Goodbye!")

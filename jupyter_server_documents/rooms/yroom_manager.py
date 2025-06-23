@@ -236,27 +236,50 @@ class YRoomManager(LoggingConfigurable):
             self._inactive_rooms.add(room_id)
 
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
+
+        - This method should only be called when the server is shutting down.
+
+        - This method is uniquely async because it waits for each room to finish
+        saving its final content. Without waiting, the `ContentsManager` will
+        shut down before the saves complete, resulting in empty files.
         """
+        
         # First, stop all background tasks
         if self._watch_rooms_task:
             self._watch_rooms_task.cancel()
 
-        # Get all room IDs. If there are none, return early.
-        room_ids = list(self._rooms_by_id.keys())
-        room_count = len(room_ids)
+        # Return early if there are no rooms
+        room_count = len(self._rooms_by_id)
         if room_count == 0:
             return
 
-        # Otherwise, delete all rooms.
+        # Otherwise, prepare to delete all rooms
         self.log.info(
             f"Stopping `YRoomManager` and deleting all {room_count} YRooms."
         )
+        deletion_tasks = []
+
+        # Define task that deletes the room and waits until the content is saved
+        async def delete_then_save(room_id: str, room: YRoom):
+            ret = self.delete_room(room_id)
+            await room.until_saved
+            return ret
+
+        # Delete all rooms concurrently using `delete_then_save()`
+        for room_id, room in self._rooms_by_id.items():
+            deletion_task = self.loop.create_task(
+                delete_then_save(room_id, room)
+            )
+            deletion_tasks.append(deletion_task)
+        
+        # Await all deletion tasks in serial. This doesn't harm performance
+        # since the tasks were started concurrently.
         failures = 0
-        for room_id in room_ids:
-            result = self.delete_room(room_id)
+        for deletion_task in deletion_tasks:
+            result = await deletion_task
             if not result:
                 failures += 1
 
