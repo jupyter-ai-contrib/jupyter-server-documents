@@ -1,15 +1,21 @@
+from __future__ import annotations
 from jupyter_events import EventLogger
-from ..events import JSD_ROOM_EVENT_URI
-from typing import Optional
 from jupyter_server_fileid.manager import BaseFileIdManager
-from logging import Logger
-from typing import Literal
+from traitlets.config import LoggingConfigurable
+from typing import TYPE_CHECKING
 
+from ..events import JSD_ROOM_EVENT_URI
 
-class YRoomEventsAPI:
+if TYPE_CHECKING:
+    from .yroom import YRoom
+    from typing import Literal, Optional
+    import logging
+
+class YRoomEventsAPI(LoggingConfigurable):
     """
-    Class that provides an API to emit events to the
-    `jupyter_events.EventLogger` singleton in `jupyter_server`.
+    An API object that provides methods to emit events on the
+    `jupyter_events.EventLogger` singleton in `jupyter_server`. This class
+    requires only a single argument: `parent: YRoom`.
 
     JSD room and awareness events have the same structure as
     `jupyter_collaboration` v4 session and awareness events and emit on the same
@@ -20,17 +26,34 @@ class YRoomEventsAPI:
     the server extension initializes.
     """
 
-    _event_logger: EventLogger
-    _fileid_manager: BaseFileIdManager
-    room_id: str
-    log: Logger
+    parent: YRoom
+    """
+    The parent `YRoom` instance that is using this instance.
 
-    def __init__(self, event_logger: EventLogger, fileid_manager: BaseFileIdManager, room_id: str, log: Logger):
-        self._event_logger = event_logger
-        self._fileid_manager = fileid_manager
-        self.room_id = room_id
-        self.log = log
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class to log.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    @property
+    def room_id(self) -> str:
+        return self.parent.room_id
     
+    @property
+    def event_logger(self) -> EventLogger:
+        return self.parent.event_logger
+    
+    @property
+    def fileid_manager(self) -> BaseFileIdManager:
+        return self.parent.fileid_manager
+
     def emit_room_event(
         self,
         action: Literal["initialize", "load", "save", "overwrite", "clean"],
@@ -54,7 +77,7 @@ class YRoomEventsAPI:
             # Jupyter AI issue is fixed.
             if action == "initialize":
                 event_data["msg"] = "Room initialized"
-            self._event_logger.emit(schema_id=JSD_ROOM_EVENT_URI, data=event_data)
+            self.event_logger.emit(schema_id=JSD_ROOM_EVENT_URI, data=event_data)
         except:
             self.log.exception("Exception occurred when emitting a room event.")
 
@@ -72,7 +95,7 @@ class YRoomEventsAPI:
         """
         # Query for the path from the file ID in the room ID
         file_id = self.room_id.split(":")[-1]
-        rel_path = self._fileid_manager.get_path(file_id)
+        rel_path = self.fileid_manager.get_path(file_id)
 
         # Raise exception if the path could not be found, then return
         assert rel_path is not None

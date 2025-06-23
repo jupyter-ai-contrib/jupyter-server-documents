@@ -1,6 +1,5 @@
 from jupyter_server.extension.application import ExtensionApp
 from traitlets.config import Config
-import asyncio
 
 from traitlets import Instance, Type
 from .handlers import RouteHandler, FileIDIndexHandler
@@ -31,11 +30,8 @@ class ServerDocsApp(ExtensionApp):
         klass=YRoomManager,
         help="""YRoom Manager Class.""",
         default_value=YRoomManager,
-    ).tag(config=True)
-
-    @property
-    def yroom_manager(self) -> YRoomManager | None:
-        return self.settings.get("yroom_manager", None)
+        config=True,
+    )
 
     outputs_manager_class = Type(
         klass=OutputsManager,
@@ -48,6 +44,8 @@ class ServerDocsApp(ExtensionApp):
         help="An instance of the OutputsManager",
         allow_none=True
     ).tag(config=True)
+
+    yroom_manager = Instance(klass=YRoomManager, allow_none=True)
 
     def initialize(self):
         super().initialize()
@@ -63,18 +61,11 @@ class ServerDocsApp(ExtensionApp):
         # 'jupyter_server_fileid'.
         def get_fileid_manager():
             return self.serverapp.web_app.settings["file_id_manager"]
-        contents_manager = self.serverapp.contents_manager
-        loop = asyncio.get_event_loop_policy().get_event_loop()
-        log = self.log
 
         # Initialize YRoomManager
-        self.settings["yroom_manager"] = YRoomManager(
-            get_fileid_manager=get_fileid_manager,
-            contents_manager=contents_manager,
-            event_logger=self.serverapp.event_logger,
-            loop=loop,
-            log=log
-        )
+        YRoomManagerClass = self.yroom_manager_class
+        self.yroom_manager = YRoomManagerClass(parent=self)
+        self.settings["yroom_manager"] = self.yroom_manager
 
         # Initialize OutputsManager
         self.outputs_manager = self.outputs_manager_class(config=self.config)
@@ -101,5 +92,5 @@ class ServerDocsApp(ExtensionApp):
     async def stop_extension(self):
         self.log.info("Stopping `jupyter_server_documents` server extension.")
         if self.yroom_manager:
-            self.yroom_manager.stop()
+            await self.yroom_manager.stop()
         self.log.info("`jupyter_server_documents` server extension is shut down. Goodbye!")

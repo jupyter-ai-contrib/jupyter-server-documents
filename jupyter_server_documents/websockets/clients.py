@@ -68,8 +68,6 @@ class YjsClientGroup:
     """A dict of client_id and desynced YjsClient mapping"""
     log: Logger
     """Log object"""
-    loop: asyncio.AbstractEventLoop
-    """Event loop"""
     _poll_interval_seconds: int
     """The poll time interval used while auto removing desynced clients"""
     desynced_timeout_seconds: int
@@ -80,13 +78,12 @@ class YjsClientGroup:
     ignore all future calls to `add()`.
     """
     
-    def __init__(self, *, room_id: str, log: Logger, loop: asyncio.AbstractEventLoop, poll_interval_seconds: int = 60, desynced_timeout_seconds: int = 120):
+    def __init__(self, *, room_id: str, log: Logger, poll_interval_seconds: int = 60, desynced_timeout_seconds: int = 120):
         self.room_id = room_id
         self.synced: dict[str, YjsClient] = {}
         self.desynced: dict[str, YjsClient] = {}
         self.log = log
-        self.loop = loop
-        # self.loop.create_task(self._clean_desynced())
+        # asyncio.create_task(self._clean_desynced())
         self._poll_interval_seconds = poll_interval_seconds
         self.desynced_timeout_seconds = desynced_timeout_seconds
         self._stopped = False

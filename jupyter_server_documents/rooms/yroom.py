@@ -1,58 +1,139 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
 from typing import TYPE_CHECKING, cast
-from logging import Logger
 import asyncio
-from ..websockets import YjsClientGroup
-
-import pycrdt
 import uuid
+import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_events import EventLogger
 from tornado.websocket import WebSocketHandler
+from traitlets.config import LoggingConfigurable
+import traitlets
+
+from ..websockets import YjsClientGroup
 from .yroom_file_api import YRoomFileAPI
 from .yroom_events_api import YRoomEventsAPI
 
 if TYPE_CHECKING:
-    from typing import Literal, Tuple, Any
+    import logging
+    from typing import Coroutine, Literal, Tuple, Any
+    from .yroom_manager import YRoomManager
     from jupyter_server_fileid.manager import BaseFileIdManager
-    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_server.services.contents.manager import ContentsManager
     from pycrdt import TransactionEvent
 
-class YRoom:
-    """A Room to manage all client connection to one notebook file"""
-
-    log: Logger
-    """The `logging.Logger` instance used by this room to log."""
-
-    room_id: str
+class YRoom(LoggingConfigurable):
     """
-    The ID of the room. This is a composite ID following the format:
+    A collaborative room instance. This class requires two arguments:
 
-    room_id := "{file_format}:{file_type}:{file_id}"
+    1. `parent: YRoomManager`: a reference to the parent `YRoomManager`.
+
+    2. `room_id: str`: the ID of the room. This takes the format
+    "{file_format}:{file_type}:{file_id}".
+
+    This class initializes a YDoc for the file and automatically receives,
+    broadcasts, and applies YDoc updates. Websockets can be added to the room
+    via `room.clients.add()`. This class automatically saves the content through
+    the `ContentsManager`; see `YRoomFileAPI` for more info. 
+    """
+
+    room_id = traitlets.Unicode(
+        allow_none=False,
+        config=False,
+        help="ID of the room to provide. This is a required argument."
+    )
+    """
+    ID of the room to provide. This is a required argument.
+    """
+
+    file_api_class = traitlets.Type(
+        klass=YRoomFileAPI,
+        help="The `YRoomFileAPI` class.",
+        default_value=YRoomFileAPI,
+        config=True,
+    )
+    """
+    Configurable trait that sets the `YRoomFileAPI` class used by each `YRoom`.
+    See the `YRoomFileAPI` documentation for more info.
+    """
+
+    events_api_class = traitlets.Type(
+        klass=YRoomEventsAPI,
+        help="The `YRoomEventsAPI` class.",
+        default_value=YRoomEventsAPI,
+        config=True
+    )
+    """
+    Configurable trait that sets the `YRoomEventsAPI` class used by each `YRoom`.
+    See the `YRoomEventsAPI` documentation for more info.
+    """
+
+    client_group_class = traitlets.Type(
+        klass=YjsClientGroup,
+        help="The `YjsClientGroup` class.",
+        default_value=YjsClientGroup,
+        config=True
+    )
+    """
+    Configurable trait that sets the `YjsClientGroup` class used by each `YRoom`.
+    See the `YjsClientGroup` documentation for more info.
     """
 
     file_api: YRoomFileAPI | None
     """
-    The `YRoomFileAPI` instance for this room. This is set to `None` only
-    if `self.room_id == "JupyterLab:globalAwareness"`.
+    The `YRoomFileAPI` instance for this room. See its documentation for more
+    info.
 
-    The file API provides `load_content_into()` for loading the content
-    from the `ContentsManager` into the JupyterYDoc. It accepts & handles save
-    requests via `file_api.schedule_save()`, and automatically watches the file
-    for out-of-band changes.
+    - This is initialized using the class set by the `self.file_api_class`
+    configurable trait.
+    
+    - This is set to `None` if & only if `self.room_id ==
+    "JupyterLab:globalAwareness"`.
     """
 
     events_api: YRoomEventsAPI | None
     """
-    A `YRoomEventsAPI` instance for this room that provides methods for emitting
-    events through the `jupyter_events.EventLogger` singleton. This is set to
-    `None` only if `self.room_id == "JupyterLab:globalAwareness"`.
+    A `YRoomEventsAPI` instance for this room. See its documentation for more
+    info.
+    
+    - This is initialized using the class set by the `self.events_api_class`
+    configurable trait.
+
+    - This is set to `None` if & only if `self.room_id ==
+    "JupyterLab:globalAwareness"`.
+    """
+
+    _client_group: YjsClientGroup
+    """
+    Client group to manage synced and desynced clients.
+
+    - This is initialized using the class set by the `self.client_group_class`
+    configurable trait.
+    """
+
+    parent: YRoomManager
+    """
+    The parent `YRoomManager` instance that is initializing & managing this
+    class.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class to log.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
     """
 
     _jupyter_ydoc: YBaseDoc | None
-    """JupyterYDoc"""
+    """
+    The `JupyterYDoc` for this room's document. See `get_jupyter_ydoc()`
+    documentation for more info.
+    """
 
     _jupyter_ydoc_observers: dict[str, callable[[str, Any], Any]]
     """
@@ -63,13 +144,17 @@ class YRoom:
     """
 
     _ydoc: pycrdt.Doc
-    """Ydoc"""
+    """
+    The `YDoc` for this room's document. See `get_ydoc()` documentation for more
+    info.
+    """
+
     _awareness: pycrdt.Awareness
-    """Ydoc awareness object"""
-    _loop: asyncio.AbstractEventLoop
-    """Event loop"""
-    _client_group: YjsClientGroup
-    """Client group to manage synced and desynced clients"""
+    """
+    The awareness object for this room. See `pycrdt.Awareness` documentation for
+    more info.
+    """
+
     _message_queue: asyncio.Queue[Tuple[str, bytes] | None]
     """
     A per-room message queue that stores new messages from clients to process
@@ -80,8 +165,10 @@ class YRoom:
     The `self._process_message_queue()` background task can be halted by running
     `self._message_queue.put_nowait(None)`.
     """
+
     _awareness_subscription: pycrdt.Subscription
     """Subscription to awareness changes."""
+
     _ydoc_subscription: pycrdt.Subscription
     """Subscription to YDoc changes."""
 
@@ -96,32 +183,26 @@ class YRoom:
     See `self.updated` for more info.
     """
 
-    _fileid_manager: BaseFileIdManager
-    _contents_manager: AsyncContentsManager | ContentsManager
+    _save_task: asyncio.Task | None
+    """
+    The task that is saving the final content of the YDoc to disk before
+    stopping. See `self.until_saved` documentation for more info.
+    """
 
 
-    def __init__(
-        self,
-        *,
-        room_id: str,
-        log: Logger,
-        loop: asyncio.AbstractEventLoop,
-        fileid_manager: BaseFileIdManager,
-        contents_manager: AsyncContentsManager | ContentsManager,
-        event_logger: EventLogger,
-    ):
-        # Bind instance attributes
-        self.room_id = room_id
-        self.log = log
-        self._loop = loop
-        self._fileid_manager = fileid_manager
-        self._contents_manager = contents_manager
+    def __init__(self, *args, **kwargs):
+        # Forward all arguments to parent class
+        super().__init__(*args, **kwargs)
+
+        # Initialize instance attributes
         self._jupyter_ydoc_observers = {}
         self._stopped = False
         self._updated = False
+        self._save_task = None
 
         # Initialize YjsClientGroup, YDoc, and Awareness
-        self._client_group = YjsClientGroup(room_id=room_id, log=self.log, loop=self._loop)
+        ClientGroupClass = self.client_group_class
+        self._client_group = ClientGroupClass(room_id=self.room_id, log=self.log)
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
 
@@ -140,30 +221,20 @@ class YRoom:
             )
 
             # Initialize YRoomFileAPI, start loading content
-            self.file_api = YRoomFileAPI(
-                room_id=self.room_id,
-                log=self.log,
-                loop=self._loop,
-                fileid_manager=self._fileid_manager,
-                contents_manager=self._contents_manager,
-                on_outofband_change=self.handle_outofband_change,
-                on_outofband_move=self.handle_outofband_move,
-                on_inband_deletion=self.handle_inband_deletion
+            FileAPIClass = self.file_api_class
+            self.file_api = FileAPIClass(
+                parent=self,
             )
             self.file_api.load_content_into(self._jupyter_ydoc)
 
             # Initialize YRoomEventsAPI
-            self.events_api = YRoomEventsAPI(
-                event_logger=event_logger,
-                fileid_manager=fileid_manager,
-                room_id=self.room_id,
-                log=self.log,
-            )
+            EventsAPIClass = self.events_api_class
+            self.events_api = EventsAPIClass(parent=self)
         
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
-        self._loop.create_task(self._process_message_queue())
+        asyncio.create_task(self._process_message_queue())
 
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
@@ -178,7 +249,22 @@ class YRoom:
             async def emit_load_event():
                 await self.file_api.until_content_loaded
                 self.events_api.emit_room_event("load")
-            self._loop.create_task(emit_load_event())
+            asyncio.create_task(emit_load_event())
+    
+
+    @property
+    def fileid_manager(self) -> BaseFileIdManager:
+        return self.parent.fileid_manager
+    
+
+    @property
+    def contents_manager(self) -> ContentsManager:
+        return self.parent.contents_manager
+    
+
+    @property
+    def event_logger(self) -> EventLogger:
+        return self.parent.event_logger
     
 
     def _init_ydoc(self) -> pycrdt.Doc:
@@ -715,6 +801,9 @@ class YRoom:
 
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
+
+        IMPORTANT: If the server is shutting down, the YRoomManager should call
+        `await room.until_saved`. See `until_saved` documentation for more info.
         """
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
@@ -750,11 +839,29 @@ class YRoom:
         # Clear the YDoc, saving the previous content unless `immediately=True`
         if not immediately:
             prev_jupyter_ydoc = self._jupyter_ydoc
-            self._loop.create_task(
+            self._save_task = asyncio.create_task(
                 self.file_api.save(prev_jupyter_ydoc)
             )
         self._reset_ydoc()
         self._stopped = True
+    
+
+    @property
+    def until_saved(self) -> Coroutine[Any, Any, None]:
+        """
+        Returns an Awaitable that resolves when the save is complete after the
+        room was stopped with `immediately=False`.
+
+        If the server is shutting down, this property must be awaited by
+        `YRoomManager`. Otherwise, the `ContentsManager` will shut down before
+        the final save completes, resulting in an empty file.
+        """
+        return self._until_saved()
+    
+
+    async def _until_saved(self) -> None:
+        if self._save_task:
+            await self._save_task
     
 
     def _reset_ydoc(self) -> None:
@@ -816,7 +923,7 @@ class YRoom:
         self.file_api.load_content_into(self._jupyter_ydoc)
 
         # Restart `_process_message_queue()` task
-        self._loop.create_task(self._process_message_queue())
+        asyncio.create_task(self._process_message_queue())
 
         self.log.info(f"Restarted YRoom '{self.room_id}'.")
     

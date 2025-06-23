@@ -3,23 +3,55 @@ from __future__ import annotations
 from .yroom import YRoom
 from typing import TYPE_CHECKING
 import asyncio
+import traitlets
+from traitlets.config import LoggingConfigurable
+from jupyter_server_fileid.manager import BaseFileIdManager
 
 if TYPE_CHECKING:
     import logging
-    from jupyter_server_fileid.manager import BaseFileIdManager
-    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_server.extension.application import ExtensionApp
+    from jupyter_server.services.contents.manager import ContentsManager
     from jupyter_events import EventLogger
 
-class YRoomManager():
+class YRoomManager(LoggingConfigurable):
     """
-    A singleton that manages all `YRoom` instances in the server extension.
+    A singleton that manages all `YRoom` instances in the server extension. The
+    constructor requires only a single argument `parent: ExtensionApp`.
 
     This manager automatically restarts updated `YRoom` instances if they have
     had no connected clients or active kernel for >10 seconds. This deletes the
     YDoc history to free its memory to the server.
     """
 
-    _rooms_by_id: dict[str, YRoom]
+    yroom_class = traitlets.Type(
+        klass=YRoom,
+        help="The `YRoom` class.",
+        default_value=YRoom,
+        config=True,
+    )
+    """
+    Configurable trait that sets the `YRoom` class initialized when a client
+    opens a collaborative room.
+    """
+
+    parent: ExtensionApp
+    """
+    The parent `ExtensionApp` instance that is initializing this class. This
+    should be the `ServerDocsApp` server extension.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class to log.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    _rooms_by_id: dict[str, YRoom] = traitlets.Dict(default_value={})
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
     deleted from this dictionary.
@@ -28,52 +60,42 @@ class YRoomManager():
     out-of-band. See #116.
     """
 
-    _inactive_rooms: set[str]
+    _inactive_rooms: set[str] = traitlets.Set()
     """
     Set of room IDs that were marked inactive on the last iteration of
     `_watch_rooms()`. If a room is inactive and its ID is present in this set,
     then the room should be restarted as it has been inactive for >10 seconds.
     """
 
-    _get_fileid_manager: callable[[], BaseFileIdManager]
-    contents_manager: AsyncContentsManager | ContentsManager
-    event_logger: EventLogger
-    loop: asyncio.AbstractEventLoop
-    log: logging.Logger
     _watch_rooms_task: asyncio.Task | None
 
-    def __init__(
-        self,
-        *,
-        get_fileid_manager: callable[[], BaseFileIdManager],
-        contents_manager: AsyncContentsManager | ContentsManager,
-        event_logger: EventLogger,
-        loop: asyncio.AbstractEventLoop,
-        log: logging.Logger,
-    ):
-        # Bind instance attributes
-        self._get_fileid_manager = get_fileid_manager
-        self.contents_manager = contents_manager
-        self.event_logger = event_logger
-        self.loop = loop
-        self.log = log
-
-        # Initialize dictionary of YRooms, keyed by room ID
-        self._rooms_by_id = {}
-
-        # Initialize set of inactive rooms tracked by `self._watch_rooms()`
-        self._inactive_rooms = set()
+    def __init__(self, *args, **kwargs):
+        # Forward all arguments to parent class
+        super().__init__(*args, **kwargs)
 
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
         # TODO: Do not enable this until #120 is addressed.
-        # self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
+        # self._watch_rooms_task = asyncio.create_task(self._watch_rooms())
+        self._watch_rooms_task = None
 
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
-        return self._get_fileid_manager()
+        manager = self.parent.serverapp.web_app.settings.get("file_id_manager", None)
+        assert isinstance(manager, BaseFileIdManager)
+        return manager
+    
 
+    @property
+    def contents_manager(self) -> ContentsManager:
+        return self.parent.serverapp.contents_manager
+    
+
+    @property
+    def event_logger(self) -> EventLogger:
+        return self.parent.serverapp.event_logger
+    
 
     def get_room(self, room_id: str) -> YRoom | None:
         """
@@ -92,13 +114,10 @@ class YRoomManager():
         # Otherwise, create a new room
         try:
             self.log.info(f"Initializing room '{room_id}'.")
-            yroom = YRoom(
+            YRoomClass = self.yroom_class
+            yroom = YRoomClass(
+                parent=self,
                 room_id=room_id,
-                log=self.log,
-                loop=self.loop,
-                fileid_manager=self.fileid_manager,
-                contents_manager=self.contents_manager,
-                event_logger=self.event_logger,
             )
             self._rooms_by_id[room_id] = yroom
             return yroom
@@ -142,6 +161,7 @@ class YRoomManager():
             )
             return False
     
+
     async def _watch_rooms(self) -> None:
         """
         Background task that checks all `YRoom` instances every 10 seconds,
@@ -219,27 +239,50 @@ class YRoomManager():
             self._inactive_rooms.add(room_id)
 
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         """
         Gracefully deletes each `YRoom`. See `delete_room()` for more info.
+
+        - This method should only be called when the server is shutting down.
+
+        - This method is uniquely async because it waits for each room to finish
+        saving its final content. Without waiting, the `ContentsManager` will
+        shut down before the saves complete, resulting in empty files.
         """
+        
         # First, stop all background tasks
         if self._watch_rooms_task:
             self._watch_rooms_task.cancel()
 
-        # Get all room IDs. If there are none, return early.
-        room_ids = list(self._rooms_by_id.keys())
-        room_count = len(room_ids)
+        # Return early if there are no rooms
+        room_count = len(self._rooms_by_id)
         if room_count == 0:
             return
 
-        # Otherwise, delete all rooms.
+        # Otherwise, prepare to delete all rooms
         self.log.info(
             f"Stopping `YRoomManager` and deleting all {room_count} YRooms."
         )
+        deletion_tasks = []
+
+        # Define task that deletes the room and waits until the content is saved
+        async def delete_then_save(room_id: str, room: YRoom):
+            ret = self.delete_room(room_id)
+            await room.until_saved
+            return ret
+
+        # Delete all rooms concurrently using `delete_then_save()`
+        for room_id, room in self._rooms_by_id.items():
+            deletion_task = asyncio.create_task(
+                delete_then_save(room_id, room)
+            )
+            deletion_tasks.append(deletion_task)
+        
+        # Await all deletion tasks in serial. This doesn't harm performance
+        # since the tasks were started concurrently.
         failures = 0
-        for room_id in room_ids:
-            result = self.delete_room(room_id)
+        for deletion_task in deletion_tasks:
+            result = await deletion_task
             if not result:
                 failures += 1
 
