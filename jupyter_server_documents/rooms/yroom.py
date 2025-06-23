@@ -155,11 +155,6 @@ class YRoom(LoggingConfigurable):
     more info.
     """
 
-    _loop: asyncio.AbstractEventLoop
-    """
-    The server event loop. See `asyncio` documentation for more info.
-    """
-
     _message_queue: asyncio.Queue[Tuple[str, bytes] | None]
     """
     A per-room message queue that stores new messages from clients to process

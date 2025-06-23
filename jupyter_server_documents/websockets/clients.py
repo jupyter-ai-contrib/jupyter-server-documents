@@ -68,8 +68,6 @@ class YjsClientGroup:
     """A dict of client_id and desynced YjsClient mapping"""
     log: Logger
     """Log object"""
-    loop: asyncio.AbstractEventLoop
-    """Event loop"""
     _poll_interval_seconds: int
     """The poll time interval used while auto removing desynced clients"""
     desynced_timeout_seconds: int
