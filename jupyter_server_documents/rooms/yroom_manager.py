@@ -23,7 +23,7 @@ class YRoomManager(LoggingConfigurable):
 
     yroom_class = Type(
         klass=YRoom,
-        help="""The class to use for the YRoom.""",
+        help="The `YRoom` class.",
         default_value=YRoom,
         config=True,
     )
@@ -70,8 +70,7 @@ class YRoomManager(LoggingConfigurable):
         loop: asyncio.AbstractEventLoop,
         **kwargs,
     ):
-        # Pass other arguments to parent class
-        # (specifically `config` and `log`)
+        # Forward other arguments to parent class
         super().__init__(*args, **kwargs)
 
         # Bind instance attributes
@@ -109,9 +108,10 @@ class YRoomManager(LoggingConfigurable):
         # Otherwise, create a new room
         try:
             self.log.info(f"Initializing room '{room_id}'.")
-            yroom = YRoom(
+            YRoomClass = self.yroom_class
+            yroom = YRoomClass(
+                parent=self,
                 room_id=room_id,
-                log=self.log,
                 loop=self.loop,
                 fileid_manager=self.fileid_manager,
                 contents_manager=self.contents_manager,
