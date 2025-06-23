@@ -46,9 +46,7 @@ class ServerDocsApp(ExtensionApp):
         allow_none=True
     ).tag(config=True)
 
-    @property
-    def yroom_manager(self) -> YRoomManager | None:
-        return self.settings.get("yroom_manager", None)
+    yroom_manager = Instance(klass=YRoomManager, allow_none=True)
 
     def initialize(self):
         super().initialize()
@@ -67,7 +65,8 @@ class ServerDocsApp(ExtensionApp):
 
         # Initialize YRoomManager
         YRoomManagerClass = self.yroom_manager_class
-        self.settings["yroom_manager"] = YRoomManagerClass(parent=self)
+        self.yroom_manager = YRoomManagerClass(parent=self)
+        self.settings["yroom_manager"] = self.yroom_manager
 
         # Initialize OutputsManager
         self.outputs_manager = self.outputs_manager_class(config=self.config)
