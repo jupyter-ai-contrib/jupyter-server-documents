@@ -64,18 +64,10 @@ class ServerDocsApp(ExtensionApp):
         # 'jupyter_server_fileid'.
         def get_fileid_manager():
             return self.serverapp.web_app.settings["file_id_manager"]
-        contents_manager = self.serverapp.contents_manager
-        loop = asyncio.get_event_loop_policy().get_event_loop()
 
         # Initialize YRoomManager
         YRoomManagerClass = self.yroom_manager_class
-        self.settings["yroom_manager"] = YRoomManagerClass(
-            parent=self,
-            get_fileid_manager=get_fileid_manager,
-            contents_manager=contents_manager,
-            event_logger=self.serverapp.event_logger,
-            loop=loop,
-        )
+        self.settings["yroom_manager"] = YRoomManagerClass(parent=self)
 
         # Initialize OutputsManager
         self.outputs_manager = self.outputs_manager_class(config=self.config)

@@ -3,25 +3,27 @@ from __future__ import annotations
 from .yroom import YRoom
 from typing import TYPE_CHECKING
 import asyncio
-from traitlets import Dict, Set, Type
+import traitlets
 from traitlets.config import LoggingConfigurable
+from jupyter_server_fileid.manager import BaseFileIdManager
 
 if TYPE_CHECKING:
     import logging
-    from jupyter_server_fileid.manager import BaseFileIdManager
-    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_server.extension.application import ExtensionApp
+    from jupyter_server.services.contents.manager import ContentsManager
     from jupyter_events import EventLogger
 
 class YRoomManager(LoggingConfigurable):
     """
-    A singleton that manages all `YRoom` instances in the server extension.
+    A singleton that manages all `YRoom` instances in the server extension. The
+    constructor requires only a single argument `parent: ExtensionApp`.
 
     This manager automatically restarts updated `YRoom` instances if they have
     had no connected clients or active kernel for >10 seconds. This deletes the
     YDoc history to free its memory to the server.
     """
 
-    yroom_class = Type(
+    yroom_class = traitlets.Type(
         klass=YRoom,
         help="The `YRoom` class.",
         default_value=YRoom,
@@ -32,14 +34,24 @@ class YRoomManager(LoggingConfigurable):
     opens a collaborative room.
     """
 
-    log: logging.Logger
+    parent: ExtensionApp
     """
-    The `logging.Logger` instance used by this class. This is automatically set
-    by the `LoggingConfigurable` parent class; this declaration only hints the
-    type for type checkers.
+    The parent `ExtensionApp` instance that is initializing this class. This
+    should be the `ServerDocsApp` server extension.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
     """
 
-    _rooms_by_id: dict[str, YRoom] = Dict(default_value={})
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class to log.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
+    _rooms_by_id: dict[str, YRoom] = traitlets.Dict(default_value={})
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
     deleted from this dictionary.
@@ -48,36 +60,18 @@ class YRoomManager(LoggingConfigurable):
     out-of-band. See #116.
     """
 
-    _inactive_rooms: set[str] = Set()
+    _inactive_rooms: set[str] = traitlets.Set()
     """
     Set of room IDs that were marked inactive on the last iteration of
     `_watch_rooms()`. If a room is inactive and its ID is present in this set,
     then the room should be restarted as it has been inactive for >10 seconds.
     """
 
-    _get_fileid_manager: callable[[], BaseFileIdManager]
-    contents_manager: AsyncContentsManager | ContentsManager
-    event_logger: EventLogger
-    loop: asyncio.AbstractEventLoop
     _watch_rooms_task: asyncio.Task | None
 
-    def __init__(
-        self,
-        *args,
-        get_fileid_manager: callable[[], BaseFileIdManager],
-        contents_manager: AsyncContentsManager | ContentsManager,
-        event_logger: EventLogger,
-        loop: asyncio.AbstractEventLoop,
-        **kwargs,
-    ):
-        # Forward other arguments to parent class
+    def __init__(self, *args, **kwargs):
+        # Forward all arguments to parent class
         super().__init__(*args, **kwargs)
-
-        # Bind instance attributes
-        self._get_fileid_manager = get_fileid_manager
-        self.contents_manager = contents_manager
-        self.event_logger = event_logger
-        self.loop = loop
 
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
@@ -88,8 +82,20 @@ class YRoomManager(LoggingConfigurable):
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
-        return self._get_fileid_manager()
+        manager = self.parent.serverapp.web_app.settings.get("file_id_manager", None)
+        assert isinstance(manager, BaseFileIdManager)
+        return manager
+    
 
+    @property
+    def contents_manager(self) -> ContentsManager:
+        return self.parent.serverapp.contents_manager
+    
+
+    @property
+    def event_logger(self) -> EventLogger:
+        return self.parent.serverapp.event_logger
+    
 
     def get_room(self, room_id: str) -> YRoom | None:
         """
@@ -159,6 +165,7 @@ class YRoomManager(LoggingConfigurable):
             )
             return False
     
+
     async def _watch_rooms(self) -> None:
         """
         Background task that checks all `YRoom` instances every 10 seconds,
