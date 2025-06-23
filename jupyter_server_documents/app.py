@@ -66,15 +66,15 @@ class ServerDocsApp(ExtensionApp):
             return self.serverapp.web_app.settings["file_id_manager"]
         contents_manager = self.serverapp.contents_manager
         loop = asyncio.get_event_loop_policy().get_event_loop()
-        log = self.log
 
         # Initialize YRoomManager
-        self.settings["yroom_manager"] = YRoomManager(
+        YRoomManagerClass = self.yroom_manager_class
+        self.settings["yroom_manager"] = YRoomManagerClass(
+            parent=self,
             get_fileid_manager=get_fileid_manager,
             contents_manager=contents_manager,
             event_logger=self.serverapp.event_logger,
             loop=loop,
-            log=log
         )
 
         # Initialize OutputsManager
