@@ -31,11 +31,8 @@ class ServerDocsApp(ExtensionApp):
         klass=YRoomManager,
         help="""YRoom Manager Class.""",
         default_value=YRoomManager,
-    ).tag(config=True)
-
-    @property
-    def yroom_manager(self) -> YRoomManager | None:
-        return self.settings.get("yroom_manager", None)
+        config=True,
+    )
 
     outputs_manager_class = Type(
         klass=OutputsManager,
@@ -48,6 +45,10 @@ class ServerDocsApp(ExtensionApp):
         help="An instance of the OutputsManager",
         allow_none=True
     ).tag(config=True)
+
+    @property
+    def yroom_manager(self) -> YRoomManager | None:
+        return self.settings.get("yroom_manager", None)
 
     def initialize(self):
         super().initialize()

@@ -3,6 +3,8 @@ from __future__ import annotations
 from .yroom import YRoom
 from typing import TYPE_CHECKING
 import asyncio
+from traitlets import Dict, Set, Type
+from traitlets.config import LoggingConfigurable
 
 if TYPE_CHECKING:
     import logging
@@ -10,7 +12,7 @@ if TYPE_CHECKING:
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
     from jupyter_events import EventLogger
 
-class YRoomManager():
+class YRoomManager(LoggingConfigurable):
     """
     A singleton that manages all `YRoom` instances in the server extension.
 
@@ -19,7 +21,25 @@ class YRoomManager():
     YDoc history to free its memory to the server.
     """
 
-    _rooms_by_id: dict[str, YRoom]
+    yroom_class = Type(
+        klass=YRoom,
+        help="""The class to use for the YRoom.""",
+        default_value=YRoom,
+        config=True,
+    )
+    """
+    Configurable trait that sets the `YRoom` class initialized when a client
+    opens a collaborative room.
+    """
+
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class. This is automatically set
+    by the `LoggingConfigurable` parent class; this declaration only hints the
+    type for type checkers.
+    """
+
+    _rooms_by_id: dict[str, YRoom] = Dict(default_value={})
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
     deleted from this dictionary.
@@ -28,7 +48,7 @@ class YRoomManager():
     out-of-band. See #116.
     """
 
-    _inactive_rooms: set[str]
+    _inactive_rooms: set[str] = Set()
     """
     Set of room IDs that were marked inactive on the last iteration of
     `_watch_rooms()`. If a room is inactive and its ID is present in this set,
@@ -39,35 +59,32 @@ class YRoomManager():
     contents_manager: AsyncContentsManager | ContentsManager
     event_logger: EventLogger
     loop: asyncio.AbstractEventLoop
-    log: logging.Logger
     _watch_rooms_task: asyncio.Task | None
 
     def __init__(
         self,
-        *,
+        *args,
         get_fileid_manager: callable[[], BaseFileIdManager],
         contents_manager: AsyncContentsManager | ContentsManager,
         event_logger: EventLogger,
         loop: asyncio.AbstractEventLoop,
-        log: logging.Logger,
+        **kwargs,
     ):
+        # Pass other arguments to parent class
+        # (specifically `config` and `log`)
+        super().__init__(*args, **kwargs)
+
         # Bind instance attributes
         self._get_fileid_manager = get_fileid_manager
         self.contents_manager = contents_manager
         self.event_logger = event_logger
         self.loop = loop
-        self.log = log
-
-        # Initialize dictionary of YRooms, keyed by room ID
-        self._rooms_by_id = {}
-
-        # Initialize set of inactive rooms tracked by `self._watch_rooms()`
-        self._inactive_rooms = set()
 
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
         # TODO: Do not enable this until #120 is addressed.
         # self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
+        self._watch_rooms_task = None
 
 
     @property
