@@ -10,14 +10,15 @@ from traitlets.config import LoggingConfigurable
 from traitlets import Float
 
 if TYPE_CHECKING:
-    from typing import Any, Callable, Coroutine, Literal
+    from typing import Any, Coroutine, Literal
+    from .yroom import YRoom
     from jupyter_server_fileid.manager import BaseFileIdManager
-    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_server.services.contents.manager import ContentsManager
 
 class YRoomFileAPI(LoggingConfigurable):
     """
-    Provides an API to 1 file from Jupyter Server's ContentsManager for a YRoom,
-    given the the room ID in the constructor.
+    Provides an API to 1 file from Jupyter Server's ContentsManager for a YRoom.
+    This class takes only a single argument: `parent: YRoom`.
 
     - To load the content, consumers call `load_content_into()` with a
     JupyterYDoc. This also starts the `_watch_file()` loop.
@@ -36,11 +37,20 @@ class YRoomFileAPI(LoggingConfigurable):
         config=True,
     )
 
+    parent: YRoom
+    """
+    The parent `YRoom` instance that is using this instance.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
+    """
+
     log: logging.Logger
     """
-    The `logging.Logger` instance used by this class. This is automatically set
-    by the `LoggingConfigurable` parent class; this declaration only hints the
-    type for type checkers.
+    The `logging.Logger` instance used by this class to log.
+
+    NOTE: This is automatically set by the `LoggingConfigurable` parent class;
+    this declaration only hints the type for type checkers.
     """
 
     # See `filemanager.py` in `jupyter_server` for references on supported file
@@ -50,20 +60,6 @@ class YRoomFileAPI(LoggingConfigurable):
     file_type: Literal["file", "notebook"]
     file_id: str
 
-    _fileid_manager: BaseFileIdManager
-    """
-    Stores a reference to the Jupyter Server's File ID Manager.
-    """
-
-    _contents_manager: AsyncContentsManager | ContentsManager
-    """
-    Stores a reference to the Jupyter Server's ContentsManager.
-
-    NOTE: any calls made on this attribute should acquire & release the
-    `_content_lock`. See `_content_lock` for more info.
-    """
-
-    _loop: asyncio.AbstractEventLoop
     _save_scheduled: bool
     _content_loading: bool
     _content_load_event: asyncio.Event
@@ -78,21 +74,6 @@ class YRoomFileAPI(LoggingConfigurable):
     """
     The last file path known to this instance. If this value changes
     unexpectedly, that indicates an out-of-band move/deletion on the file.
-    """
-
-    _on_outofband_change: Callable[[], Any]
-    """
-    The callback to run when an out-of-band file change is detected.
-    """
-
-    _on_outofband_move: Callable[[], Any]
-    """
-    The callback to run when an out-of-band file move/deletion is detected.
-    """
-
-    _on_inband_deletion: Callable[[], Any]
-    """
-    The callback to run when an in-band move file deletion is detected.
     """
 
     _watch_file_task: asyncio.Task | None
@@ -114,30 +95,12 @@ class YRoomFileAPI(LoggingConfigurable):
     dual-writes or dirty-reads.
     """
 
-    def __init__(
-        self,
-        *args,
-        room_id: str,
-        fileid_manager: BaseFileIdManager,
-        contents_manager: AsyncContentsManager | ContentsManager,
-        loop: asyncio.AbstractEventLoop,
-        on_outofband_change: Callable[[], Any],
-        on_outofband_move: Callable[[], Any],
-        on_inband_deletion: Callable[[], Any],
-        **kwargs,
-    ):
-        # Forward other arguments to parent class
+    def __init__(self, *args, **kwargs):
+        # Forward all arguments to parent class
         super().__init__(*args, **kwargs)
 
         # Bind instance attributes
-        self.room_id = room_id
-        self.file_format, self.file_type, self.file_id = room_id.split(":")
-        self._loop = loop
-        self._fileid_manager = fileid_manager
-        self._contents_manager = contents_manager
-        self._on_outofband_change = on_outofband_change
-        self._on_outofband_move = on_outofband_move
-        self._on_inband_deletion = on_inband_deletion
+        self.file_format, self.file_type, self.file_id = self.room_id.split(":")
         self._save_scheduled = False
         self._last_path = None
         self._last_modified = None
@@ -157,8 +120,28 @@ class YRoomFileAPI(LoggingConfigurable):
         Raises a `RuntimeError` if the file ID does not refer to a valid file
         path.
         """
-        return self._fileid_manager.get_path(self.file_id)
+        return self.fileid_manager.get_path(self.file_id)
     
+    @property
+    def room_id(self) -> str:
+        return self.parent.room_id
+
+    @property
+    def fileid_manager(self) -> BaseFileIdManager:
+        """
+        Returns the Jupyter Server's File ID Manager.
+        """
+        return self.parent.fileid_manager
+    
+    @property
+    def contents_manager(self) -> ContentsManager:
+        """
+        Stores a reference to the Jupyter Server's ContentsManager.
+
+        NOTE: any calls made on this attribute should acquire & release the
+        `_content_lock`. See `_content_lock` for more info.
+        """
+        return self.parent.contents_manager
 
     @property
     def content_loaded(self) -> bool:
@@ -193,7 +176,7 @@ class YRoomFileAPI(LoggingConfigurable):
             return
         
         self._content_loading = True
-        self._loop.create_task(self._load_content(jupyter_ydoc))
+        asyncio.create_task(self._load_content(jupyter_ydoc))
 
     
     async def _load_content(self, jupyter_ydoc: YBaseDoc) -> None:
@@ -206,7 +189,7 @@ class YRoomFileAPI(LoggingConfigurable):
         # Load the content of the file from the path
         self.log.info(f"Loading content for room ID '{self.room_id}', found at path: '{path}'.")
         async with self._content_lock:
-            file_data = await ensure_async(self._contents_manager.get(
+            file_data = await ensure_async(self.contents_manager.get(
                 path,
                 type=self.file_type,
                 format=self.file_format
@@ -227,7 +210,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self.log.info(f"Loaded content for room ID '{self.room_id}'.")
 
         # Start _watch_file() task
-        self._watch_file_task = self._loop.create_task(
+        self._watch_file_task = asyncio.create_task(
             self._watch_file(jupyter_ydoc)
         )
 
@@ -288,9 +271,9 @@ class YRoomFileAPI(LoggingConfigurable):
         events and acts in response:
 
         - In-band move: logs warning (no handling needed)
-        - In-band deletion: calls `self._on_inband_deletion()`
-        - Out-of-band move/deletion: calls `self._on_outofband_move()`
-        - Out-of-band change: calls `self._on_outofband_change()`
+        - In-band deletion: calls `self.parent.handle_inband_deletion()`
+        - Out-of-band move/deletion: calls `self.parent.handle_outofband_move()`
+        - Out-of-band change: calls `self.parent.handle_outofband_change()`
         """
         # Ensure that the last known path is defined. This should always be set
         # by `load_ydoc_content()`.
@@ -315,7 +298,7 @@ class YRoomFileAPI(LoggingConfigurable):
                     f"Room ID: '{self.room_id}', "
                     f"Last known path: '{self._last_path}'."
                 )
-                self._on_inband_deletion()
+                self.parent.handle_inband_deletion()
                 return
 
         # Otherwise, set the last known path
@@ -330,7 +313,7 @@ class YRoomFileAPI(LoggingConfigurable):
         # moved/deleted out-of-band.
         try:
             async with self._content_lock:
-                file_data = await ensure_async(self._contents_manager.get(
+                file_data = await ensure_async(self.contents_manager.get(
                     path=path, format=file_format, type=file_type, content=False
                 ))
         except HTTPError as e:
@@ -345,7 +328,7 @@ class YRoomFileAPI(LoggingConfigurable):
                 f"Room ID: '{self.room_id}', "
                 f"Last known path: '{self._last_path}'."
             )
-            self._on_outofband_move()
+            self.parent.handle_outofband_move()
             return
 
 
@@ -359,7 +342,7 @@ class YRoomFileAPI(LoggingConfigurable):
                 f"Last detected change: '{self._last_modified}', "
                 f"Most recent change: '{file_data['last_modified']}'."
             )
-            self._on_outofband_change()
+            self.parent.handle_outofband_change()
 
     
     async def save(self, jupyter_ydoc: YBaseDoc):
@@ -386,7 +369,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
             # Save the YDoc via the ContentsManager
             async with self._content_lock:
-                file_data = await ensure_async(self._contents_manager.save(
+                file_data = await ensure_async(self.contents_manager.save(
                     {
                         "format": file_format,
                         "type": file_type,
