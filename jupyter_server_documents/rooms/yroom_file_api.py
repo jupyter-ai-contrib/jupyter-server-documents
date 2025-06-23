@@ -6,13 +6,15 @@ from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_server.utils import ensure_async
 import logging
 from tornado.web import HTTPError
+from traitlets.config import LoggingConfigurable
+from traitlets import Float
 
 if TYPE_CHECKING:
     from typing import Any, Callable, Coroutine, Literal
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
 
-class YRoomFileAPI:
+class YRoomFileAPI(LoggingConfigurable):
     """
     Provides an API to 1 file from Jupyter Server's ContentsManager for a YRoom,
     given the the room ID in the constructor.
@@ -27,13 +29,26 @@ class YRoomFileAPI:
     `file_api.schedule_save(jupyter_ydoc)` after calling `load_content_into()`.
     """
 
+    poll_interval = Float(
+        default_value=0.5,
+        help="Sets how frequently this class saves the YDoc & checks the file "
+        "for changes. Defaults to every 0.5 seconds.",
+        config=True,
+    )
+
+    log: logging.Logger
+    """
+    The `logging.Logger` instance used by this class. This is automatically set
+    by the `LoggingConfigurable` parent class; this declaration only hints the
+    type for type checkers.
+    """
+
     # See `filemanager.py` in `jupyter_server` for references on supported file
     # formats & file types.
     room_id: str
     file_format: Literal["text", "base64"]
     file_type: Literal["file", "notebook"]
     file_id: str
-    log: logging.Logger
 
     _fileid_manager: BaseFileIdManager
     """
@@ -101,20 +116,22 @@ class YRoomFileAPI:
 
     def __init__(
         self,
-        *,
+        *args,
         room_id: str,
-        log: logging.Logger,
         fileid_manager: BaseFileIdManager,
         contents_manager: AsyncContentsManager | ContentsManager,
         loop: asyncio.AbstractEventLoop,
         on_outofband_change: Callable[[], Any],
         on_outofband_move: Callable[[], Any],
-        on_inband_deletion: Callable[[], Any]
+        on_inband_deletion: Callable[[], Any],
+        **kwargs,
     ):
+        # Forward other arguments to parent class
+        super().__init__(*args, **kwargs)
+
         # Bind instance attributes
         self.room_id = room_id
         self.file_format, self.file_type, self.file_id = room_id.split(":")
-        self.log = log
         self._loop = loop
         self._fileid_manager = fileid_manager
         self._contents_manager = contents_manager
@@ -226,16 +243,19 @@ class YRoomFileAPI:
     async def _watch_file(self, jupyter_ydoc: YBaseDoc) -> None:
         """
         Defines a background task that processes scheduled saves to the YDoc
-        every 500ms, checking for in-band & out-of-band changes before doing so.
+        on an interval, checking for in-band & out-of-band changes before doing
+        so.
 
-        This task is started by a call to `load_ydoc_content()`.
-        Consumers must call `self.schedule_save()` for the next tick
-        of this task to save.
+        - The interval duration is set by the `self.poll_interval` configurable
+        trait, which defaults to saving & checking every 0.5 seconds.
+
+        - This task is started by a call to `load_ydoc_content()`. Consumers
+        must call `self.schedule_save()` for the next tick of this task to save.
         """
 
         while True:
             try:
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(self.poll_interval)
                 await self._check_file()
                 if self._save_scheduled:
                     # `asyncio.shield()` prevents the save task from being

@@ -216,8 +216,8 @@ class YRoom(LoggingConfigurable):
             # Initialize YRoomFileAPI, start loading content
             FileAPIClass = self.file_api_class
             self.file_api = FileAPIClass(
+                parent=self,
                 room_id=self.room_id,
-                log=self.log,
                 loop=self._loop,
                 fileid_manager=self._fileid_manager,
                 contents_manager=self._contents_manager,
