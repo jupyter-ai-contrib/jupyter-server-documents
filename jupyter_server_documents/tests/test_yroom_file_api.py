@@ -1,16 +1,15 @@
 import pytest
 import pytest_asyncio
-import logging
 import shutil
 from pathlib import Path
 import os
-import asyncio
 from typing import Awaitable
 import pycrdt
+from traitlets.config import LoggingConfigurable
 
 from ..rooms import YRoomFileAPI
 from jupyter_server.services.contents.filemanager import AsyncFileContentsManager
-from jupyter_server_fileid.manager import ArbitraryFileIdManager, BaseFileIdManager
+from jupyter_server_fileid.manager import ArbitraryFileIdManager
 from jupyter_ydoc import YUnicode
 
 
@@ -71,21 +70,23 @@ async def plaintext_file_api(
     )
     file_id = fileid_manager.index(relpath)
     room_id = f"text:file:{file_id}"
-    log = logging.Logger(name="PlaintextFileAPI")
-    contents_manager = jp_contents_manager
-    loop = asyncio.get_running_loop()
-    def noop():
-        pass
+
+    class MockYRoom(LoggingConfigurable):
+        @property
+        def fileid_manager(self):
+            return fileid_manager
+        
+        @property
+        def contents_manager(self):
+            return jp_contents_manager
+        
+        @property
+        def room_id(self):
+            return room_id
+        
 
     yroom_file_api = YRoomFileAPI(
-        room_id=room_id,
-        contents_manager=contents_manager,
-        fileid_manager=fileid_manager,
-        log=log,
-        loop=loop,
-        on_inband_deletion=noop,
-        on_outofband_change=noop,
-        on_outofband_move=noop
+        parent=MockYRoom()
     )
     return yroom_file_api
 

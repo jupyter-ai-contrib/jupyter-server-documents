@@ -229,9 +229,6 @@ class YRoom(LoggingConfigurable):
             FileAPIClass = self.file_api_class
             self.file_api = FileAPIClass(
                 parent=self,
-                on_outofband_change=self.handle_outofband_change,
-                on_outofband_move=self.handle_outofband_move,
-                on_inband_deletion=self.handle_inband_deletion
             )
             self.file_api.load_content_into(self._jupyter_ydoc)
 
