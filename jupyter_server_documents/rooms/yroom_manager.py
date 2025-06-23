@@ -76,7 +76,7 @@ class YRoomManager(LoggingConfigurable):
         # Start `self._watch_rooms()` background task to automatically stop
         # empty rooms
         # TODO: Do not enable this until #120 is addressed.
-        # self._watch_rooms_task = self.loop.create_task(self._watch_rooms())
+        # self._watch_rooms_task = asyncio.create_task(self._watch_rooms())
         self._watch_rooms_task = None
 
 
@@ -118,10 +118,6 @@ class YRoomManager(LoggingConfigurable):
             yroom = YRoomClass(
                 parent=self,
                 room_id=room_id,
-                loop=self.loop,
-                fileid_manager=self.fileid_manager,
-                contents_manager=self.contents_manager,
-                event_logger=self.event_logger,
             )
             self._rooms_by_id[room_id] = yroom
             return yroom
@@ -277,7 +273,7 @@ class YRoomManager(LoggingConfigurable):
 
         # Delete all rooms concurrently using `delete_then_save()`
         for room_id, room in self._rooms_by_id.items():
-            deletion_task = self.loop.create_task(
+            deletion_task = asyncio.create_task(
                 delete_then_save(room_id, room)
             )
             deletion_tasks.append(deletion_task)
