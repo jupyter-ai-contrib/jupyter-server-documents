@@ -6,9 +6,7 @@ from typing import Optional, Dict, List, Union, Any, Set
 # Whitelist of allowed commands for security
 ALLOWED_COMMANDS: Set[str] = {
     # Basic file and directory operations
-    "ls", "grep", "find", "cat", "head", "tail", "wc",
-    # Search tools
-    "grep", "rg", "ack", "ag",
+    "find", "cat", "head", "tail", "wc",
     # File manipulation
     "cp", "mv", "rm", "mkdir", "touch", "chmod", "chown",
     # Archive tools
@@ -20,7 +18,7 @@ ALLOWED_COMMANDS: Set[str] = {
     # System information
     "ps", "top", "df", "du", "free", "uname", "whoami", "date",
     # Development tools
-    "git", "npm", "pip", "python", "node", "java", "javac", "gcc", "make",
+    "git", "npm", "pip", "python", "node", "make",
     # Package managers
     "apt", "apt-get", "yum", "brew", "conda",
     # Jupyter specific
