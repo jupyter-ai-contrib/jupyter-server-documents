@@ -1,7 +1,6 @@
 import subprocess
 import shlex
-import os
-from typing import Optional, Dict, List, Union, Any, Set
+from typing import Optional, Dict, List, Any, Set
 
 # Whitelist of allowed commands for security
 ALLOWED_COMMANDS: Set[str] = {
