@@ -9,11 +9,11 @@ from jupyter_server_documents.rooms.yroom import YRoom
 def add_cell(
         file_path: str,
         content: str | None = None,
-        cell_index: int | None = None,
+        cell_id: str | None = None,
         add_above: bool = False,
         cell_type: Literal["code", "markdown", "raw"] = "code"
     ):
-    """Adds a new cell to the Jupyter notebook above or below a specified cell index.
+    """Adds a new cell to the Jupyter notebook above or below a specified cell.
     
     This function adds a new cell to a Jupyter notebook. It first attempts to use
     the in-memory YDoc representation if the notebook is currently active. If the
@@ -23,11 +23,11 @@ def add_cell(
     Args:
         file_path: The absolute path to the notebook file on the filesystem.
         content: The content of the new cell. If None, an empty cell is created.
-        cell_index: The zero-based index where the cell should be added. If None,
-                   the cell is added at the end of the notebook.
-        add_above: If True, the cell is added above the specified index. If False,
-                  it's added below the specified index.
-        cell_type: The type of cell to add ("code", "markdown").
+        cell_id: The UUID of the cell to add relative to. If None,
+                the cell is added at the end of the notebook.
+        add_above: If True, the cell is added above the specified cell. If False,
+                  it's added below the specified cell.
+        cell_type: The type of cell to add ("code", "markdown", "raw").
     
     Returns:
         None
@@ -38,6 +38,7 @@ def add_cell(
     
     if ydoc:
         cells_count = ydoc.cell_number()
+        cell_index = _get_cell_index_from_id(ydoc, cell_id) if cell_id else None
         insert_index = _determine_insert_index(cells_count, cell_index, add_above)
         ycell = ydoc.create_ycell({
             "cell_type": cell_type,
@@ -49,6 +50,7 @@ def add_cell(
             notebook = nbformat.read(f, as_version=nbformat.NO_CONVERT)
         
         cells_count = len(notebook.cells)
+        cell_index = _get_cell_index_from_id_nbformat(notebook, cell_id) if cell_id else None
         insert_index = _determine_insert_index(cells_count, cell_index, add_above)
         
         if cell_type == "code":
@@ -67,8 +69,8 @@ def add_cell(
         with open(file_path, 'w', encoding='utf-8') as f:
             nbformat.write(notebook, f)
 
-def delete_cell(file_path: str, cell_index: int):
-    """Removes a notebook cell at the specified cell index.
+def delete_cell(file_path: str, cell_id: str):
+    """Removes a notebook cell with the specified cell ID.
     
     This function deletes a cell from a Jupyter notebook. It first attempts to use
     the in-memory YDoc representation if the notebook is currently active. If the
@@ -77,7 +79,7 @@ def delete_cell(file_path: str, cell_index: int):
     
     Args:
         file_path: The absolute path to the notebook file on the filesystem.
-        cell_index: The zero-based index of the cell to delete.
+        cell_id: The UUID of the cell to delete.
     
     Returns:
         None
@@ -86,13 +88,15 @@ def delete_cell(file_path: str, cell_index: int):
     file_id = _get_file_id(file_path)
     ydoc = _get_jupyter_ydoc(file_id)
     if ydoc:
-        if 0 <= cell_index < len(ydoc.cells):
+        cell_index = _get_cell_index_from_id(ydoc, cell_id)
+        if cell_index is not None and 0 <= cell_index < len(ydoc.cells):
             del ydoc.cells[cell_index]
     else:
         with open(file_path, 'r', encoding='utf-8') as f:
             notebook = nbformat.read(f, as_version=nbformat.NO_CONVERT)
         
-        if 0 <= cell_index < len(notebook.cells):
+        cell_index = _get_cell_index_from_id_nbformat(notebook, cell_id)
+        if cell_index is not None and 0 <= cell_index < len(notebook.cells):
             notebook.cells.pop(cell_index)
             
             with open(file_path, 'w', encoding='utf-8') as f:
@@ -100,10 +104,10 @@ def delete_cell(file_path: str, cell_index: int):
 
 def edit_cell(
         file_path: str,
-        cell_index: int,
+        cell_id: str,
         content: str | None = None
     ) -> None:
-    """Edits the content of a notebook cell at the specified index
+    """Edits the content of a notebook cell with the specified ID
     
     This function modifies the content of a cell in a Jupyter notebook. It first attempts to use
     the in-memory YDoc representation if the notebook is currently active. If the
@@ -112,57 +116,57 @@ def edit_cell(
     
     Args:
         file_path: The absolute path to the notebook file on the filesystem.
-        cell_index: The zero-based index of the cell to edit.
+        cell_id: The UUID of the cell to edit.
         content: The new content for the cell. If None, the cell content remains unchanged.
     
     Returns:
         None
         
     Raises:
-        IndexError: If the cell_index is out of range for the notebook.
+        ValueError: If the cell_id is not found in the notebook.
     """
     
     file_id = _get_file_id(file_path)
     ydoc = _get_jupyter_ydoc(file_id)
     
     if ydoc:
-        cells_count = len(ydoc.cells)
-        if 0 <= cell_index < cells_count:
+        cell_index = _get_cell_index_from_id(ydoc, cell_id)
+        if cell_index is not None:
             if content is not None:
                 ydoc.cells[cell_index]["source"] = content
         else:
-            raise IndexError(
-                f"{cell_index=} is out of range for notebook at {file_path=} with {cells_count=}"
+            raise ValueError(
+                f"Cell with {cell_id=} not found in notebook at {file_path=}"
             )
     else:
         with open(file_path, 'r', encoding='utf-8') as f:
             notebook = nbformat.read(f, as_version=nbformat.NO_CONVERT)
         
-        cell_count = len(notebook.cells)
-        if 0 <= cell_index < cell_count:
+        cell_index = _get_cell_index_from_id_nbformat(notebook, cell_id)
+        if cell_index is not None:
             if content is not None:
                 notebook.cells[cell_index].source = content
             
             with open(file_path, 'w', encoding='utf-8') as f:
                 nbformat.write(notebook, f)
         else:
-            raise IndexError(
-                f"{cell_index=} is out of range for notebook at {file_path=} with {cell_count=}"
+            raise ValueError(
+                f"Cell with {cell_id=} not found in notebook at {file_path=}"
             )
 
-def read_cell(file_path: str, cell_index: int) -> Dict[str, Any]:
-    """Returns the content and metadata of a cell at the specified index"""
+def read_cell(file_path: str, cell_id: str) -> Dict[str, Any]:
+    """Returns the content and metadata of a cell with the specified ID"""
     
     with open(file_path, 'r', encoding='utf-8') as f:
-            notebook = nbformat.read(f, as_version=nbformat.NO_CONVERT)
-        
-    cell_count = len(notebook.cells)
-    if 0 <= cell_index < cell_count:
+        notebook = nbformat.read(f, as_version=nbformat.NO_CONVERT)
+    
+    cell_index = _get_cell_index_from_id_nbformat(notebook, cell_id)
+    if cell_index is not None:
         cell = notebook.cells[cell_index]
         return cell
     else:
-        raise IndexError(
-            f"{cell_index=} is out of range for notebook at {file_path=} with {cell_count=}"
+        raise ValueError(
+            f"Cell with {cell_id=} not found in notebook at {file_path=}"
         )
 
 def read_notebook(file_id: str) -> str:
@@ -198,6 +202,23 @@ def _get_file_id(file_path: str) -> str:
     file_id = file_id_manager.get_id(file_path)
 
     return file_id
+
+def _get_cell_index_from_id(ydoc, cell_id: str) -> int | None:
+    """Get cell index from cell_id using YDoc interface."""
+    try:
+        cell_index, _ = ydoc.find_cell(cell_id)
+        return cell_index
+    except (AttributeError, KeyError):
+        return None
+
+def _get_cell_index_from_id_nbformat(notebook, cell_id: str) -> int | None:
+    """Get cell index from cell_id using nbformat interface."""
+    for i, cell in enumerate(notebook.cells):
+        if hasattr(cell, 'id') and cell.id == cell_id:
+            return i
+        elif hasattr(cell, 'metadata') and cell.metadata.get('id') == cell_id:
+            return i
+    return None
 
 def _determine_insert_index(cells_count: int, cell_index: int, add_above: bool) -> int:
     if cell_index is None:
