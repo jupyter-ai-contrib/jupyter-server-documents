@@ -19,7 +19,7 @@ import {
   IKernelStatusModel,
   ISessionContext,
   ISessionContextDialogs,
-  SessionContextDialogs,
+  SessionContextDialogs
 } from '@jupyterlab/apputils';
 import { KeyboardEvent } from 'react';
 import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
@@ -304,7 +304,6 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
       return Object.freeze({ runCell });
     }
   };
-
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcContentProvider,

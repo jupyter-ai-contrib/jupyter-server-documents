@@ -1,4 +1,7 @@
-import { JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
+import {
+  JupyterFrontEnd,
+  JupyterFrontEndPlugin
+} from '@jupyterlab/application';
 import { Notification } from '@jupyterlab/apputils';
 
 const SAVE_MESSAGE = 'Autosaving is enabled, manual saves are not needed';
@@ -21,10 +24,10 @@ const NOTIFICATION_INTERVAL = 20;
  */
 export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
   id: 'disable-save:plugin',
-  description: 'Disables save commands and removes their keyboard shortcuts since documents are autosaved',
+  description:
+    'Disables save commands and removes their keyboard shortcuts since documents are autosaved',
   autoStart: true,
   activate: (app: JupyterFrontEnd): void => {
-
     let saveNotifiedCount = 0;
     let saveAsNotifiedCount = 0;
     let saveAllNotifiedCount = 0;
@@ -33,7 +36,6 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
      * Override save commands and remove keyboard shortcuts after app is fully loaded
      */
     app.restored.then(() => {
-      
       // Helper function to remove existing command and add new one
       const overrideCommand = (commandId: string, options: any) => {
         if (app.commands.hasCommand(commandId)) {
@@ -47,14 +49,10 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
       };
 
       const notify = () => {
-        Notification.emit(
-          SAVE_MESSAGE,
-          'info',
-          {
-            autoClose: 2000
-          }
-        )
-      }
+        Notification.emit(SAVE_MESSAGE, 'info', {
+          autoClose: 2000
+        });
+      };
 
       // Override main save command (Ctrl/Cmd+S)
       overrideCommand(SAVE_COMMANDS.save, {
@@ -87,7 +85,7 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
       // Override save-all command
       overrideCommand(SAVE_COMMANDS.saveAll, {
         label: 'Save All (Autosaving)',
-          caption: SAVE_MESSAGE,
+        caption: SAVE_MESSAGE,
         isEnabled: () => true,
         execute: () => {
           if (saveAllNotifiedCount % NOTIFICATION_INTERVAL === 0) {
