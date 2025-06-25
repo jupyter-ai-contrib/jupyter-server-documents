@@ -19,7 +19,7 @@ import {
   IKernelStatusModel,
   ISessionContext,
   ISessionContextDialogs,
-  SessionContextDialogs
+  SessionContextDialogs,
 } from '@jupyterlab/apputils';
 import { KeyboardEvent } from 'react';
 import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
@@ -43,6 +43,7 @@ import { AwarenessKernelStatus } from './kernelstatus';
 
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import { notebookFactoryPlugin } from './notebook-factory';
+import { disableSavePlugin } from './disablesave';
 
 /**
  * Initialization data for the @jupyter/server-documents extension.
@@ -304,87 +305,6 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
     }
   };
 
-  /**
-   * The command IDs for docmanager save operations to disable
-   */
-  const SAVE_COMMANDS = {
-    save: 'docmanager:save',
-    saveAs: 'docmanager:save-as',
-    saveAll: 'docmanager:save-all',
-    toggleAutosave: 'docmanager:toggle-autosave'
-  } as const;
-  
-  /**
-   * Plugin to disable save commands
-   */
-  const disableSavePlugin: JupyterFrontEndPlugin<void> = {
-    id: 'disable-save:plugin',
-    description: 'Disables save commands and removes their keyboard shortcuts since documents are autosaved',
-    autoStart: true,
-    activate: (app: JupyterFrontEnd): void => {
-
-      /**
-       * Override save commands and remove keyboard shortcuts after app is fully loaded
-       */
-      app.restored.then(() => {
-        
-        // Helper function to remove existing command and add new one
-        const overrideCommand = (commandId: string, options: any) => {
-          if (app.commands.hasCommand(commandId)) {
-            // Remove existing command using private API
-            const commandRegistry = app.commands as any;
-            if (commandRegistry._commands && commandRegistry._commands.delete) {
-              commandRegistry._commands.delete(commandId);
-            }
-            app.commands.addCommand(commandId, options);
-          }
-        };
-
-        // Override main save command (Ctrl/Cmd+S)
-        overrideCommand(SAVE_COMMANDS.save, {
-          label: 'Save (Autosaving)',
-          caption: 'Save operations are disabled - documents are autosaved',
-          isEnabled: () => true,
-          execute: () => {
-            return Promise.resolve();
-          }
-        });
-  
-        // Override save-as command (Ctrl/Cmd+Shift+S)
-        overrideCommand(SAVE_COMMANDS.saveAs, {
-          label: 'Save As… (Autosaving)',
-          caption: 'Save operations are disabled - documents are autosaved',
-          isEnabled: () => true,
-          execute: () => {
-            return Promise.resolve();
-          }
-        });
-  
-        // Override save-all command
-        overrideCommand(SAVE_COMMANDS.saveAll, {
-          label: 'Save All (Autosaving)',
-          caption: 'Save operations are disabled - documents are autosaved',
-          isEnabled: () => true,
-          execute: () => {
-            return Promise.resolve();
-          }
-        });
-  
-        // Override toggle autosave command
-        overrideCommand(SAVE_COMMANDS.toggleAutosave, {
-          label: 'Autosave Documents (Autosaving)',
-          caption: 'Autosave toggle is disabled - documents are always autosaved',
-          isEnabled: () => true,
-          isToggled: () => true,
-          execute: () => {
-            return Promise.resolve();
-          }
-        });
-  
-        console.log('Full autosave enabled, save commands disabled');
-      });
-    }
-  };
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   rtcContentProvider,
