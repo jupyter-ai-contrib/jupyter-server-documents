@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from .yroom import YRoom
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import ContentsManager
+    from ..outputs.manager import OutputsManager
 
 class YRoomFileAPI(LoggingConfigurable):
     """
@@ -110,8 +111,6 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_loading = False
         self._content_load_event = asyncio.Event()
         self._content_lock = asyncio.Lock()
-
-
     def get_path(self) -> str | None:
         """
         Returns the relative path to the file by querying the FileIdManager. The
@@ -142,6 +141,10 @@ class YRoomFileAPI(LoggingConfigurable):
         `_content_lock`. See `_content_lock` for more info.
         """
         return self.parent.contents_manager
+
+    @property
+    def outputs_manager(self) -> OutputsManager:
+        return self.parent.outputs_manager
 
     @property
     def content_loaded(self) -> bool:
@@ -194,6 +197,10 @@ class YRoomFileAPI(LoggingConfigurable):
                 type=self.file_type,
                 format=self.file_format
             ))
+
+        if self.file_type == "notebook":
+            self.log.critical(f"Processing outputs for notebook: '{self.room_id}'.")
+            file_data = self.outputs_manager.load_notebook(file_id=self.file_id, file_data=file_data)
 
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
         # changes" icon in the UI
@@ -429,6 +436,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._save_scheduled = False
         self._last_modified = None
         self._last_path = None
+        self._outputs_processing_complete = asyncio.Event()
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
 
     

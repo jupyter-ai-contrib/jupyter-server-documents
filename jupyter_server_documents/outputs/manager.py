@@ -2,8 +2,10 @@ import json
 import os
 from pathlib import Path, PurePath
 import shutil
+import uuid
 
 from pycrdt import Map
+import nbformat
 
 from traitlets.config import LoggingConfigurable
 from traitlets import Dict, Instance, Int, default
@@ -179,6 +181,53 @@ class OutputsManager(LoggingConfigurable):
             shutil.rmtree(path)
         except FileNotFoundError:
             pass
+
+    def load_notebook(self, file_id: str, file_data: dict) -> dict:
+        """
+        Load a notebook and process all outputs through the outputs manager.
+        
+        Args:
+            file_id (str): The file identifier
+            file_data (dict): The file data containing the notebook content
+            
+        Returns:
+            dict: The modified file data with processed outputs
+        """
+        # Notebook content is a tree of nbformat.NotebookNode objects,
+        # which are a subclass of dict.
+        nb = file_data['content']
+        
+        # Iterate through all cells
+        self.log.info(f"Processing notebook: {file_id} {len(nb.get('cells', []))}")
+        for cell in nb.get('cells', []):
+            # Only process cells that have outputs
+            if cell.get('cell_type') == 'code' and 'outputs' in cell:
+                cell_id = cell.get('id', str(uuid.uuid4()))
+                self.log.info(f"Processing cell: {cell_id}")
+                # Process each output in the cell
+                processed_outputs = []
+                for output in cell.get('outputs', []):
+                    # Get display_id if present
+                    display_id = output.get('metadata', {}).get('display_id')
+                    url = output.get('metadata', {}).get('url')
+                    self.log.info(f"Output: {url} {display_id}")
+                    if url is None:
+                        # Process the output through the write method
+                        placeholder = self.write(file_id, cell_id, output, display_id)
+                        if placeholder is None:
+                            self.log.info(f"Placeholder is None: {cell_id}")
+                            placeholder = output
+                        else:
+                            self.log.info(f"Placeholder inserted: {cell_id}")
+                    else:
+                        placeholder = output
+                    
+                    processed_outputs.append(nbformat.from_dict(placeholder))
+                
+                # Replace the outputs with processed ones
+                cell['outputs'] = processed_outputs
+        
+        return file_data
 
 
 def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:

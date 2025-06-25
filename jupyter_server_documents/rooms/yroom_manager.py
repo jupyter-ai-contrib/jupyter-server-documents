@@ -7,6 +7,8 @@ import traitlets
 from traitlets.config import LoggingConfigurable
 from jupyter_server_fileid.manager import BaseFileIdManager
 
+from ..outputs.manager import OutputsManager
+
 if TYPE_CHECKING:
     import logging
     from jupyter_server.extension.application import ExtensionApp
@@ -95,6 +97,11 @@ class YRoomManager(LoggingConfigurable):
     @property
     def event_logger(self) -> EventLogger:
         return self.parent.serverapp.event_logger
+    
+
+    @property
+    def outputs_manager(self) -> OutputsManager:
+        return self.parent.outputs_manager
     
 
     def get_room(self, room_id: str) -> YRoom | None:
