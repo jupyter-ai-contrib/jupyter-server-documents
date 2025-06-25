@@ -202,7 +202,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
         if self.file_type == "notebook":
             self.log.critical(f"Processing outputs for notebook: '{self.room_id}'.")
-            file_data = self.outputs_manager.load_notebook(file_id=self.file_id, file_data=file_data)
+            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
         # changes" icon in the UI
@@ -375,6 +375,9 @@ class YRoomFileAPI(LoggingConfigurable):
             # save on the next tick when a save is scheduled while `CM.get()` is
             # being awaited.
             self._save_scheduled = False
+
+            if self.file_type == "notebook":
+                content = self.outputs_manager.process_saving_notebook(content)
 
             # Save the YDoc via the ContentsManager
             async with self._content_lock:
