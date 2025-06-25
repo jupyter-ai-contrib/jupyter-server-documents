@@ -43,6 +43,7 @@ import { AwarenessKernelStatus } from './kernelstatus';
 
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import { notebookFactoryPlugin } from './notebook-factory';
+import { disableSavePlugin } from './disablesave';
 
 /**
  * Initialization data for the @jupyter/server-documents extension.
@@ -315,7 +316,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   kernelStatus,
   notebookFactoryPlugin,
   codemirrorYjsPlugin,
-  backupCellExecutorPlugin
+  backupCellExecutorPlugin,
+  disableSavePlugin
 ];
 
 export default plugins;
