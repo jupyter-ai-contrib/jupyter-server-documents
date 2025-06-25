@@ -68,7 +68,7 @@ class ServerDocsApp(ExtensionApp):
         self.settings["yroom_manager"] = self.yroom_manager
 
         # Initialize OutputsManager
-        self.outputs_manager = self.outputs_manager_class(config=self.config)
+        self.outputs_manager = self.outputs_manager_class(parent=self, config=self.config)
         self.settings["outputs_manager"] = self.outputs_manager
 
         # Serve Jupyter Collaboration API on
