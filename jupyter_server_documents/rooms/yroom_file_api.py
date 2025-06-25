@@ -201,7 +201,7 @@ class YRoomFileAPI(LoggingConfigurable):
             ))
 
         if self.file_type == "notebook":
-            self.log.critical(f"Processing outputs for notebook: '{self.room_id}'.")
+            self.log.info(f"Processing outputs for loaded notebook: '{self.room_id}'.")
             file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
@@ -441,7 +441,6 @@ class YRoomFileAPI(LoggingConfigurable):
         self._save_scheduled = False
         self._last_modified = None
         self._last_path = None
-        self._outputs_processing_complete = asyncio.Event()
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
 
     
