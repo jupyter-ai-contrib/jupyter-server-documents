@@ -190,6 +190,7 @@ class YRoom(LoggingConfigurable):
     stopping. See `self.until_saved` documentation for more info.
     """
 
+
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
         super().__init__(*args, **kwargs)

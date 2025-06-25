@@ -111,6 +111,8 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_loading = False
         self._content_load_event = asyncio.Event()
         self._content_lock = asyncio.Lock()
+
+
     def get_path(self) -> str | None:
         """
         Returns the relative path to the file by querying the FileIdManager. The
