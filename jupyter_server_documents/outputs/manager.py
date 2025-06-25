@@ -188,53 +188,70 @@ class OutputsManager(LoggingConfigurable):
 
         This method processes a notebook that has been loaded from disk.
         If the notebook metadata has placeholder_outputs set to True, 
-        the notebook is returned as-is without processing.
+        outputs are loaded from disk and set as the cell outputs.
         
         Args:
             file_id (str): The file identifier
             file_data (dict): The file data containing the notebook content
             
         Returns:
-            dict: The modified file data with processed outputs, or the original
-                  file data if placeholder_outputs is True
+            dict: The modified file data with processed outputs
         """
+        self.log.info(f"Processing loaded notebook: {file_id}")
+
         # Notebook content is a tree of nbformat.NotebookNode objects,
         # which are a subclass of dict.
         nb = file_data['content']
         
         # Check if the notebook metadata has placeholder_outputs set to True
         if nb.get('metadata', {}).get('placeholder_outputs') is True:
-            return file_data
-        
-        # Iterate through all cells
-        self.log.info(f"Processing loaded notebook: {file_id}")
-        for cell in nb.get('cells', []):
-            # Only process cells that have outputs
-            if cell.get('cell_type') == 'code' and 'outputs' in cell:
-                cell_id = cell.get('id', str(uuid.uuid4()))
-                processed_outputs = []
-                for output in cell.get('outputs', []):
-                    display_id = output.get('metadata', {}).get('display_id')
-                    url = output.get('metadata', {}).get('url')
-                    if url is None:
-                        # Process the output through the write method
-                        placeholder = self.write(
-                            file_id,
-                            cell_id,
-                            output,
-                            display_id,
-                            asdict=True,
-                        )
-                        if placeholder is None:
+            for cell in nb.get('cells', []):
+                if cell.get('cell_type') == 'code':
+                    cell_id = cell.get('id', str(uuid.uuid4()))
+                    try:
+                        # Try to get outputs from disk
+                        output_strings = self.get_outputs(file_id, cell_id)
+                        outputs = []
+                        for output_string in output_strings:
+                            output_dict = json.loads(output_string)
+                            placeholder = create_placeholder_output(
+                                output_dict["output_type"],
+                                url=create_output_url(file_id, cell_id),
+                                asdict=True,
+                            )
+                            outputs.append(placeholder)
+                        cell['outputs'] = outputs
+                    except FileNotFoundError:
+                        # No outputs on disk for this cell, set empty outputs
+                        cell['outputs'] = []
+        else:
+            for cell in nb.get('cells', []):
+                # Only process cells that have outputs
+                if cell.get('cell_type') == 'code' and 'outputs' in cell:
+                    cell_id = cell.get('id', str(uuid.uuid4()))
+                    processed_outputs = []
+                    for output in cell.get('outputs', []):
+                        display_id = output.get('metadata', {}).get('display_id')
+                        url = output.get('metadata', {}).get('url')
+                        if url is None:
+                            # Save output to disk and replace with placeholder
+                            placeholder = self.write(
+                                file_id,
+                                cell_id,
+                                output,
+                                display_id,
+                                asdict=True,
+                            )
+                            if placeholder is None:
+                                placeholder = output
+                        else:
                             placeholder = output
-                    else:
-                        placeholder = output
+                        
+                        processed_outputs.append(nbformat.from_dict(placeholder))
                     
-                    processed_outputs.append(nbformat.from_dict(placeholder))
-                
-                # Replace the outputs with processed ones
-                cell['outputs'] = processed_outputs
-        
+                    # Replace the outputs with processed ones
+                    cell['outputs'] = processed_outputs
+
         return file_data
 
     def process_saving_notebook(self, nb: dict) -> dict:
@@ -242,13 +259,15 @@ class OutputsManager(LoggingConfigurable):
         Process a notebook before saving to disk.
 
         This method is called when the yroom_file_api saves notebooks.
-        It sets the placeholder_outputs key to True in the notebook metadata.
+        It sets the placeholder_outputs key to True in the notebook metadata
+        and clears the outputs array for each cell.
         
         Args:
             nb (dict): The notebook dict
             
         Returns:
             dict: The modified file data with placeholder_outputs set to True
+                  and empty outputs arrays
         """        
         # Ensure metadata exists
         if 'metadata' not in nb:
@@ -256,6 +275,11 @@ class OutputsManager(LoggingConfigurable):
         
         # Set placeholder_outputs to True
         nb['metadata']['placeholder_outputs'] = True
+        
+        # Clear outputs for all code cells, as they are saved to disk
+        for cell in nb.get('cells', []):
+            if cell.get('cell_type') == 'code':
+                cell['outputs'] = []
         
         return nb
 
