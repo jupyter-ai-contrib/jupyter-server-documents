@@ -49,7 +49,7 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
       const notify = () => {
         Notification.emit(
           SAVE_MESSAGE,
-          'default',
+          'info',
           {
             autoClose: 2000
           }
