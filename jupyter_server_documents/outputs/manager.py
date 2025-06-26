@@ -278,19 +278,25 @@ class OutputsManager(LoggingConfigurable):
                 url = output.get('metadata', {}).get('url')
                 if url is None:
                     # Save output to disk and replace with placeholder
-                    placeholder = self.write(
-                        file_id,
-                        cell_id,
-                        output,
-                        display_id,
-                        asdict=True,
-                    )
-                    if placeholder is None:
+                    try:
+                        placeholder = self.write(
+                            file_id,
+                            cell_id,
+                            output,
+                            display_id,
+                            asdict=True,
+                        )
+                    except Exception as e:
+                        self.log.error(f"Error writing output: {e}")
+                        # If we can't write the output to disk, keep the original
                         placeholder = output
                 else:
+                    # In this case, there is a placeholder already so keep it
                     placeholder = output
                 
-                processed_outputs.append(nbformat.from_dict(placeholder))
+                if placeholder is not None:
+                    # A placeholder of None means to not add to the YDoc
+                    processed_outputs.append(nbformat.from_dict(placeholder))
             
             # Replace the outputs with processed ones
             cell['outputs'] = processed_outputs
