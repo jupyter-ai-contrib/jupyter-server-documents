@@ -291,6 +291,7 @@ class YRoom(LoggingConfigurable):
         self._awareness_subscription = self._awareness.observe(
             self._on_awareness_update
         )
+        asyncio.create_task(self._awareness.start())
         return self._awareness
 
 
@@ -444,22 +445,22 @@ class YRoom(LoggingConfigurable):
             )
         # Handle Awareness messages
         elif message_type == YMessageType.AWARENESS:
-            self.log.debug(f"Received AwarenessUpdate from '{client_id}'.")
+            self.log.debug(f"Received AwarenessUpdate from '{client_id}' for room '{self.room_id}'.")
             self.handle_awareness_update(client_id, message)
-            self.log.debug(f"Handled AwarenessUpdate from '{client_id}'.")
+            self.log.debug(f"Handled AwarenessUpdate from '{client_id}' for room '{self.room_id}'.")
         # Handle Sync messages
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
-            self.log.info(f"Received SS1 from '{client_id}'.")
+            self.log.info(f"Received SS1 from '{client_id}' for room '{self.room_id}'.")
             self.handle_sync_step1(client_id, message)
-            self.log.info(f"Handled SS1 from '{client_id}'.")
+            self.log.info(f"Handled SS1 from '{client_id}' for room '{self.room_id}'.")
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-            self.log.info(f"Received SS2 from '{client_id}'.")
+            self.log.info(f"Received SS2 from '{client_id}' for room '{self.room_id}'.")
             self.handle_sync_step2(client_id, message)
-            self.log.info(f"Handled SS2 from '{client_id}'.")
+            self.log.info(f"Handled SS2 from '{client_id}' for room '{self.room_id}'.")
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
-            self.log.info(f"Received SyncUpdate from '{client_id}'.")
+            self.log.info(f"Received SyncUpdate from '{client_id}  for room '{self.room_id}''.")
             self.handle_sync_update(client_id, message)
-            self.log.info(f"Handled SyncUpdate from '{client_id}'.")
+            self.log.info(f"Handled SyncUpdate from '{client_id}  for room '{self.room_id}''.")
 
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
@@ -668,9 +669,6 @@ class YRoom(LoggingConfigurable):
             self.log.exception(e)
             return
 
-        # Broadcast AwarenessUpdate message to all other synced clients
-        self._broadcast_message(message, message_type="AwarenessUpdate")
-
 
     def _should_ignore_update(self, client_id: str, message_type: Literal['AwarenessUpdate', 'SyncUpdate']) -> bool:
         """
@@ -704,7 +702,7 @@ class YRoom(LoggingConfigurable):
 
         if message_type == "SyncUpdate":
             self.log.info(
-                f"Broadcasting SyncUpdate to all {client_count} synced clients."
+                f"Broadcasting {message_type} to all {client_count} synced clients."
             )
 
         for client in clients:
@@ -723,7 +721,7 @@ class YRoom(LoggingConfigurable):
         
         if message_type == "SyncUpdate":
             self.log.info(
-                f"Broadcast of SyncUpdate complete."
+                f"Broadcast of {message_type} complete for room {self.room_id}."
             )
                 
     def _on_awareness_update(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
@@ -735,12 +733,13 @@ class YRoom(LoggingConfigurable):
             type: The change type.
             changes: The awareness changes.
         """        
-        if type != "update" or changes[1] != "local":
-            return
         
+        self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
+        self.log.debug(f"awareness update, updated_clients={updated_clients}")
         state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
+        self.log.debug(f"awareness update, message={message}")
         self._broadcast_message(message, "AwarenessUpdate")
     
 
