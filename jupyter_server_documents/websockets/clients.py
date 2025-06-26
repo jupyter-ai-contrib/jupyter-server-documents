@@ -125,6 +125,7 @@ class YjsClientGroup:
             return
         
         try:
+            self.log.debug(f"client {client_id} is closed in remove method.")
             client.websocket.close()
         except Exception as e:
             self.log.exception(f"An exception occurred when remove client '{client_id}' for room '{self.room_id}': {e}")  
@@ -169,7 +170,7 @@ class YjsClientGroup:
                         self.remove(client_id)
                 for (client_id, client) in list(self.synced.items()): 
                     if client.websocket is None or client.websocket.ws_connection is None:
-                        self.log.warning(f"Remove client '{client_id}' for room '{self.room_id}' since client does not become synced after {self.desynced_timeout_seconds} seconds.")  
+                        self.log.warning(f"Remove client '{client_id}' for room '{self.room_id}' since client websocket is closed")  
                         self.remove(client_id)
             except asyncio.CancelledError:
                 break
