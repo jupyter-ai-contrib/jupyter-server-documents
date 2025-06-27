@@ -12,7 +12,7 @@ from traitlets import Float
 if TYPE_CHECKING:
     from typing import Any, Coroutine, Literal
     from .yroom import YRoom
-    from jupyter_server_fileid.manager import BaseFileIdManager
+    from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
     from jupyter_server.services.contents.manager import ContentsManager
     from ..outputs.manager import OutputsManager
 
@@ -56,7 +56,6 @@ class YRoomFileAPI(LoggingConfigurable):
 
     # See `filemanager.py` in `jupyter_server` for references on supported file
     # formats & file types.
-    room_id: str
     file_format: Literal["text", "base64"]
     file_type: Literal["file", "notebook"]
     file_id: str

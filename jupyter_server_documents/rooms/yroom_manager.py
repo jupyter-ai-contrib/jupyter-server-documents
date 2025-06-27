@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import asyncio
 import traitlets
 from traitlets.config import LoggingConfigurable
-from jupyter_server_fileid.manager import BaseFileIdManager
+from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
 
 from ..outputs.manager import OutputsManager
 
@@ -53,7 +53,7 @@ class YRoomManager(LoggingConfigurable):
     this declaration only hints the type for type checkers.
     """
 
-    _rooms_by_id: dict[str, YRoom] = traitlets.Dict(default_value={})
+    _rooms_by_id = traitlets.Dict(default_value={})
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
     deleted from this dictionary.
@@ -62,7 +62,7 @@ class YRoomManager(LoggingConfigurable):
     out-of-band. See #116.
     """
 
-    _inactive_rooms: set[str] = traitlets.Set()
+    _inactive_rooms = traitlets.Set()
     """
     Set of room IDs that were marked inactive on the last iteration of
     `_watch_rooms()`. If a room is inactive and its ID is present in this set,
@@ -84,6 +84,8 @@ class YRoomManager(LoggingConfigurable):
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
+        if self.parent.serverapp is None:
+            raise RuntimeError("ServerApp is not available")
         manager = self.parent.serverapp.web_app.settings.get("file_id_manager", None)
         assert isinstance(manager, BaseFileIdManager)
         return manager
@@ -91,16 +93,25 @@ class YRoomManager(LoggingConfigurable):
 
     @property
     def contents_manager(self) -> ContentsManager:
+        if self.parent.serverapp is None:
+            raise RuntimeError("ServerApp is not available")
         return self.parent.serverapp.contents_manager
     
 
     @property
     def event_logger(self) -> EventLogger:
-        return self.parent.serverapp.event_logger
+        if self.parent.serverapp is None:
+            raise RuntimeError("ServerApp is not available")
+        event_logger = self.parent.serverapp.event_logger
+        if event_logger is None:
+            raise RuntimeError("Event logger is not available")
+        return event_logger
     
 
     @property
     def outputs_manager(self) -> OutputsManager:
+        if not hasattr(self.parent, 'outputs_manager'):
+            raise RuntimeError("Outputs manager is not available")
         return self.parent.outputs_manager
     
 
@@ -156,17 +167,17 @@ class YRoomManager(LoggingConfigurable):
         """
         yroom = self._rooms_by_id.pop(room_id, None)
         if not yroom:
-            return
+            return None
         
         self.log.info(f"Stopping YRoom '{room_id}'.")
         try:
             yroom.stop()
-            return True
+            return None
         except Exception as e:
             self.log.exception(
                 f"Exception raised when stopping YRoom '{room_id}: "
             )
-            return False
+            return None
     
 
     async def _watch_rooms(self) -> None:
@@ -274,9 +285,9 @@ class YRoomManager(LoggingConfigurable):
 
         # Define task that deletes the room and waits until the content is saved
         async def delete_then_save(room_id: str, room: YRoom):
-            ret = self.delete_room(room_id)
+            self.delete_room(room_id)
             await room.until_saved
-            return ret
+            return None
 
         # Delete all rooms concurrently using `delete_then_save()`
         for room_id, room in self._rooms_by_id.items():
