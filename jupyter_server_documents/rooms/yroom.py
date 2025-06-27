@@ -827,7 +827,7 @@ class YRoom(LoggingConfigurable):
                 self._message_queue.get_nowait()
                 self._message_queue.task_done()
             else:
-                client_id, message = self._message.queue.get_nowait()
+                client_id, message = self._message_queue.get_nowait()
                 self.handle_message(client_id, message)
         
         # Stop the `_process_message_queue` task by enqueueing `None`
