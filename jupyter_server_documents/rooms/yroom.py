@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import ContentsManager
     from pycrdt import TransactionEvent
+    from ..outputs.manager import OutputsManager
 
 class YRoom(LoggingConfigurable):
     """
@@ -265,6 +266,11 @@ class YRoom(LoggingConfigurable):
     @property
     def event_logger(self) -> EventLogger:
         return self.parent.event_logger
+    
+
+    @property
+    def outputs_manager(self) -> OutputsManager:
+        return self.parent.outputs_manager
     
 
     def _init_ydoc(self) -> pycrdt.Doc:

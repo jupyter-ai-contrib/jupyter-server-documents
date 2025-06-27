@@ -2,8 +2,10 @@ import json
 import os
 from pathlib import Path, PurePath
 import shutil
+import uuid
 
 from pycrdt import Map
+import nbformat
 
 from traitlets.config import LoggingConfigurable
 from traitlets import Dict, Instance, Int, default
@@ -112,18 +114,18 @@ class OutputsManager(LoggingConfigurable):
             output = f.read()
         return output
     
-    def write(self, file_id, cell_id, output, display_id=None):
+    def write(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         """Write a new output for file_id and cell_id.
 
         Returns a placeholder output (pycrdt.Map) or None if no placeholder
         output should be written to the ydoc.
         """
-        placeholder = self.write_output(file_id, cell_id, output, display_id)
+        placeholder = self.write_output(file_id, cell_id, output, display_id, asdict=asdict)
         if output["output_type"] == "stream" and self.stream_limit is not None:
-            placeholder = self.write_stream(file_id, cell_id, output, placeholder)
+            placeholder = self.write_stream(file_id, cell_id, output, placeholder, asdict=asdict)
         return placeholder
 
-    def write_output(self, file_id, cell_id, output, display_id=None):
+    def write_output(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         self._ensure_path(file_id, cell_id)
         index = self._compute_output_index(cell_id, display_id)
         path = self._build_path(file_id, cell_id, index)
@@ -132,9 +134,12 @@ class OutputsManager(LoggingConfigurable):
             f.write(data)
         url = create_output_url(file_id, cell_id, index)
         self.log.info(f"Wrote output: {url}")
-        return create_placeholder_output(output["output_type"], url)
+        placeholder = create_placeholder_dict(output["output_type"], url)
+        if not asdict:
+            placeholder = Map(placeholder)
+        return placeholder
     
-    def write_stream(self, file_id, cell_id, output, placeholder) -> Map:
+    def write_stream(self, file_id, cell_id, output, placeholder, asdict : bool = False) -> Map | dict:
         # How many stream outputs have been written for this cell previously
         count = self._stream_count.get(cell_id, 0)
 
@@ -156,7 +161,9 @@ class OutputsManager(LoggingConfigurable):
             placeholder = placeholder
         elif count == self.stream_limit:
             # Return a link to the full stream output
-            placeholder = create_placeholder_output("display_data", url, full=True)
+            placeholder = create_placeholder_dict("display_data", url, full=True)
+            if not asdict:
+                placeholder = Map(placeholder)
         elif count > self.stream_limit:
             # Return None to indicate that no placeholder should be written to the ydoc
             placeholder = None
@@ -180,10 +187,152 @@ class OutputsManager(LoggingConfigurable):
         except FileNotFoundError:
             pass
 
+    def process_loaded_notebook(self, file_id: str, file_data: dict) -> dict:
+        """Process a loaded notebook and handle outputs through the outputs manager.
+
+        This method processes a notebook that has been loaded from disk.
+        If the notebook metadata has placeholder_outputs set to True, 
+        outputs are loaded from disk and set as the cell outputs.
+        
+        Args:
+            file_id (str): The file identifier
+            file_data (dict): The file data containing the notebook content
+                from calling ContentsManager.get()
+            
+        Returns:
+            dict: The modified file data with processed outputs
+        """
+        self.log.info(f"Processing loaded notebook: {file_id}")
+
+        # Notebook content is a tree of nbformat.NotebookNode objects,
+        # which are a subclass of dict.
+        nb = file_data['content']
+        
+        # Check if the notebook metadata has placeholder_outputs set to True
+        if nb.get('metadata', {}).get('placeholder_outputs') is True:
+            nb = self._process_loaded_placeholders(file_id=file_id, nb=nb)
+        else:
+            nb = self._process_loaded_no_placeholders(file_id=file_id, nb=nb)           
+
+        file_data['content'] = nb
+        return file_data
+
+    def _process_loaded_placeholders(self, file_id: str, nb: dict) -> dict:
+        """Process a notebook with placeholder_outputs metadata set to True.
+        
+        This method processes notebooks that have been saved with placeholder outputs.
+        It attempts to load actual outputs from disk and creates placeholder outputs
+        for each code cell. If no outputs exist on disk for a cell, the cell's
+        outputs are set to an empty list.
+        
+        Args:
+            file_id (str): The file identifier
+            nb (dict): The notebook dictionary
+            
+        Returns:
+            dict: The notebook with placeholder outputs loaded from disk
+        """
+        for cell in nb.get('cells', []):
+            if cell.get('cell_type') == 'code':
+                cell_id = cell.get('id', str(uuid.uuid4()))
+                try:
+                    # Try to get outputs from disk
+                    output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
+                    outputs = []
+                    for output_string in output_strings:
+                        output_dict = json.loads(output_string)
+                        placeholder = create_placeholder_dict(
+                            output_dict["output_type"],
+                            url=create_output_url(file_id, cell_id)
+                        )
+                        outputs.append(placeholder)
+                    cell['outputs'] = outputs
+                except FileNotFoundError:
+                    # No outputs on disk for this cell, set empty outputs
+                    cell['outputs'] = []
+        return nb
+
+    def _process_loaded_no_placeholders(self, file_id: str, nb: dict) -> dict:
+        """Process a notebook that doesn't have placeholder_outputs metadata.
+        
+        This method processes notebooks with actual output data in the cells.
+        It saves existing outputs to disk and replaces them with placeholder
+        outputs that reference the saved files. Outputs that already have
+        a URL in their metadata are left as-is.
+        
+        Args:
+            file_id (str): The file identifier
+            nb (dict): The notebook dictionary
+            
+        Returns:
+            dict: The notebook with outputs saved to disk and replaced with placeholders
+        """
+        for cell in nb.get('cells', []):
+            if cell.get('cell_type') != 'code' or 'outputs' not in cell:
+                continue
+
+            cell_id = cell.get('id', str(uuid.uuid4()))
+            processed_outputs = []
+            for output in cell.get('outputs', []):
+                display_id = output.get('metadata', {}).get('display_id')
+                url = output.get('metadata', {}).get('url')
+                if url is None:
+                    # Save output to disk and replace with placeholder
+                    try:
+                        placeholder = self.write(
+                            file_id,
+                            cell_id,
+                            output,
+                            display_id,
+                            asdict=True,
+                        )
+                    except Exception as e:
+                        self.log.error(f"Error writing output: {e}")
+                        # If we can't write the output to disk, keep the original
+                        placeholder = output
+                else:
+                    # In this case, there is a placeholder already so keep it
+                    placeholder = output
+                
+                if placeholder is not None:
+                    # A placeholder of None means to not add to the YDoc
+                    processed_outputs.append(nbformat.from_dict(placeholder))
+            
+            # Replace the outputs with processed ones
+            cell['outputs'] = processed_outputs
+        return nb
+
+    def process_saving_notebook(self, nb: dict) -> dict:
+        """Process a notebook before saving to disk.
+
+        This method is called when the yroom_file_api saves notebooks.
+        It sets the placeholder_outputs key to True in the notebook metadata
+        and clears the outputs array for each cell.
+        
+        Args:
+            nb (dict): The notebook dict
+            
+        Returns:
+            dict: The modified file data with placeholder_outputs set to True
+                  and empty outputs arrays
+        """        
+        # Ensure metadata exists
+        if 'metadata' not in nb:
+            nb['metadata'] = {}
+        
+        # Set placeholder_outputs to True
+        nb['metadata']['placeholder_outputs'] = True
+        
+        # Clear outputs for all code cells, as they are saved to disk
+        for cell in nb.get('cells', []):
+            if cell.get('cell_type') == 'code':
+                cell['outputs'] = []
+        
+        return nb
+
 
 def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:
-        """
-        Create the URL for an output or stream.
+        """Create the URL for an output or stream.
 
         Parameters:
         - file_id (str): The ID of the file.
@@ -198,9 +347,9 @@ def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> s
         else:
             return f"/api/outputs/{file_id}/{cell_id}/{output_index}.output"
 
-def create_placeholder_dict(output_type: str, url: str, full: bool = False):
-    """
-    Build a placeholder output dict for the given output_type and url.
+def create_placeholder_dict(output_type: str, url: str, full: bool = False) -> dict:
+    """Build a placeholder output dict for the given output_type and url.
+    
     If full is True and output_type is "display_data", returns a display_data output
     with an HTML link to the full stream output.
 
@@ -234,18 +383,3 @@ def create_placeholder_dict(output_type: str, url: str, full: bool = False):
     else:
         raise ValueError(f"Unknown output_type: {output_type}")
 
-def create_placeholder_output(output_type: str, url: str, full: bool = False):
-    """
-    Creates a placeholder output Map for the given output_type and url.
-    If full is True and output_type is "display_data", creates a display_data output with an HTML link.
-
-    Parameters:
-    - output_type (str): The type of the output.
-    - url (str): The URL associated with the output.
-    - full (bool): Whether to create a full output placeholder with a link.
-
-    Returns:
-    - Map: The placeholder output `ycrdt.Map`.
-    """
-    output_dict = create_placeholder_dict(output_type, url, full=full)
-    return Map(output_dict)

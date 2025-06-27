@@ -142,7 +142,12 @@ class OutputProcessor(LoggingConfigurable):
         # Convert from the message spec to the nbformat output structure
         if self.use_outputs_service: 
             output = self.transform_output(msg_type, content, ydoc=False)
-            output = self.outputs_manager.write(file_id, cell_id, output, display_id)
+            output = self.outputs_manager.write(
+                file_id=file_id,
+                cell_id=cell_id,
+                output=output,
+                display_id=display_id
+            )
         else:
             output = self.transform_output(msg_type, content, ydoc=True)
 
