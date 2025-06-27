@@ -18,7 +18,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  type-check:
+  python:
+    name: 'Python'
     runs-on: ubuntu-latest
     strategy:
       matrix:
