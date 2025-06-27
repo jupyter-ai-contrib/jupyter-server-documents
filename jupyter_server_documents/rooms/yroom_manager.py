@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .yroom import YRoom
-from typing import TYPE_CHECKING
+from typing import cast, TYPE_CHECKING
 import asyncio
 import traitlets
 from traitlets.config import LoggingConfigurable
@@ -11,6 +11,7 @@ from ..outputs.manager import OutputsManager
 
 if TYPE_CHECKING:
     import logging
+    from typing import Set
     from jupyter_server.extension.application import ExtensionApp
     from jupyter_server.services.contents.manager import ContentsManager
     from jupyter_events import EventLogger
@@ -53,7 +54,7 @@ class YRoomManager(LoggingConfigurable):
     this declaration only hints the type for type checkers.
     """
 
-    _rooms_by_id = traitlets.Dict(default_value={})
+    _rooms_by_id: traitlets.Dict[str, YRoom] = traitlets.Dict(default_value={})
     """
     Dictionary of active `YRoom` instances, keyed by room ID. Rooms are never
     deleted from this dictionary.
@@ -64,9 +65,10 @@ class YRoomManager(LoggingConfigurable):
 
     _inactive_rooms = traitlets.Set()
     """
-    Set of room IDs that were marked inactive on the last iteration of
-    `_watch_rooms()`. If a room is inactive and its ID is present in this set,
-    then the room should be restarted as it has been inactive for >10 seconds.
+    Set of room IDs (as strings) that were marked inactive on the last iteration
+    of `_watch_rooms()`. If a room is inactive and its ID is present in this
+    set, then the room should be restarted as it has been inactive for >10
+    seconds.
     """
 
     _watch_rooms_task: asyncio.Task | None
