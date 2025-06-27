@@ -17,11 +17,11 @@ from .yroom_events_api import YRoomEventsAPI
 
 if TYPE_CHECKING:
     import logging
-    from typing import Coroutine, Literal, Tuple, Any
+    from typing import Callable, Coroutine, Literal, Tuple, Any
     from .yroom_manager import YRoomManager
-    from jupyter_server_fileid.manager import BaseFileIdManager
+    from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
     from jupyter_server.services.contents.manager import ContentsManager
-    from pycrdt import TransactionEvent
+    from pycrdt import TransactionEvent, Subscription
     from ..outputs.manager import OutputsManager
 
 class YRoom(LoggingConfigurable):
@@ -136,7 +136,7 @@ class YRoom(LoggingConfigurable):
     documentation for more info.
     """
 
-    _jupyter_ydoc_observers: dict[str, callable[[str, Any], Any]]
+    _jupyter_ydoc_observers: dict[str, Callable[[str, Any], Any]]
     """
     Dictionary of JupyterYDoc observers added by consumers of this room.
 
@@ -167,10 +167,10 @@ class YRoom(LoggingConfigurable):
     `self._message_queue.put_nowait(None)`.
     """
 
-    _awareness_subscription: pycrdt.Subscription
+    _awareness_subscription: str
     """Subscription to awareness changes."""
 
-    _ydoc_subscription: pycrdt.Subscription
+    _ydoc_subscription: Subscription
     """Subscription to YDoc changes."""
 
     _stopped: bool
@@ -346,6 +346,8 @@ class YRoom(LoggingConfigurable):
             message = "There is no Jupyter ydoc for global awareness scenario"
             self.log.error(message)
             raise Exception(message)
+        if self._jupyter_ydoc is None:
+            raise RuntimeError("Jupyter YDoc is not available")
         if self.file_api:
             await self.file_api.until_content_loaded
         return self._jupyter_ydoc
@@ -428,7 +430,7 @@ class YRoom(LoggingConfigurable):
 
         # Determine message type & subtype from header
         message_type = message[0]
-        sync_message_subtype = "*"
+        sync_message_subtype = -1 # invalid sentinel value
         # message subtypes only exist on sync messages, hence this condition
         if message_type == YMessageType.SYNC and len(message) >= 2:
             sync_message_subtype = message[1]
@@ -585,7 +587,7 @@ class YRoom(LoggingConfigurable):
         self._broadcast_message(message, message_type="SyncUpdate")
 
 
-    def observe_jupyter_ydoc(self, observer: callable[[str, Any], Any]) -> str:
+    def observe_jupyter_ydoc(self, observer: Callable[[str, Any], Any]) -> str:
         """
         Adds an observer callback to the JupyterYDoc that fires on change.
         The callback should accept 2 arguments:
@@ -604,8 +606,9 @@ class YRoom(LoggingConfigurable):
         Returns an `observer_id: str` that can be passed to
         `unobserve_jupyter_ydoc()` to remove the observer.
         """
-        observer_id = uuid.uuid4()
+        observer_id = str(uuid.uuid4())
         self._jupyter_ydoc_observers[observer_id] = observer
+        return observer_id
     
 
     def unobserve_jupyter_ydoc(self, observer_id: str):
@@ -745,7 +748,10 @@ class YRoom(LoggingConfigurable):
         self.log.debug(f"awareness update, updated_clients={updated_clients}")
         state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
-        self.log.debug(f"awareness update, message={message}")
+        # !r ensures binary messages show as `b'...'`  instead of being decoded
+        # into jargon in log statements.
+        # https://docs.python.org/3/library/string.html#format-string-syntax
+        self.log.debug(f"awareness update, message={message!r}")
         self._broadcast_message(message, "AwarenessUpdate")
     
 
@@ -827,8 +833,11 @@ class YRoom(LoggingConfigurable):
                 self._message_queue.get_nowait()
                 self._message_queue.task_done()
             else:
-                client_id, message = self._message_queue.get_nowait()
-                self.handle_message(client_id, message)
+                queue_item = self._message_queue.get_nowait()
+                if queue_item is not None:
+                    client_id, message = queue_item
+                    self.handle_message(client_id, message)
+                self._message_queue.task_done()
         
         # Stop the `_process_message_queue` task by enqueueing `None`
         self._message_queue.put_nowait(None)
@@ -924,8 +933,9 @@ class YRoom(LoggingConfigurable):
         self.clients.restart()
 
         # Restart `YRoomFileAPI` & reload the document
-        self.file_api.restart()
-        self.file_api.load_content_into(self._jupyter_ydoc)
+        if self.file_api is not None and self._jupyter_ydoc is not None:
+            self.file_api.restart()
+            self.file_api.load_content_into(self._jupyter_ydoc)
 
         # Restart `_process_message_queue()` task
         asyncio.create_task(self._process_message_queue())
@@ -952,8 +962,8 @@ def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
     # `False` immediately if:
     # - a key was updated to a value different from the previous value
     # - a key was added with a value different from the previous value
-    for key in event.keys.keys():
-        update_info = event.keys[key]
+    for key in getattr(event, 'keys', {}).keys():
+        update_info = getattr(event, 'keys', {})[key]
         action = update_info.get('action', None)
         if action == 'update':
             old_value = update_info.get('oldValue', None)
@@ -961,7 +971,7 @@ def should_ignore_state_update(event: pycrdt.MapEvent) -> bool:
             if old_value != new_value:
                 return False
         elif action == "add":
-            old_value = event.target.get(key, None)
+            old_value = getattr(event, 'target', {}).get(key, None)
             new_value = update_info.get('newValue', None)
             if old_value != new_value:
                 return False

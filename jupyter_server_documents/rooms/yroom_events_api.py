@@ -1,6 +1,6 @@
 from __future__ import annotations
 from jupyter_events import EventLogger
-from jupyter_server_fileid.manager import BaseFileIdManager
+from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
 from traitlets.config import LoggingConfigurable
 from typing import TYPE_CHECKING
 
