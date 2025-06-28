@@ -376,7 +376,7 @@ class YRoomFileAPI(LoggingConfigurable):
             self._save_scheduled = False
 
             if self.file_type == "notebook":
-                content = self.outputs_manager.process_saving_notebook(content)
+                content = self.outputs_manager.process_saving_notebook(content, self.file_id)
 
             # Save the YDoc via the ContentsManager
             async with self._content_lock:
