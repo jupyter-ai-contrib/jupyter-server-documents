@@ -207,6 +207,9 @@ class OutputsManager(LoggingConfigurable):
         # Notebook content is a tree of nbformat.NotebookNode objects,
         # which are a subclass of dict.
         nb = file_data['content']
+        # We need cell ids which are only in nbformat >4.5. We use this to
+        # upgrade all notebooks to 4.5 or later
+        nb = nbformat.v4.upgrade(nb, from_version=nb.nbformat, from_minor=nb.nbformat_minor)
         
         # Check if the notebook metadata has placeholder_outputs set to True
         if nb.get('metadata', {}).get('placeholder_outputs') is True:
@@ -233,8 +236,12 @@ class OutputsManager(LoggingConfigurable):
             dict: The notebook with placeholder outputs loaded from disk
         """
         for cell in nb.get('cells', []):
+            # Ensure all cells have IDs regardless of type
+            if not cell.get('id'):
+                cell['id'] = str(uuid.uuid4())
+            
             if cell.get('cell_type') == 'code':
-                cell_id = cell.get('id', str(uuid.uuid4()))
+                cell_id = cell['id']
                 try:
                     # Try to get outputs from disk
                     output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
@@ -268,10 +275,14 @@ class OutputsManager(LoggingConfigurable):
             dict: The notebook with outputs saved to disk and replaced with placeholders
         """
         for cell in nb.get('cells', []):
+            # Ensure all cells have IDs regardless of type
+            if not cell.get('id'):
+                cell['id'] = str(uuid.uuid4())
+                
             if cell.get('cell_type') != 'code' or 'outputs' not in cell:
                 continue
 
-            cell_id = cell.get('id', str(uuid.uuid4()))
+            cell_id = cell['id']
             processed_outputs = []
             for output in cell.get('outputs', []):
                 display_id = output.get('metadata', {}).get('display_id')

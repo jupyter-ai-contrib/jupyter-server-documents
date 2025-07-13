@@ -67,11 +67,9 @@ class StreamAPIHandler(APIHandler):
 # URL to handler mappings
 # -----------------------------------------------------------------------------
 
-# Strict UUID regex (matches standard 8-4-4-4-12 UUIDs)
-_uuid_regex = r"[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"
-
-_file_id_regex = rf"(?P<file_id>{_uuid_regex})"
-_cell_id_regex = rf"(?P<cell_id>{_uuid_regex})"
+_file_id_regex = r"(?P<file_id>[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
+# In nbformat, cell_ids follow this format, compatible with uuid4
+_cell_id_regex = rf"(?P<cell_id>[a-zA-Z0-9_-]+)"
 
 # non-negative integers
 _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"
@@ -80,4 +78,3 @@ outputs_handlers = [
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}(?:/{_output_index_regex}.output)?", OutputsAPIHandler),
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]
-
