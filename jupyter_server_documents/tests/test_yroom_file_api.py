@@ -104,12 +104,12 @@ def empty_yunicode() -> YUnicode:
 
 @pytest.mark.asyncio(loop_scope="module")
 async def test_load_plaintext_file(
-    plaintext_file_api: Awaitable[YRoomFileAPI],
+    plaintext_file_api: YRoomFileAPI,
     empty_yunicode: YUnicode,
     mock_plaintext_file: str,
 ):
     # Load content into JupyterYDoc
-    file_api = await plaintext_file_api
+    file_api = plaintext_file_api
     jupyter_ydoc = empty_yunicode
     file_api.load_content_into(jupyter_ydoc)
     await file_api.until_content_loaded
