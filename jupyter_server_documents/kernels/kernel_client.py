@@ -80,7 +80,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         """
         # If the listening task isn't defined yet
         # do nothing.
-        if not self._listening_task:
+        if not hasattr(self, '_listening_task') or not self._listening_task:
             return
 
         # Attempt to cancel the task.
@@ -93,6 +93,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Log any exceptions that were raised.
         except Exception as err:
             self.log.error(err)
+        finally:
+            # Clear the task reference
+            self._listening_task = None
 
     _listening_task: t.Optional[t.Awaitable] = Any(allow_none=True)
 

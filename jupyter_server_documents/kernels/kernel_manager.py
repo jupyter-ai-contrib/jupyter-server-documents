@@ -127,8 +127,9 @@ class NextGenKernelManager(AsyncKernelManager):
             await asyncio.sleep(0.1)
         
     async def disconnect(self):
-        await self.main_client.stop_listening()
-        self.main_client.stop_channels()
+        if self.main_client:
+            await self.main_client.stop_listening()
+            self.main_client.stop_channels()
 
     async def broadcast_state(self):
         """Broadcast state to all listeners"""
