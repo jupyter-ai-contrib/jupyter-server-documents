@@ -1,10 +1,42 @@
-# jupyter_server_documents
-
-A JupyterLab extension that provides RTC capabilities.
+# Jupyter Server Documents
 
 This extension is composed of a Python package named `jupyter_server_documents`
 for the server extension and a NPM package named `@jupyter/server-documents`
 for the frontend extension.
+
+## Overview
+
+Jupyter Server Documents is a powerful extension for JupyterLab that enhances your notebook experience by moving the state of documents to the server. Key features include:
+
+### Real-Time Collaboration
+
+- New, optimized real-time collabortion engine for Jupyter Server
+- Significant performance and memory usage improvements
+- Proper handling of out-of-band changes (e.g. `git checkout`)
+- No data loss or duplication
+
+### Enhanced Performance
+
+- Optimized memory usage through intelligent output management
+- Significantly faster loading of notebooks with large outputs
+- Reduced memory footprint for notebooks with extensive output data
+- Automatic saving of changes to prevent data loss
+
+### Improved Kernel Management
+
+- More reliable kernel execution and connection handling
+- Enhanced stability with better error recovery mechanisms
+- Streamlined message handling between kernels and the frontend
+- Improved kernel restart and reconnection capabilities
+
+### Efficient Output Handling
+
+- Smart output storage separates large outputs from notebook documents
+- Output streaming controls prevent memory issues with unbounded outputs
+- Faster notebook navigation even with extensive computational outputs
+- Lazy loading of outputs for improved responsiveness
+
+This extension provides the foundation for a more collaborative, stable, and performant JupyterLab experience, especially valuable for data scientists and researchers working with complex notebooks or in team environments.
 
 ## Requirements
 
