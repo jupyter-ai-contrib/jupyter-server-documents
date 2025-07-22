@@ -157,7 +157,7 @@ class YRoomManager(LoggingConfigurable):
         return room_id in self._rooms_by_id
 
 
-    def delete_room(self, room_id: str) -> None:
+    def delete_room(self, room_id: str) -> bool:
         """
         Gracefully deletes a YRoom given a room ID. This stops the YRoom,
         closing all Websockets with close code 1001 (server shutting down),
@@ -169,17 +169,17 @@ class YRoomManager(LoggingConfigurable):
         """
         yroom = self._rooms_by_id.pop(room_id, None)
         if not yroom:
-            return None
+            return True
         
         self.log.info(f"Stopping YRoom '{room_id}'.")
         try:
             yroom.stop()
-            return None
+            return True
         except Exception as e:
             self.log.exception(
                 f"Exception raised when stopping YRoom '{room_id}: "
             )
-            return None
+            return False
     
 
     async def _watch_rooms(self) -> None:
@@ -286,10 +286,10 @@ class YRoomManager(LoggingConfigurable):
         deletion_tasks = []
 
         # Define task that deletes the room and waits until the content is saved
-        async def delete_then_save(room_id: str, room: YRoom):
-            self.delete_room(room_id)
+        async def delete_then_save(room_id: str, room: YRoom) -> bool:
+            result = self.delete_room(room_id)
             await room.until_saved
-            return None
+            return result
 
         # Delete all rooms concurrently using `delete_then_save()`
         for room_id, room in self._rooms_by_id.items():
