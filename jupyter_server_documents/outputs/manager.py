@@ -313,7 +313,7 @@ class OutputsManager(LoggingConfigurable):
             cell['outputs'] = processed_outputs
         return nb
 
-    def process_saving_notebook(self, nb: dict) -> dict:
+    def process_saving_notebook(self, nb: dict, file_id: str) -> dict:
         """Process a notebook before saving to disk.
 
         This method is called when the yroom_file_api saves notebooks.
@@ -322,6 +322,7 @@ class OutputsManager(LoggingConfigurable):
         
         Args:
             nb (dict): The notebook dict
+            file_id (str): The file identifier
             
         Returns:
             dict: The modified file data with placeholder_outputs set to True
@@ -337,6 +338,12 @@ class OutputsManager(LoggingConfigurable):
         # Clear outputs for all code cells, as they are saved to disk
         for cell in nb.get('cells', []):
             if cell.get('cell_type') == 'code':
+                # If outputs is already an empty list, call clear for this cell
+                if cell.get('outputs') == []:
+                    cell_id = cell.get('id')
+                    if cell_id:
+                        self.clear(file_id, cell_id)
+                
                 cell['outputs'] = []
         
         return nb
