@@ -6,17 +6,9 @@ This extension is composed of a Python package named `jupyter_server_documents`
 for the server extension and a NPM package named `@jupyter/server-documents`
 for the frontend extension.
 
-## Try it out
-
-Run with the proper configuration
-
-```
-jupyter lab --config jupyter_config.py
-```
-
 ## Requirements
 
-- JupyterLab >= 4.0.0
+- JupyterLab >= 4.4.0
 
 ## Installation
 
