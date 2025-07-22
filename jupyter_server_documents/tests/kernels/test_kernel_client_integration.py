@@ -20,6 +20,17 @@ class TestDocumentAwareKernelClientIntegration:
         # Create a real YDoc and YNotebook
         ydoc = pycrdt.Doc()
         awareness = MagicMock(spec=pycrdt.Awareness)  # Mock awareness instead of using real one
+        
+        # Mock the local state to track changes
+        local_state = {}
+        awareness.get_local_state = MagicMock(return_value=local_state)
+        
+        # Mock set_local_state_field to actually update the local_state dict
+        def mock_set_local_state_field(field, value):
+            local_state[field] = value
+        
+        awareness.set_local_state_field = MagicMock(side_effect=mock_set_local_state_field)
+        
         ynotebook = YNotebook(ydoc, awareness)
         
         # Add a simple notebook structure with one cell
@@ -53,6 +64,18 @@ class TestDocumentAwareKernelClientIntegration:
         yroom = MagicMock(spec=YRoom)
         yroom.get_jupyter_ydoc = AsyncMock(return_value=ynotebook)
         yroom.get_awareness = MagicMock(return_value=awareness)
+        
+        # Add persistent cell execution state storage
+        yroom._cell_execution_states = {}
+        
+        def mock_get_cell_execution_states():
+            return yroom._cell_execution_states
+        
+        def mock_set_cell_execution_state(cell_id, execution_state):
+            yroom._cell_execution_states[cell_id] = execution_state
+        
+        yroom.get_cell_execution_states = MagicMock(side_effect=mock_get_cell_execution_states)
+        yroom.set_cell_execution_state = MagicMock(side_effect=mock_set_cell_execution_state)
         
         return yroom, ynotebook
 
@@ -109,7 +132,7 @@ class TestDocumentAwareKernelClientIntegration:
 
     @pytest.mark.asyncio
     async def test_status_message_updates_cell_execution_state(self, kernel_client_with_yroom):
-        """Test that status messages update cell execution state in YDoc."""
+        """Test that status messages update cell execution state in YRoom for persistence and awareness for real-time updates."""
         client, yroom, ynotebook = kernel_client_with_yroom
         
         # Mock message cache to return cell_id and channel
@@ -129,11 +152,16 @@ class TestDocumentAwareKernelClientIntegration:
         # Process the message
         await client.handle_document_related_message(msg_parts[1:])  # Skip delimiter
         
-        # Verify the cell execution state was updated to 'running' (converted from 'busy')
-        cells = ynotebook.get_cell_list()
-        target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
-        assert target_cell is not None
-        assert target_cell.get("execution_state") == "running"
+        # Verify the cell execution state was stored in YRoom for persistence
+        cell_states = yroom.get_cell_execution_states()
+        assert cell_states[cell_id] == "busy"
+        
+        # Verify it's also in awareness for real-time updates
+        awareness = yroom.get_awareness()
+        local_state = awareness.get_local_state()
+        assert local_state is not None
+        assert "cell_execution_states" in local_state
+        assert local_state["cell_execution_states"][cell_id] == "busy"
 
     @pytest.mark.asyncio
     async def test_kernel_info_reply_updates_language_info(self, kernel_client_with_yroom):
@@ -304,12 +332,16 @@ class TestDocumentAwareKernelClientIntegration:
         )
         await client.handle_document_related_message(msg_parts[1:])
         
-        # Verify final state of the cell in YDoc
+        # Verify final state of the cell in YDoc and awareness
         cells = ynotebook.get_cell_list()
         target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
         assert target_cell is not None
         assert target_cell.get("execution_count") == 1
-        assert target_cell.get("execution_state") == "idle"
+        
+        # Verify execution state is stored in awareness, not YDoc
+        awareness = yroom.get_awareness()
+        cell_execution_states = awareness.get_local_state().get("cell_execution_states", {})
+        assert cell_execution_states.get(cell_id) == "idle"
         
         # Verify output processor was called for the result
         client.output_processor.process_output.assert_called_with(
@@ -383,15 +415,12 @@ class TestDocumentAwareKernelClientIntegration:
         )
         await client.handle_document_related_message(msg_parts2[1:])
         
-        # Verify both cells have correct states
-        cells = ynotebook.get_cell_list()
-        cell1 = next((cell for cell in cells if cell.get("id") == "test-cell-1"), None)
-        cell2 = next((cell for cell in cells if cell.get("id") == "test-cell-2"), None)
+        # Verify both cells have correct states in awareness
+        awareness = yroom.get_awareness()
+        cell_execution_states = awareness.get_local_state().get("cell_execution_states", {})
         
-        assert cell1 is not None
-        assert cell1.get("execution_state") == "running"  # 'busy' -> 'running'
-        assert cell2 is not None
-        assert cell2.get("execution_state") == "idle"
+        assert cell_execution_states.get("test-cell-1") == "busy"  # 'busy' state
+        assert cell_execution_states.get("test-cell-2") == "idle"
 
     @pytest.mark.asyncio
     async def test_message_without_cell_id_skips_cell_updates(self, kernel_client_with_yroom):

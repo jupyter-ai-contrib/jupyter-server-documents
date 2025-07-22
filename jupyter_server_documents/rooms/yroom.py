@@ -369,6 +369,23 @@ class YRoom(LoggingConfigurable):
         """
         return self._awareness
     
+    def get_cell_execution_states(self) -> dict:
+        """
+        Returns the persistent cell execution states for this room.
+        These states survive client disconnections but are not saved to disk.
+        """
+        if not hasattr(self, '_cell_execution_states'):
+            self._cell_execution_states = {}
+        return self._cell_execution_states
+    
+    def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
+        """
+        Sets the execution state for a specific cell.
+        This state persists across client disconnections.
+        """
+        if not hasattr(self, '_cell_execution_states'):
+            self._cell_execution_states = {}
+        self._cell_execution_states[cell_id] = execution_state
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
@@ -512,7 +529,7 @@ class YRoom(LoggingConfigurable):
             return
         
         self.clients.mark_synced(client_id)
-        
+
         # Send SyncStep1 message
         try:
             assert isinstance(new_client.websocket, WebSocketHandler)
