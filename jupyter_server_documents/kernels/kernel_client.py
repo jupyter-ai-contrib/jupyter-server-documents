@@ -100,20 +100,40 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     _listening_task: t.Optional[t.Awaitable] = Any(allow_none=True)
 
     def handle_incoming_message(self, channel_name: str, msg: list[bytes]):
-        """Use the given session to send the message."""
+        """
+        Handle incoming kernel messages and set up immediate cell execution state tracking.
+        
+        This method processes incoming kernel messages and caches them for response mapping.
+        Importantly, it detects execute_request messages and immediately sets the corresponding
+        cell state to 'busy' to provide real-time feedback for queued cell executions.
+        
+        This ensures that when multiple cells are executed simultaneously, all queued cells
+        show a '*' prompt immediately, not just the currently executing cell.
+        
+        Args:
+            channel_name: The kernel channel name (shell, iopub, etc.)
+            msg: The raw kernel message as bytes
+        """
         # Cache the message ID and its socket name so that
         # any response message can be mapped back to the
         # source channel.
         header = self.session.unpack(msg[0])
-        msg_id = header["msg_id"]                
+        msg_id = header["msg_id"]
+        msg_type = header.get("msg_type")                
         metadata = self.session.unpack(msg[2])
         cell_id = metadata.get("cellId")
         
-        # Clear cell outputs if cell is re-executedq
+        # Clear cell outputs if cell is re-executed
         if cell_id:
             existing = self.message_cache.get(cell_id=cell_id)
             if existing and existing['msg_id'] != msg_id:
                 asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+        
+        # IMPORTANT: Set cell to 'busy' immediately when execute_request is received
+        # This ensures queued cells show '*' prompt even before kernel starts processing them
+        if msg_type == "execute_request" and channel_name == "shell" and cell_id:
+            for yroom in self._yrooms:
+                yroom.set_cell_awareness_state(cell_id, "busy")
         
         self.message_cache.add({
             "msg_id": msg_id,
@@ -240,27 +260,27 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                     metadata["metadata"]["language_info"] = language_info
 
             case "status":
-                # Unpack cell-specific information and determine execution state
+                # Handle kernel status messages and update cell execution states
+                # This provides real-time feedback about cell execution progress
                 content = self.session.unpack(dmsg["content"])
                 execution_state = content.get("execution_state")
+                
                 # Update status across all collaborative rooms
                 for yroom in self._yrooms:
-                    # If this status came from the shell channel, update
-                    # the notebook status.
-                    if parent_msg_data["channel"] == "shell":                     
-                        awareness = yroom.get_awareness()
-                        if awareness is not None:
+                    awareness = yroom.get_awareness()
+                    if awareness is not None:
+                        # If this status came from the shell channel, update
+                        # the notebook kernel status.
+                        if parent_msg_data and parent_msg_data.get("channel") == "shell":                     
                             # Update the kernel execution state at the top document level
                             awareness.set_local_state_field("kernel", {"execution_state": execution_state})
-                    # Specifically update the running cell's execution state if cell_id is provided
-                    if cell_id:
-                        notebook = await yroom.get_jupyter_ydoc()
-                        _, target_cell = notebook.find_cell(cell_id)
-                        if target_cell:
-                            # Adjust state naming convention from 'busy' to 'running' as per JupyterLab expectation
-                            # https://github.com/jupyterlab/jupyterlab/blob/0ad84d93be9cb1318d749ffda27fbcd013304d50/packages/cells/src/widget.ts#L1670-L1678
-                            state = 'running' if execution_state == 'busy' else execution_state
-                            target_cell["execution_state"] = state
+                        
+                        # Store cell execution state for persistence across client connections
+                        # This ensures that cell execution states survive page refreshes
+                        if cell_id:
+                            for yroom in self._yrooms:
+                                yroom.set_cell_execution_state(cell_id, execution_state)
+                                yroom.set_cell_awareness_state(cell_id, execution_state)
                             break
 
             case "execute_input":
@@ -278,8 +298,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 if cell_id: 
                     # Process specific output messages through an optional processor
-                    if self.output_processor and cell_id:
-                        cell_id = parent_msg_data.get('cell_id')
+                    if self.output_processor:
                         content = self.session.unpack(dmsg["content"])
                         self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
                         

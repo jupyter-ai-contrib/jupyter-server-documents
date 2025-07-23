@@ -74,6 +74,28 @@ class YNotebook(UpstreamYNotebook):
                 break
         return cell_index, target_cell
 
+    def get_cell_list(self):
+        """Get a list of all cells in the notebook.
+        
+        Returns a list of pycrdt.Map objects representing the cells.
+        This method is used by the integration tests.
+        
+        :return: List of cells
+        :rtype: List[pycrdt.Map]
+        """
+        return [self.ycells[i] for i in range(len(self.ycells))]
+
+    def get_meta(self):
+        """Get the notebook metadata.
+        
+        Returns the full metadata structure including nbformat info and custom metadata.
+        This method is used by the integration tests.
+        
+        :return: The notebook metadata
+        :rtype: Dict
+        """
+        return self._ymeta.to_py()
+
 
 
 ydocs = {ep.name: ep.load() for ep in entry_points(group="jupyter_ydoc")}
