@@ -133,11 +133,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # This ensures queued cells show '*' prompt even before kernel starts processing them
         if msg_type == "execute_request" and channel_name == "shell" and cell_id:
             for yroom in self._yrooms:
-                awareness = yroom.get_awareness()
-                if awareness is not None:
-                    cell_states = awareness.get_local_state().get("cell_execution_states", {})
-                    cell_states[cell_id] = "busy"
-                    awareness.set_local_state_field("cell_execution_states", cell_states)
+                yroom.set_cell_awareness_state(cell_id, "busy")
         
         self.message_cache.add({
             "msg_id": msg_id,
@@ -282,9 +278,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                         # Store cell execution state for persistence across client connections
                         # This ensures that cell execution states survive page refreshes
                         if cell_id:
-                            cell_states = awareness.get_local_state().get("cell_execution_states", {})
-                            cell_states[cell_id] = execution_state
-                            awareness.set_local_state_field("cell_execution_states", cell_states)
+                            for yroom in self._yrooms:
+                                yroom.set_cell_execution_state(cell_id, execution_state)
+                                yroom.set_cell_awareness_state(cell_id, execution_state)
                             break
 
             case "execute_input":

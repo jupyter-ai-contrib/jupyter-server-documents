@@ -170,7 +170,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
     default:
       break;
   }
-  
+
   // Always update prompt to check for awareness state on any state change
   this._updatePrompt();
 };
@@ -179,7 +179,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
  * Override the _updatePrompt method to check awareness execution state for real-time updates.
  * This method integrates with the server-side cell execution state tracking to provide
  * real-time visual feedback about cell execution status across collaborative sessions.
- * 
+ *
  * Key behaviors:
  * - Shows '*' for cells that are busy/running
  * - Shows execution count for idle cells
@@ -188,56 +188,53 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
  */
 (CodeCell.prototype as any)._updatePrompt = function (): void {
   let prompt: string;
-  
+
   // Get cell execution state from awareness (real-time)
   const cellExecutionState = this._getCellExecutionStateFromAwareness();
-  
+
   // Check execution state from awareness
   if (cellExecutionState === 'busy') {
     // Cell is queued or actively executing - show spinning indicator
     prompt = '*';
-  } else if (cellExecutionState === 'idle') {
-    // Cell is idle, show execution count or blank if not provided
-    prompt = `${this.model.executionCount || ''}`;
-  } else if (cellExecutionState === undefined) {
-    // Cell has never been executed - this is normal, don't trigger reconnection
-    prompt = `${this.model.executionCount || ''}`;
   } else {
-    // cellExecutionState === null - connection lost, show execution count as fallback
+    // Cell is idle, never executed, or connection lost - show execution count as fallback
     prompt = `${this.model.executionCount || ''}`;
   }
-  
+
   this._setPrompt(prompt);
 };
 
 /**
  * Get execution state for this cell from awareness system.
- * 
+ *
  * This method queries the collaborative awareness state to determine the current
  * execution status of a cell. It distinguishes between three scenarios:
- * 
+ *
  * Returns:
  * - 'busy'|'idle'|'running': actual execution state from awareness
  * - null: awareness connection lost (should trigger reconnection)
  * - undefined: cell never executed (should not trigger reconnection)
- * 
+ *
  * The distinction between null and undefined is crucial for preventing
  * unnecessary reconnection attempts when cells have simply never been executed.
  */
-(CodeCell.prototype as any)._getCellExecutionStateFromAwareness = function (): string | null | undefined {
+(CodeCell.prototype as any)._getCellExecutionStateFromAwareness = function ():
+  | string
+  | null
+  | undefined {
   const notebook = this.parent?.parent;
-  if (!notebook || !notebook.model || !notebook.model.sharedModel || !notebook.model.sharedModel.awareness) {
+  if (!notebook?.model?.sharedModel?.awareness) {
     return null; // Connection lost
   }
-  
+
   const awareness = notebook.model.sharedModel.awareness;
   const awarenessStates = awareness.getStates();
-  
+
   // Check if awareness has any states at all
   if (awarenessStates.size === 0) {
     return null; // Connection lost
   }
-  
+
   // Look through all client states for cell execution states
   let hasAnyExecutionStates = false;
   for (const [_, clientState] of awarenessStates) {
@@ -249,7 +246,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
       }
     }
   }
-  
+
   if (hasAnyExecutionStates) {
     // We have execution states from server, but this cell is not in them
     // This means the cell has never been executed
@@ -262,7 +259,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
 
 /**
  * Initialize CodeCell state including awareness listener setup.
- * 
+ *
  * This method is called once during cell creation to set up the awareness
  * listener that will track cell execution states in real-time across
  * collaborative sessions. It ensures that each cell has a properly
@@ -276,30 +273,33 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
 
 /**
  * Set up awareness listener for prompt updates.
- * 
+ *
  * This method establishes a listener on the awareness system that will
  * automatically update the cell's prompt when execution states change.
  * It waits for the cell to be fully ready before attempting to access
  * awareness data, ensuring reliable setup.
- * 
+ *
  * The listener is stored for proper cleanup during cell disposal.
  */
 (CodeCell.prototype as any)._setupAwarenessListener = function (): void {
   const updatePromptFromAwareness = () => {
     this._updatePrompt();
   };
-  
+
   // The CodeCell instantiation needs to be fully ready before
   // attempting to fetch its awareness data.
-  this.ready.then(() => { 
+  this.ready.then(() => {
     const notebook = this.parent?.parent;
     if (notebook?.model?.sharedModel?.awareness) {
-      notebook.model.sharedModel.awareness.on('change', updatePromptFromAwareness);
-      
+      notebook.model.sharedModel.awareness.on(
+        'change',
+        updatePromptFromAwareness
+      );
+
       // Store the listener for cleanup
       this._awarenessUpdateListener = updatePromptFromAwareness;
       this._awarenessInstance = notebook.model.sharedModel.awareness;
-      
+
       // Perform initial prompt update
       this._updatePrompt();
     }
@@ -308,7 +308,7 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
 
 /**
  * Override dispose to clean up awareness listener.
- * 
+ *
  * This ensures that when a cell is disposed, its awareness listener
  * is properly removed to prevent memory leaks and unexpected behavior.
  */

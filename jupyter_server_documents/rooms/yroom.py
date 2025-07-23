@@ -1,5 +1,5 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, cast, Any
 import asyncio
 import uuid
 import pycrdt
@@ -375,7 +375,7 @@ class YRoom(LoggingConfigurable):
         These states survive client disconnections but are not saved to disk.
         """
         if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states = {}
+            self._cell_execution_states: dict[str, str] = {}
         return self._cell_execution_states
     
     def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
@@ -386,6 +386,21 @@ class YRoom(LoggingConfigurable):
         if not hasattr(self, '_cell_execution_states'):
             self._cell_execution_states = {}
         self._cell_execution_states[cell_id] = execution_state
+
+    def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
+        """
+        Sets the execution state for a specific cell in the awareness system.
+        This provides real-time updates to all connected clients.
+        """
+        awareness = self.get_awareness()
+        if awareness is not None:
+            local_state = awareness.get_local_state()
+            if local_state is not None:
+                cell_states = local_state.get("cell_execution_states", {})
+            else:
+                cell_states = {}
+            cell_states[cell_id] = execution_state
+            awareness.set_local_state_field("cell_execution_states", cell_states)
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """

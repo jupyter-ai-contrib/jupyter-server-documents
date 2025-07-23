@@ -77,6 +77,17 @@ class TestDocumentAwareKernelClientIntegration:
         yroom.get_cell_execution_states = MagicMock(side_effect=mock_get_cell_execution_states)
         yroom.set_cell_execution_state = MagicMock(side_effect=mock_set_cell_execution_state)
         
+        # Add awareness cell execution state management
+        def mock_set_cell_awareness_state(cell_id, execution_state):
+            current_local_state = awareness.get_local_state()
+            if current_local_state is None:
+                current_local_state = local_state
+            cell_states = current_local_state.get("cell_execution_states", {})
+            cell_states[cell_id] = execution_state
+            awareness.set_local_state_field("cell_execution_states", cell_states)
+        
+        yroom.set_cell_awareness_state = MagicMock(side_effect=mock_set_cell_awareness_state)
+        
         return yroom, ynotebook
 
     @pytest.fixture
