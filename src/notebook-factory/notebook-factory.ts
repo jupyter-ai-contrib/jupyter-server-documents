@@ -8,7 +8,7 @@ import { IChangedArgs } from '@jupyterlab/coreutils';
 import { Notebook, NotebookPanel, NotebookActions } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
-import { requestAPI } from '../handler';  
+import { requestAPI } from '../handler';
 import { ResettableNotebook } from './notebook';
 
 const globalModelDBMutex = createMutex();
@@ -349,14 +349,13 @@ NotebookActions.outputCleared.connect((sender, args) => {
   const awarenessStates = awareness?.getStates();
 
   if (awarenessStates?.size === 0) {
-    console.log("Could not delete cell output, awareness is not present")
+    console.log('Could not delete cell output, awareness is not present');
   }
 
-
   let fileId = null;
-  for (const [_, state] of (awarenessStates || [])) {
-    if(state && 'file_id' in state) {
-      fileId = state["file_id"]
+  for (const [_, state] of awarenessStates || []) {
+    if (state && 'file_id' in state) {
+      fileId = state['file_id'];
     }
   }
 
@@ -365,14 +364,16 @@ NotebookActions.outputCleared.connect((sender, args) => {
   }
 
   try {
-      // Send a request to clear the outputs
-      requestAPI(`/api/outputs/${fileId}/${cellId}`, {
-        method: 'DELETE'
-      }).then(() => {
+    // Send a request to clear the outputs
+    requestAPI(`/api/outputs/${fileId}/${cellId}`, {
+      method: 'DELETE'
+    })
+      .then(() => {
         console.debug(`Successfully cleared outputs for cell ${cellId}`);
-      }).catch((error: Error) => {
-        console.error(`Failed to clear outputs for cell ${cellId}:`, error);
       })
+      .catch((error: Error) => {
+        console.error(`Failed to clear outputs for cell ${cellId}:`, error);
+      });
   } catch (error: unknown) {
     console.error('Error in output clearing process:', error);
   }
