@@ -1,10 +1,7 @@
-import json
-
 from tornado import web
 
 from jupyter_server.auth.decorator import authorized
 from jupyter_server.base.handlers import APIHandler
-from jupyter_server.utils import url_path_join
 
 
 class OutputsAPIHandler(APIHandler):
@@ -18,7 +15,7 @@ class OutputsAPIHandler(APIHandler):
 
     @web.authenticated
     @authorized
-    async def get(self, file_id=None, cell_id=None, output_index=None):
+    async def get(self, file_id, cell_id=None, output_index=None):
         try:
             if output_index:
                 output = self.outputs.get_output(file_id, cell_id, output_index)
@@ -34,6 +31,19 @@ class OutputsAPIHandler(APIHandler):
             self.set_status(200)
             self.write(output)
             self.finish(set_content_type=content_type)
+
+    @web.authenticated
+    @authorized
+    async def delete(self, file_id, cell_id=None, output_index=None):
+        # output_index is accepted but ignored as we clear all cell outputs regardless
+        try:
+            self.outputs.clear(file_id, cell_id)
+        except (FileNotFoundError):
+            self.set_status(404)
+            self.finish({"error": "Output not found."})
+        else:
+            self.set_status(200)
+            self.finish()
 
 
 class StreamAPIHandler(APIHandler):
@@ -69,7 +79,7 @@ class StreamAPIHandler(APIHandler):
 
 _file_id_regex = r"(?P<file_id>[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"
 # In nbformat, cell_ids follow this format, compatible with uuid4
-_cell_id_regex = rf"(?P<cell_id>[a-zA-Z0-9_-]+)"
+_cell_id_regex = r"(?P<cell_id>[a-zA-Z0-9_-]+)"
 
 # non-negative integers
 _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"

@@ -5,10 +5,10 @@ import {
   ICodeCellModel
 } from '@jupyterlab/cells';
 import { IChangedArgs } from '@jupyterlab/coreutils';
-import { Notebook, NotebookPanel } from '@jupyterlab/notebook';
+import { Notebook, NotebookPanel, NotebookActions } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
-import { requestAPI } from '../handler';
+import { requestAPI } from '../handler';  
 import { ResettableNotebook } from './notebook';
 
 const globalModelDBMutex = createMutex();
@@ -340,3 +340,40 @@ export class RtcNotebookContentFactory
     return new ResettableNotebook(options);
   }
 }
+
+// Add a handler for the outputCleared signal
+NotebookActions.outputCleared.connect((sender, args) => {
+  const { notebook, cell } = args;
+  const cellId = cell.model.sharedModel.getId();
+  const awareness = notebook.model?.sharedModel.awareness;
+  const awarenessStates = awareness?.getStates();
+
+  if (awarenessStates?.size === 0) {
+    console.log("Could not delete cell output, awareness is not present")
+  }
+
+
+  let fileId = null;
+  for (const [_, state] of (awarenessStates || [])) {
+    if(state && 'file_id' in state) {
+      fileId = state["file_id"]
+    }
+  }
+
+  if (fileId === null) {
+    console.error('No fileId found in awareness');
+  }
+
+  try {
+      // Send a request to clear the outputs
+      requestAPI(`/api/outputs/${fileId}/${cellId}`, {
+        method: 'DELETE'
+      }).then(() => {
+        console.debug(`Successfully cleared outputs for cell ${cellId}`);
+      }).catch((error: Error) => {
+        console.error(`Failed to clear outputs for cell ${cellId}:`, error);
+      })
+  } catch (error: unknown) {
+    console.error('Error in output clearing process:', error);
+  }
+});
