@@ -348,8 +348,18 @@ NotebookActions.outputCleared.connect((sender, args) => {
   const awareness = notebook.model?.sharedModel.awareness;
   const awarenessStates = awareness?.getStates();
 
+  // FIRST: Clear outputs in YDoc for immediate real-time sync to all clients
+  try {
+    const sharedCodeCell = cell.model.sharedModel as ISharedCodeCell;
+    sharedCodeCell.setOutputs([]);
+    console.debug(`Cleared outputs in YDoc for cell ${cellId}`);
+  } catch (error: unknown) {
+    console.error('Error clearing YDoc outputs:', error);
+  }
+
   if (awarenessStates?.size === 0) {
     console.log('Could not delete cell output, awareness is not present');
+    return; // Early return since we can't get fileId without awareness
   }
 
   let fileId = null;
@@ -361,20 +371,21 @@ NotebookActions.outputCleared.connect((sender, args) => {
 
   if (fileId === null) {
     console.error('No fileId found in awareness');
+    return; // Early return since we can't make API call without fileId
   }
 
+  // SECOND: Send API request to clear outputs from disk storage
   try {
-    // Send a request to clear the outputs
     requestAPI(`/api/outputs/${fileId}/${cellId}`, {
       method: 'DELETE'
     })
       .then(() => {
-        console.debug(`Successfully cleared outputs for cell ${cellId}`);
+        console.debug(`Successfully cleared outputs from disk for cell ${cellId}`);
       })
       .catch((error: Error) => {
-        console.error(`Failed to clear outputs for cell ${cellId}:`, error);
+        console.error(`Failed to clear outputs from disk for cell ${cellId}:`, error);
       });
   } catch (error: unknown) {
-    console.error('Error in output clearing process:', error);
+    console.error('Error in disk output clearing process:', error);
   }
 });
