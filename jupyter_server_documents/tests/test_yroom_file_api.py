@@ -54,8 +54,8 @@ def mock_plaintext_file(tmp_path):
     os.remove(target_path)
 
 
-@pytest_asyncio.fixture(loop_scope="module")
-async def plaintext_file_api(
+@pytest.fixture
+def plaintext_file_api(
     mock_plaintext_file: str,
     jp_contents_manager: AsyncFileContentsManager,
     fileid_manager: ArbitraryFileIdManager
