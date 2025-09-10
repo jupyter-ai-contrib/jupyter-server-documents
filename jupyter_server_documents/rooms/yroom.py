@@ -144,6 +144,14 @@ class YRoom(LoggingConfigurable):
     `unobserve_jupyter_ydoc()`.
     """
 
+    # TODO: define a dataclass for this to ensure values are type-safe
+    _on_reset_callbacks: dict[Literal['awareness', 'ydoc', 'jupyter_ydoc'], list[Callable[[Any], Any]]]
+    """
+    Dictionary that stores all `on_reset` callbacks passed to `get_awareness()`,
+    `get_jupyter_ydoc()`, or `get_ydoc()`. These are stored in lists under the
+    'awareness', 'ydoc' and 'jupyter_ydoc' keys respectively.
+    """
+
     _ydoc: pycrdt.Doc
     """
     The `YDoc` for this room's document. See `get_ydoc()` documentation for more
@@ -197,6 +205,11 @@ class YRoom(LoggingConfigurable):
 
         # Initialize instance attributes
         self._jupyter_ydoc_observers = {}
+        self._on_reset_callbacks = {
+            "awareness": [],
+            "jupyter_ydoc": [],
+            "ydoc": [],
+        }
         self._stopped = False
         self._updated = False
         self._save_task = None
@@ -336,11 +349,16 @@ class YRoom(LoggingConfigurable):
         return self._client_group
 
 
-    async def get_jupyter_ydoc(self) -> YBaseDoc:
+    async def get_jupyter_ydoc(self, on_reset: callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
-        Returns a reference to the room's JupyterYDoc
+        Returns a reference to the room's Jupyter YDoc
         (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
         loaded from the ContentsManager.
+
+        This method also accepts an `on_reset` callback, which should take a
+        Jupyter YDoc as an argument. This callback is run with the new Jupyter
+        YDoc whenever the YDoc is reset, e.g. in response to an out-of-band
+        change.
         """
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
@@ -350,23 +368,39 @@ class YRoom(LoggingConfigurable):
             raise RuntimeError("Jupyter YDoc is not available")
         if self.file_api:
             await self.file_api.until_content_loaded
+        if on_reset:
+            self._on_reset_callbacks['jupyter_ydoc'].append(on_reset)
+            
         return self._jupyter_ydoc
     
 
-    async def get_ydoc(self) -> pycrdt.Doc:
+    async def get_ydoc(self, on_reset: callable[[pycrdt.Doc], Any] | None = None) -> pycrdt.Doc:
         """
         Returns a reference to the room's YDoc (`pycrdt.Doc`) after
         waiting for its content to be loaded from the ContentsManager.
+
+        This method also accepts an `on_reset` callback, which should take a
+        YDoc as an argument. This callback is run with the new YDoc object
+        whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
         if self.file_api:
             await self.file_api.until_content_loaded
+        if on_reset:
+            self._on_reset_callbacks['ydoc'].append(on_reset)
         return self._ydoc
 
     
-    def get_awareness(self) -> pycrdt.Awareness:
+    def get_awareness(self, on_reset: callable[[pycrdt.Awareness], Any] | None = None) -> pycrdt.Awareness:
         """
         Returns a reference to the room's awareness (`pycrdt.Awareness`).
+
+        This method also accepts an `on_reset` callback, which should take an
+        Awareness object as an argument. This callback is run with the new
+        Awareness object whenever the YDoc is reset, e.g. in response to an
+        out-of-band change.
         """
+        if on_reset:
+            self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
     
     def get_cell_execution_states(self) -> dict:
@@ -914,6 +948,9 @@ class YRoom(LoggingConfigurable):
         """
         Deletes and re-initializes the YDoc, awareness, and JupyterYDoc. This
         frees the memory occupied by their histories.
+
+        This runs all `on_reset` callbacks previously passed to `get_ydoc()`,
+        `get_jupyter_ydoc()`, or `get_awareness()`.
         """
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
@@ -921,6 +958,22 @@ class YRoom(LoggingConfigurable):
             ydoc=self._ydoc,
             awareness=self._awareness
         )
+
+        # Run callbacks stored in `self._on_reset_callbacks`.
+        objects_by_type = {
+            "awareness": self._awareness,
+            "jupyter_ydoc": self._jupyter_ydoc,
+            "ydoc": self._ydoc,
+        }
+        for obj_type, obj in objects_by_type.items():
+            for on_reset in self._on_reset_callbacks[obj_type]:
+                try:
+                    result = on_reset(obj)
+                    if asyncio.iscoroutine(result):
+                        asyncio.create_task(result)
+                except Exception:
+                    self.log.exception(f"Exception raised by '{obj_type}' on_reset() callback:")
+                    continue
     
     @property
     def stopped(self) -> bool:
