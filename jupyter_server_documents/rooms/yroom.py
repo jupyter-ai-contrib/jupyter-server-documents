@@ -349,7 +349,7 @@ class YRoom(LoggingConfigurable):
         return self._client_group
 
 
-    async def get_jupyter_ydoc(self, on_reset: callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
+    async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
         Returns a reference to the room's Jupyter YDoc
         (`jupyter_ydoc.ybasedoc.YBaseDoc`) after waiting for its content to be
@@ -374,7 +374,7 @@ class YRoom(LoggingConfigurable):
         return self._jupyter_ydoc
     
 
-    async def get_ydoc(self, on_reset: callable[[pycrdt.Doc], Any] | None = None) -> pycrdt.Doc:
+    async def get_ydoc(self, on_reset: Callable[[pycrdt.Doc], Any] | None = None) -> pycrdt.Doc:
         """
         Returns a reference to the room's YDoc (`pycrdt.Doc`) after
         waiting for its content to be loaded from the ContentsManager.
@@ -390,7 +390,7 @@ class YRoom(LoggingConfigurable):
         return self._ydoc
 
     
-    def get_awareness(self, on_reset: callable[[pycrdt.Awareness], Any] | None = None) -> pycrdt.Awareness:
+    def get_awareness(self, on_reset: Callable[[pycrdt.Awareness], Any] | None = None) -> pycrdt.Awareness:
         """
         Returns a reference to the room's awareness (`pycrdt.Awareness`).
 
@@ -966,7 +966,9 @@ class YRoom(LoggingConfigurable):
             "ydoc": self._ydoc,
         }
         for obj_type, obj in objects_by_type.items():
-            for on_reset in self._on_reset_callbacks[obj_type]:
+            # This is type-safe, but requires a mypy hint because it cannot
+            # infer that `obj_type` only takes 3 values.
+            for on_reset in self._on_reset_callbacks[obj_type]: # type: ignore
                 try:
                     result = on_reset(obj)
                     if asyncio.iscoroutine(result):
