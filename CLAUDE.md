@@ -13,6 +13,7 @@ Jupyter Server Documents is a JupyterLab extension that provides real-time colla
 ## Development Commands
 
 ### Setup
+
 ```bash
 # Create development environment
 micromamba env create -f dev-environment.yml
@@ -23,6 +24,7 @@ jlpm dev:install
 ```
 
 ### Building
+
 ```bash
 # Build frontend only
 jlpm build
@@ -35,6 +37,7 @@ jlpm clean:all
 ```
 
 ### Development Workflow
+
 ```bash
 # Watch mode (auto-rebuild frontend on changes)
 jlpm watch
@@ -44,6 +47,7 @@ jupyter lab
 ```
 
 ### Testing
+
 ```bash
 # Python tests
 pytest -vv -r ap --cov jupyter_server_documents
@@ -56,6 +60,7 @@ cd ui-tests && yarn test
 ```
 
 ### Code Quality
+
 ```bash
 # Lint and format
 jlpm lint
@@ -67,6 +72,7 @@ jlpm lint:check
 ## Architecture
 
 ### Backend Components
+
 - **`app.py`**: Main server extension (`ServerDocsApp`) - entry point and configuration
 - **`rooms/`**: Y-document room management and file-based collaboration state
 - **`outputs/`**: Notebook output processing and storage optimization
@@ -75,12 +81,14 @@ jlpm lint:check
 - **`handlers.py`**: HTTP API endpoints
 
 ### Frontend Components
+
 - **`src/docprovider/`**: Document providers, awareness, and Y.js integration
 - **`src/notebook-factory/`**: Custom notebook model and factory for collaboration
 - **`src/codemirror-binding/`**: CodeMirror editor bindings for real-time editing
 - **`src/executionindicator.tsx`**: UI component showing execution awareness
 
 ### Key Patterns
+
 - Uses **Y.js/Yjs** for conflict-free replicated data types (CRDTs)
 - **WebSocket-based** real-time synchronization via `YRoomWebsocket`
 - **Output separation**: Large outputs stored separately from notebook documents
