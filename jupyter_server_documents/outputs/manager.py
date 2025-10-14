@@ -13,6 +13,18 @@ from traitlets import Dict, Instance, Int, default
 from jupyter_core.paths import jupyter_runtime_dir
 
 
+def _is_stream_output(output: dict) -> bool:
+    """Check if an output is a stream output.
+
+    Args:
+        output (dict): The output dictionary
+
+    Returns:
+        bool: True if the output is a stream output, False otherwise
+    """
+    return output.get("output_type") == "stream"
+
+
 class OutputsManager(LoggingConfigurable):
     _last_output_index = Dict(default_value={})
     _output_index_by_display_id = Dict(default_value={})
