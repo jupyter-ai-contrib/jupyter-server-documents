@@ -215,8 +215,9 @@ class OutputsManager(LoggingConfigurable):
         """Process a loaded notebook and handle outputs through the outputs manager.
 
         This method processes a notebook that has been loaded from disk.
-        If the notebook metadata has placeholder_outputs set to True, 
-        outputs are loaded from disk and set as the cell outputs.
+        If the notebook metadata has exclude_outputs set to True, 
+        outputs are loaded from this OutputsManager and set as the cell outputs
+        (as placeholders).
         
         Args:
             file_id (str): The file identifier
@@ -235,11 +236,11 @@ class OutputsManager(LoggingConfigurable):
         # upgrade all notebooks to 4.5 or later
         nb = nbformat.v4.upgrade(nb, from_version=nb.nbformat, from_minor=nb.nbformat_minor)
         
-        # Check if the notebook metadata has placeholder_outputs set to True
-        if nb.get('metadata', {}).get('placeholder_outputs') is True:
-            nb = self._process_loaded_placeholders(file_id=file_id, nb=nb)
+        # Check if the notebook metadata has exclude_outputs set to True
+        if nb.get('metadata', {}).get('exclude_outputs') is True:
+            nb = self._process_loaded_excluded_outputs(file_id=file_id, nb=nb)
         else:
-            nb = self._process_loaded_no_placeholders(file_id=file_id, nb=nb)           
+            nb = self._process_loaded_included_outputs(file_id=file_id, nb=nb)           
 
         file_data['content'] = nb
         return file_data
