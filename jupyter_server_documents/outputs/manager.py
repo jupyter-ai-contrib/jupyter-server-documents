@@ -343,35 +343,66 @@ class OutputsManager(LoggingConfigurable):
         """Process a notebook before saving to disk.
 
         This method is called when the yroom_file_api saves notebooks.
-        It sets the placeholder_outputs key to True in the notebook metadata
-        and clears the outputs array for each cell.
-        
+
+        The exclude_outputs metadata flag controls whether actual outputs are
+        included in the saved notebook file. To track the default behavior of
+        Jupyter we assume that it is not set at all. In this case, outputs are
+        saved in the notebook on disk (or if exclude_outputs is set to false)
+        and removed from the OutputsManager to ensure the saved file is the
+        source of truth for outputs.
+
+        If the user or frontend has set exclude_outputs to true, outputs are
+        removed from the file saved to disk and retained in OutputsManager.
+
         Args:
             nb (dict): The notebook dict
             file_id (str): The file identifier
-            
+
         Returns:
-            dict: The modified file data with placeholder_outputs set to True
-                  and empty outputs arrays
-        """        
+            dict: The modified notebook dict with outputs handled according to
+                  the exclude_outputs flag
+        """
         # Ensure metadata exists
         if 'metadata' not in nb:
             nb['metadata'] = {}
-        
-        # Set placeholder_outputs to True
-        nb['metadata']['placeholder_outputs'] = True
-        
-        # Clear outputs for all code cells, as they are saved to disk
-        for cell in nb.get('cells', []):
-            if cell.get('cell_type') == 'code':
-                # If outputs is already an empty list, call clear for this cell
-                if cell.get('outputs') == []:
+
+        # Check if we should exclude outputs from the saved file
+        exclude_outputs = nb.get('metadata', {}).get('exclude_outputs', False)
+
+        if exclude_outputs:
+            # Exclude outputs: clear outputs for all code cells
+            for cell in nb.get('cells', []):
+                if cell.get('cell_type') == 'code':
+                    # If outputs is already an empty list, call clear for this cell
+                    if cell.get('outputs') == []:
+                        cell_id = cell.get('id')
+                        if cell_id:
+                            self.clear(file_id, cell_id)
+
+                    cell['outputs'] = []
+        else:
+            # Include outputs: restore actual outputs from disk for all code cells
+            for cell in nb.get('cells', []):
+                if cell.get('cell_type') == 'code':
                     cell_id = cell.get('id')
                     if cell_id:
-                        self.clear(file_id, cell_id)
-                
-                cell['outputs'] = []
-        
+                        try:
+                            # Get outputs from disk
+                            output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
+                            # Parse JSON strings into dictionaries
+                            outputs = [json.loads(output_string) for output_string in output_strings]
+                            # Set the cell's outputs to the actual outputs
+                            cell['outputs'] = outputs
+                            # Delete the outputs in OutputsManager, notebook on disk is the source of truth
+                            self.clear(file_id=file_id, cell_id=cell_id)
+                        except FileNotFoundError:
+                            # No outputs on disk for this cell, set empty outputs to remove placeholders
+                            cell['outputs'] = []
+                    else:
+                        # To be safe, create cell ID if one doesn't exist and clear outputs to remove placeholders
+                        cell['id'] = str(uuid.uuid4())
+                        cell['outputs'] = []
+
         return nb
 
 
