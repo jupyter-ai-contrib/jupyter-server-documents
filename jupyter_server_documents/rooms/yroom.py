@@ -307,6 +307,9 @@ class YRoom(LoggingConfigurable):
         `awareness.unobserve(self._awareness_subscription)`.
         """
         self._awareness = pycrdt.Awareness(ydoc=ydoc)
+        if self.room_id != "JupyterLab:globalAwareness":
+            file_format, file_type, file_id = self.room_id.split(":")
+            self._awareness.set_local_state_field("file_id", file_id)
         self._awareness_subscription = self._awareness.observe(
             self._on_awareness_update
         )
@@ -337,7 +340,6 @@ class YRoom(LoggingConfigurable):
         self._jupyter_ydoc = JupyterYDocClass(ydoc=ydoc, awareness=awareness)
         self._jupyter_ydoc.observe(self._on_jupyter_ydoc_update)
         return self._jupyter_ydoc
-
 
     @property
     def clients(self) -> YjsClientGroup:
