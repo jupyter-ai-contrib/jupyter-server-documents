@@ -447,6 +447,10 @@ def create_placeholder_dict(output_type: str, url: str, full: bool = False) -> d
                 "text/html": f'<a href="{url}">Click this link to see the full stream output</a>'
             },
         }
+    # These placeholders lack the full proper structure of the nbformat spec, but they are 
+    # allowed. We do this to keep the ydoc as small as possible. We should follow up
+    # and make changes to nbformat to clarify what the minimal output is (basically metadata
+    # only)
     if output_type == "stream":
         return {"output_type": "stream", "text": "", "metadata": metadata}
     elif output_type == "display_data":
