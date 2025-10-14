@@ -32,7 +32,7 @@ class OutputsManager(LoggingConfigurable):
     _stream_count = Dict(default_value={})
 
     outputs_path = Instance(PurePath, help="The local runtime dir")
-    stream_limit = Int(default_value=200, config=True, allow_none=True)
+    stream_limit = Int(default_value=500, config=True, allow_none=True)
 
     @default("outputs_path")
     def _default_outputs_path(self):
