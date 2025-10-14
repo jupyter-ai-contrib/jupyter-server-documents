@@ -64,7 +64,7 @@ class OutputsManager(LoggingConfigurable):
         last_index = self._last_output_index.get(cell_id, -1)
         if display_id:
             if cell_id not in self._display_ids_by_cell_id:
-                self._display_ids_by_cell_id[cell_id] = set([display_id])
+                self._display_ids_by_cell_id[cell_id] = {display_id}
             else:
                 self._display_ids_by_cell_id[cell_id].add(display_id)
             index = self._output_index_by_display_id.get(display_id)
