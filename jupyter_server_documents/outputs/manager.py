@@ -123,7 +123,21 @@ class OutputsManager(LoggingConfigurable):
         with open(path, "r", encoding="utf-8") as f:
             output = f.read()
         return output
-    
+
+    def _append_to_stream_file(self, file_id, cell_id, output):
+        """Append stream text to the /stream file.
+
+        Args:
+            file_id (str): The file identifier
+            cell_id (str): The cell identifier
+            output (dict): The stream output dictionary
+        """
+        self._ensure_path(file_id, cell_id)
+        path = self._build_path(file_id, cell_id) / "stream"
+        text = output["text"]
+        with open(path, "a", encoding="utf-8") as f:
+            f.write(text)
+
     def write(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         """Write a new output for file_id and cell_id.
 
