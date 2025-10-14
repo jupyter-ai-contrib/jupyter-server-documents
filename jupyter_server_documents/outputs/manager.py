@@ -392,8 +392,6 @@ class OutputsManager(LoggingConfigurable):
                             outputs = [json.loads(output_string) for output_string in output_strings]
                             # Set the cell's outputs to the actual outputs
                             cell['outputs'] = outputs
-                            # Delete the outputs in OutputsManager, notebook on disk is the source of truth
-                            self.clear(file_id=file_id, cell_id=cell_id)
                         except FileNotFoundError:
                             # No outputs on disk for this cell, set empty outputs to remove placeholders
                             cell['outputs'] = []
