@@ -380,10 +380,15 @@ NotebookActions.outputCleared.connect((sender, args) => {
       method: 'DELETE'
     })
       .then(() => {
-        console.debug(`Successfully cleared outputs from disk for cell ${cellId}`);
+        console.debug(
+          `Successfully cleared outputs from disk for cell ${cellId}`
+        );
       })
       .catch((error: Error) => {
-        console.error(`Failed to clear outputs from disk for cell ${cellId}:`, error);
+        console.error(
+          `Failed to clear outputs from disk for cell ${cellId}:`,
+          error
+        );
       });
   } catch (error: unknown) {
     console.error('Error in disk output clearing process:', error);
