@@ -141,13 +141,42 @@ class OutputsManager(LoggingConfigurable):
     def write(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         """Write a new output for file_id and cell_id.
 
+        For stream outputs with stream_limit enabled:
+        - Streams below limit: written to *.output file and /stream file
+        - Stream at limit: link placeholder written to *.output file, text to /stream file
+        - Streams beyond limit: only written to /stream file (no *.output file)
+
         Returns a placeholder output (pycrdt.Map) or None if no placeholder
         output should be written to the ydoc.
         """
-        placeholder = self.write_output(file_id, cell_id, output, display_id, asdict=asdict)
-        if output["output_type"] == "stream" and self.stream_limit is not None:
-            placeholder = self.write_stream(file_id, cell_id, output, placeholder, asdict=asdict)
-        return placeholder
+        # Handle stream outputs with stream_limit enabled
+        if _is_stream_output(output) and self.stream_limit is not None:
+            # Determine what the count will be after this stream
+            count = self._stream_count.get(cell_id, 0) + 1
+
+            # Always append to the /stream file
+            self._append_to_stream_file(file_id, cell_id, output)
+
+            # Update the count
+            self._stream_count[cell_id] = count
+
+            if count < self.stream_limit:
+                # Below limit: write stream output to *.output file normally
+                placeholder = self.write_output(file_id, cell_id, output, display_id=display_id, asdict=asdict)
+                return placeholder
+            elif count == self.stream_limit:
+                # At limit: write link placeholder to *.output file instead of stream
+                url = create_output_url(file_id, cell_id)
+                link_output = create_placeholder_dict("display_data", url, full=True)
+                placeholder = self.write_output(file_id, cell_id, link_output, asdict=asdict)
+                return placeholder
+            else:
+                # Beyond limit: only append to /stream (already done), no *.output file
+                return None
+        else:
+            # Non-stream output or no limit: write normally
+            placeholder = self.write_output(file_id, cell_id, output, display_id, asdict=asdict)
+            return placeholder
 
     def write_output(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         self._ensure_path(file_id, cell_id)
@@ -161,36 +190,6 @@ class OutputsManager(LoggingConfigurable):
         placeholder = create_placeholder_dict(output["output_type"], url)
         if not asdict:
             placeholder = Map(placeholder)
-        return placeholder
-    
-    def write_stream(self, file_id, cell_id, output, placeholder, asdict : bool = False) -> Map | dict:
-        # How many stream outputs have been written for this cell previously
-        count = self._stream_count.get(cell_id, 0)
-
-        # Go ahead and write the incoming stream
-        self._ensure_path(file_id, cell_id)
-        path = self._build_path(file_id, cell_id) / "stream"
-        text = output["text"]
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(text)
-        url = create_output_url(file_id, cell_id)
-        self.log.info(f"Wrote stream: {url}")
-        # Increment the count
-        count = count + 1
-        self._stream_count[cell_id] = count
-
-        # Now create the placeholder output
-        if count < self.stream_limit:
-            # Return the original placeholder if we haven't reached the limit
-            placeholder = placeholder
-        elif count == self.stream_limit:
-            # Return a link to the full stream output
-            placeholder = create_placeholder_dict("display_data", url, full=True)
-            if not asdict:
-                placeholder = Map(placeholder)
-        elif count > self.stream_limit:
-            # Return None to indicate that no placeholder should be written to the ydoc
-            placeholder = None
         return placeholder
 
     def clear(self, file_id, cell_id=None):
