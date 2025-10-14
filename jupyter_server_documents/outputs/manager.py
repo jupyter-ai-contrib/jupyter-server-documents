@@ -245,11 +245,12 @@ class OutputsManager(LoggingConfigurable):
         file_data['content'] = nb
         return file_data
 
-    def _process_loaded_placeholders(self, file_id: str, nb: dict) -> dict:
-        """Process a notebook with placeholder_outputs metadata set to True.
+    def _process_loaded_excluded_outputs(self, file_id: str, nb: dict) -> dict:
+        """Process a notebook with excluded_outputs metadata set to True.
         
-        This method processes notebooks that have been saved with placeholder outputs.
-        It attempts to load actual outputs from disk and creates placeholder outputs
+        This method processes notebooks that have been saved with no outputs on disk.
+        In this case, the OutputsManager store the outputs by cell_id and this method
+        attempts to load actual outputs from OutputsManager and creates placeholder outputs
         for each code cell. If no outputs exist on disk for a cell, the cell's
         outputs are set to an empty list.
         
@@ -258,7 +259,7 @@ class OutputsManager(LoggingConfigurable):
             nb (dict): The notebook dictionary
             
         Returns:
-            dict: The notebook with placeholder outputs loaded from disk
+            dict: The notebook with placeholder outputs inserted from OutputsManager
         """
         for cell in nb.get('cells', []):
             # Ensure all cells have IDs regardless of type
@@ -284,11 +285,11 @@ class OutputsManager(LoggingConfigurable):
                     cell['outputs'] = []
         return nb
 
-    def _process_loaded_no_placeholders(self, file_id: str, nb: dict) -> dict:
-        """Process a notebook that doesn't have placeholder_outputs metadata.
+    def _process_loaded_included_outputs(self, file_id: str, nb: dict) -> dict:
+        """Process a notebook that has outputs on disk.
         
         This method processes notebooks with actual output data in the cells.
-        It saves existing outputs to disk and replaces them with placeholder
+        It saves existing outputs to OutputsManager and replaces them with placeholder
         outputs that reference the saved files. Outputs that already have
         a URL in their metadata are left as-is.
         
@@ -297,7 +298,7 @@ class OutputsManager(LoggingConfigurable):
             nb (dict): The notebook dictionary
             
         Returns:
-            dict: The notebook with outputs saved to disk and replaced with placeholders
+            dict: The notebook with outputs saved to OutputsManager and replaced with placeholders
         """
         for cell in nb.get('cells', []):
             # Ensure all cells have IDs regardless of type
