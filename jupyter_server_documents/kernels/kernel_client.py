@@ -102,14 +102,14 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     def handle_incoming_message(self, channel_name: str, msg: list[bytes]):
         """
         Handle incoming kernel messages and set up immediate cell execution state tracking.
-        
+
         This method processes incoming kernel messages and caches them for response mapping.
         Importantly, it detects execute_request messages and immediately sets the corresponding
         cell state to 'busy' to provide real-time feedback for queued cell executions.
-        
+
         This ensures that when multiple cells are executed simultaneously, all queued cells
         show a '*' prompt immediately, not just the currently executing cell.
-        
+
         Args:
             channel_name: The kernel channel name (shell, iopub, etc.)
             msg: The raw kernel message as bytes
@@ -119,32 +119,35 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # source channel.
         header = self.session.unpack(msg[0])
         msg_id = header["msg_id"]
-        msg_type = header.get("msg_type")                
+        msg_type = header.get("msg_type")
         metadata = self.session.unpack(msg[2])
         cell_id = metadata.get("cellId")
-        
+
         # Clear cell outputs if cell is re-executed
         if cell_id:
             existing = self.message_cache.get(cell_id=cell_id)
             if existing and existing['msg_id'] != msg_id:
                 asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
-        
+
         # IMPORTANT: Set cell to 'busy' immediately when execute_request is received
         # This ensures queued cells show '*' prompt even before kernel starts processing them
         if msg_type == "execute_request" and channel_name == "shell" and cell_id:
             for yroom in self._yrooms:
                 yroom.set_cell_awareness_state(cell_id, "busy")
-        
+
         self.message_cache.add({
             "msg_id": msg_id,
             "channel": channel_name,
             "cell_id": cell_id
         })
         channel = getattr(self, f"{channel_name}_channel")
+        if channel.socket is None:
+            self.log.error(f"Channel {channel_name} socket is None! Cannot send message. Channel alive: {channel.is_alive()}")
+            raise AttributeError(f"Channel {channel_name} socket is None")
         channel.session.send_raw(channel.socket, msg)
 
     def send_kernel_info(self):
-        """Sends a kernel info message on the shell channel. Useful 
+        """Sends a kernel info message on the shell channel. Useful
         for determining if the kernel is busy or idle.
         """
         msg = self.session.msg("kernel_info_request")
@@ -240,10 +243,16 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         except Exception as e:
             self.log.error(f"Error deserializing message: {e}")
             raise
-        
-        parent_msg_id = dmsg["parent_header"]["msg_id"]
-        parent_msg_data = self.message_cache.get(parent_msg_id)
-        cell_id = parent_msg_data.get('cell_id')
+
+        # Safely get parent message ID and data
+        parent_header = dmsg.get("parent_header", {})
+        parent_msg_id = parent_header.get("msg_id")
+
+        # Get parent message data from cache (may be None if not found)
+        parent_msg_data = self.message_cache.get(parent_msg_id) if parent_msg_id else None
+
+        # Safely extract cell_id
+        cell_id = parent_msg_data.get('cell_id') if parent_msg_data else None
 
         # Handle different message types using pattern matching
         match dmsg["msg_type"]:
