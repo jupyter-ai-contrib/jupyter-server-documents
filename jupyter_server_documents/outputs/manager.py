@@ -92,28 +92,26 @@ class OutputsManager(LoggingConfigurable):
         return output
 
     def get_outputs(self, file_id, cell_id):
-        """Get all outputs by file_id, cell_id."""
+        """Get all outputs by file_id, cell_id.
+
+        Returns all output files from disk in index order. The stream_limit logic
+        is handled during write operations, so this method simply returns what's on disk.
+
+        Returns:
+            list[str]: List of JSON-serialized output dictionaries in index order.
+        """
         path = self._build_path(file_id, cell_id)
         if not os.path.isdir(path):
             raise FileNotFoundError(f"The output dir doesn't exist: {path}")
 
-        outputs = []
-
         output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
         output_files.sort(key=lambda x: x[1])
-        output_files = output_files[: self.stream_limit]
-        has_more_files = len(output_files) >= self.stream_limit
 
         outputs = []
         for file_path, _ in output_files:
             with open(file_path, "r", encoding="utf-8") as f:
                 output = f.read()
                 outputs.append(output)
-
-        if has_more_files:
-            url = create_output_url(file_id, cell_id)
-            placeholder = create_placeholder_dict("display_data", url, full=True)
-            outputs.append(json.dumps(placeholder))
 
         return outputs
 
