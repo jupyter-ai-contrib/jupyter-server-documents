@@ -83,16 +83,19 @@ npm = ["jlpm"]
 source_dir = "src"
 build_dir = "jupyter_server_documents/labextension"
 
+[tool.jupyter-releaser]
+skip = ["build-npm", "check-npm"]
+
 [tool.jupyter-releaser.options]
 version_cmd = "hatch version"
 
 [tool.jupyter-releaser.hooks]
-before-build-npm = [
+before-build-python = [
     "python -m pip install 'jupyterlab>=4.0.0,<5'",
     "jlpm",
     "jlpm build:prod",
+    "jlpm clean:all"
 ]
-before-build-python = ["jlpm clean:all"]
 
 [tool.check-wheel-contents]
 ignore = ["W002"]
