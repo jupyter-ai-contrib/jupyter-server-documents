@@ -21,6 +21,7 @@ import { JupyterFrontEnd } from '@jupyterlab/application';
 import { DocumentWidget } from '@jupyterlab/docregistry';
 import { FileEditor } from '@jupyterlab/fileeditor';
 import { Notebook } from '@jupyterlab/notebook';
+import { ChatWidget } from '@jupyter/chat';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -87,9 +88,15 @@ export class WebSocketProvider implements IDocumentProvider {
         continue;
       }
 
-      // Skip widgets that don't contain a YFile / YNotebook
+      // Skip widgets that don't contain a YFile / YNotebook / YChat
       const widget = docWidget.content;
-      if (!(widget instanceof FileEditor || widget instanceof Notebook)) {
+      if (
+        !(
+          widget instanceof FileEditor ||
+          widget instanceof Notebook ||
+          widget instanceof ChatWidget
+        )
+      ) {
         continue;
       }
 

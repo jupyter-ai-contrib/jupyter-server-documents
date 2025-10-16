@@ -3,6 +3,7 @@ import {
   YNotebook as DefaultYNotebook,
   ISharedNotebook
 } from '@jupyter/ydoc';
+import { YChat as DefaultYChat } from 'jupyterlab-chat';
 import * as Y from 'yjs';
 import { Awareness } from 'y-protocols/awareness';
 import { ISignal, Signal } from '@lumino/signaling';
@@ -103,6 +104,52 @@ export class YNotebook extends DefaultYNotebook {
     this._ycells.observe((this as any)._onYCellsChanged);
     this.ymeta.observeDeep((this as any)._onMetaChanged);
     (this as any)._ystate.observe(this.onStateChanged);
+  }
+
+  /**
+   * See `YFile.resetSignal`.
+   */
+  get resetSignal(): ISignal<this, null> {
+    return this._resetSignal;
+  }
+
+  _resetSignal: Signal<this, null>;
+}
+
+export class YChat extends DefaultYChat {
+  constructor() {
+    super();
+    this._resetSignal = new Signal(this);
+  }
+
+  /**
+   * See `YFile.reset()`.
+   */
+  reset() {
+    // Remove default observers
+    (this as any)._users.unobserve((this as any)._usersObserver);
+    (this as any)._messages.unobserve((this as any)._messagesObserver);
+    (this as any)._attachments.unobserve((this as any)._attachmentsObserver);
+    (this as any)._metadata.unobserve((this as any)._metadataObserver);
+
+    // Reset `this._ydoc` to an empty state
+    (this as any)._ydoc = new Y.Doc();
+
+    // Reset all properties derived from `this._ydoc`
+    (this as any)._users = this.ydoc.getMap('users');
+    (this as any)._messages = this.ydoc.getArray('messages');
+    (this as any)._attachments = this.ydoc.getMap('attachments');
+    (this as any)._metadata = this.ydoc.getMap('metadata');
+    (this as any)._awareness = new Awareness(this.ydoc);
+
+    // Emit to `this.resetSignal` to inform consumers immediately
+    this._resetSignal.emit(null);
+
+    // Add back default observers
+    (this as any)._users.observe((this as any)._usersObserver);
+    (this as any)._messages.observe((this as any)._messagesObserver);
+    (this as any)._attachments.observe((this as any)._attachmentsObserver);
+    (this as any)._metadata.observe((this as any)._metadataObserver);
   }
 
   /**
