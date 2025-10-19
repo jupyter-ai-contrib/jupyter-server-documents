@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import asyncio
+import time
 from datetime import datetime
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_server.utils import ensure_async
@@ -17,24 +18,54 @@ if TYPE_CHECKING:
     from ..outputs.manager import OutputsManager
 
 class YRoomFileAPI(LoggingConfigurable):
-    """
-    Provides an API to 1 file from Jupyter Server's ContentsManager for a YRoom.
-    This class takes only a single argument: `parent: YRoom`.
+    """Provides an API to interact with a single file for a YRoom.
 
-    - To load the content, consumers call `load_content_into()` with a
-    JupyterYDoc. This also starts the `_watch_file()` loop.
+    This class manages the lifecycle of a file in the context of real-time collaboration,
+    handling:
+    - Loading file content from Jupyter Server's ContentsManager into a YDoc
+    - Saving YDoc changes back to the filesystem with adaptive timing
+    - Detecting and responding to in-band and out-of-band file changes
+    - Managing notebook outputs through the OutputsManager
 
-    - Consumers should `await file_api.until_content_loaded` before performing
-    any operations on the YDoc.
+    Usage:
+        1. Create instance with parent YRoom: `file_api = YRoomFileAPI(parent=yroom)`
+        2. Load content: `file_api.load_content_into(jupyter_ydoc)`
+        3. Wait for loading: `await file_api.until_content_loaded`
+        4. Schedule saves: `file_api.schedule_save()` (saves happen automatically)
+        5. Stop gracefully: `file_api.stop()`
 
-    - To save a JupyterYDoc to the file, call
-    `file_api.schedule_save(jupyter_ydoc)` after calling `load_content_into()`.
+    The class uses adaptive timing to optimize save intervals based on save duration,
+    preventing performance degradation with large files while maintaining responsiveness
+    for small files.
+
+    Attributes:
+        parent: The parent YRoom instance (set by LoggingConfigurable).
+        file_format: The format of the file ('text' or 'base64').
+        file_type: The type of the file ('file' or 'notebook').
+        file_id: The unique identifier for this file.
     """
 
     poll_interval = Float(
         default_value=0.5,
-        help="Sets how frequently this class saves the YDoc & checks the file "
-        "for changes. Defaults to every 0.5 seconds.",
+        help="Sets the initial interval for saving the YDoc & checking the file "
+        "for changes. This serves as the starting value before adaptive timing "
+        "takes effect. Defaults to 0.5 seconds.",
+        config=True,
+    )
+
+    min_poll_interval = Float(
+        default_value=0.5,
+        help="Minimum autosave interval in seconds. The adaptive timing will "
+        "never go below this value. Defaults to 0.5 seconds.",
+        config=True,
+    )
+
+    poll_interval_multiplier = Float(
+        default_value=5.0,
+        help="Multiplier applied to save duration to calculate the next poll "
+        "interval. For example, if a save takes 1 second and the multiplier is "
+        "5.0, the next poll interval will be 5 seconds (bounded by min/max). "
+        "Defaults to 5.0.",
         config=True,
     )
 
@@ -95,7 +126,28 @@ class YRoomFileAPI(LoggingConfigurable):
     dual-writes or dirty-reads.
     """
 
+    _last_save_duration: float | None
+    """
+    The duration in seconds of the last save operation. Used to calculate the
+    adaptive poll interval.
+    """
+
+    _adaptive_poll_interval: float
+    """
+    The current adaptive poll interval in seconds, calculated based on the last
+    save duration and bounded by min_poll_interval and max_poll_interval.
+    """
+
     def __init__(self, *args, **kwargs):
+        """Initialize the YRoomFileAPI instance.
+
+        Parses the room_id to extract file format, type, and ID, then initializes
+        internal state for content loading, saving, and adaptive timing.
+
+        Args:
+            *args: Positional arguments forwarded to LoggingConfigurable.
+            **kwargs: Keyword arguments forwarded to LoggingConfigurable.
+        """
         # Forward all arguments to parent class
         super().__init__(*args, **kwargs)
 
@@ -111,79 +163,132 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_load_event = asyncio.Event()
         self._content_lock = asyncio.Lock()
 
+        # Initialize adaptive timing attributes
+        self._last_save_duration = None
+        self._adaptive_poll_interval = self.poll_interval
+
 
     def get_path(self) -> str | None:
-        """
-        Returns the relative path to the file by querying the FileIdManager. The
-        path is relative to the `ServerApp.root_dir` configurable trait.
+        """Get the current filesystem path for this file.
 
-        Raises a `RuntimeError` if the file ID does not refer to a valid file
-        path.
+        Queries the FileIdManager to resolve the file_id to its current path.
+        The path is relative to ServerApp.root_dir.
+
+        Returns:
+            The relative path to the file, or None if the file no longer exists.
+
+        Raises:
+            RuntimeError: If the file ID does not refer to a valid file path.
         """
         return self.fileid_manager.get_path(self.file_id)
-    
+
     @property
     def room_id(self) -> str:
+        """Get the room identifier from the parent YRoom.
+
+        Returns:
+            The room ID string in the format 'format:type:file_id'.
+        """
         return self.parent.room_id
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:
-        """
-        Returns the Jupyter Server's File ID Manager.
+        """Get the Jupyter Server's File ID Manager from the parent.
+
+        Returns:
+            The BaseFileIdManager instance for resolving file IDs to paths.
         """
         return self.parent.fileid_manager
-    
+
     @property
     def contents_manager(self) -> ContentsManager:
-        """
-        Stores a reference to the Jupyter Server's ContentsManager.
+        """Get the Jupyter Server's ContentsManager from the parent.
 
-        NOTE: any calls made on this attribute should acquire & release the
-        `_content_lock`. See `_content_lock` for more info.
+        Note:
+            Any calls to methods on this manager should acquire and release
+            the _content_lock to prevent concurrent read/write operations
+            that could corrupt the file.
+
+        Returns:
+            The ContentsManager instance for file I/O operations.
         """
         return self.parent.contents_manager
 
     @property
     def outputs_manager(self) -> OutputsManager:
+        """Get the OutputsManager from the parent.
+
+        Returns:
+            The OutputsManager instance for handling notebook outputs.
+        """
         return self.parent.outputs_manager
 
     @property
     def content_loaded(self) -> bool:
-        """
-        Immediately returns whether the YDoc content is loaded.
+        """Check if the YDoc content has finished loading.
 
-        To have a coroutine wait until the content is loaded, call `await
-        file_api.until_content_loaded` instead.
+        Returns:
+            True if content is loaded, False otherwise.
+
+        Note:
+            To wait asynchronously for content to load, use
+            `await file_api.until_content_loaded` instead.
         """
         return self._content_load_event.is_set()
 
 
     @property
     def until_content_loaded(self) -> Coroutine[Any, Any, Literal[True]]:
-        """
-        Returns an awaitable that resolves when the content is loaded.
+        """Get an awaitable that resolves when content finishes loading.
+
+        Returns:
+            A coroutine that can be awaited to block until content is loaded.
+
+        Example:
+            await file_api.until_content_loaded
+            # Content is now loaded and safe to use
         """
         return self._content_load_event.wait()
 
 
     def load_content_into(self, jupyter_ydoc: YBaseDoc) -> None:
-        """
-        Loads the file content into the given JupyterYDoc.
-        Consumers should `await file_api.ydoc_content_loaded` before performing
-        any operations on the YDoc.
+        """Load file content into the given JupyterYDoc.
 
-        This method starts the `_watch_file()` task after the content is loaded.
+        This method initiates asynchronous loading of the file content from disk
+        into the provided YDoc. It is idempotent - calling it multiple times has
+        no effect if loading is already in progress or complete.
+
+        After calling this method, consumers should `await file_api.until_content_loaded`
+        before performing operations on the YDoc.
+
+        The method automatically starts the _watch_file() background task after
+        content loading completes.
+
+        Args:
+            jupyter_ydoc: The YBaseDoc instance to load content into.
         """
         # If already loaded/loading, return immediately.
         # Otherwise, set loading to `True` and start the loading task.
         if self._content_load_event.is_set() or self._content_loading:
             return
-        
+
         self._content_loading = True
         asyncio.create_task(self._load_content(jupyter_ydoc))
 
-    
+
     async def _load_content(self, jupyter_ydoc: YBaseDoc) -> None:
+        """Internal method to load file content asynchronously.
+
+        Resolves the file path, loads content from ContentsManager, processes
+        notebook outputs if applicable, and initializes the YDoc. Finally,
+        starts the _watch_file() background task.
+
+        Args:
+            jupyter_ydoc: The YBaseDoc instance to load content into.
+
+        Raises:
+            RuntimeError: If the file path cannot be resolved from the file_id.
+        """
         # Get the path specified on the file ID
         path = self.get_path()
         if not path:
@@ -224,29 +329,45 @@ class YRoomFileAPI(LoggingConfigurable):
 
 
     def schedule_save(self) -> None:
-        """
-        Schedules a save of the Jupyter YDoc to disk. When called, the Jupyter
-        YDoc will be saved on the next tick of the `self._watch_file()`
-        background task.
+        """Schedule a save of the YDoc to disk.
+
+        Sets a flag that causes the _watch_file() background task to save
+        the YDoc on its next iteration. This is the preferred way to save
+        changes during normal operation.
+
+        Note:
+            The actual save happens asynchronously in the _watch_file() loop.
+            Multiple calls to schedule_save() before the save executes will
+            result in only a single save operation.
         """
         self._save_scheduled = True
     
     async def _watch_file(self, jupyter_ydoc: YBaseDoc) -> None:
-        """
-        Defines a background task that processes scheduled saves to the YDoc
-        on an interval, checking for in-band & out-of-band changes before doing
-        so.
+        """Background task that monitors the file and processes scheduled saves.
 
-        - The interval duration is set by the `self.poll_interval` configurable
-        trait, which defaults to saving & checking every 0.5 seconds.
+        This task runs continuously, performing the following on each iteration:
+        1. Sleep for the adaptive poll interval
+        2. Check for in-band and out-of-band file changes
+        3. Save the YDoc if a save has been scheduled
 
-        - This task is started by a call to `load_ydoc_content()`. Consumers
-        must call `self.schedule_save()` for the next tick of this task to save.
+        The poll interval adapts based on save duration to optimize performance:
+        - Fast saves → shorter intervals (more responsive)
+        - Slow saves → longer intervals (less overhead)
+
+        The task is automatically started by _load_content() and runs until
+        explicitly cancelled via stop().
+
+        Args:
+            jupyter_ydoc: The YBaseDoc instance being monitored and saved.
+
+        Note:
+            Saves are protected by asyncio.shield() to prevent corruption
+            from cancellation during write operations.
         """
 
         while True:
             try:
-                await asyncio.sleep(self.poll_interval)
+                await asyncio.sleep(self._adaptive_poll_interval)
                 await self._check_file()
                 if self._save_scheduled:
                     # `asyncio.shield()` prevents the save task from being
@@ -272,16 +393,22 @@ class YRoomFileAPI(LoggingConfigurable):
         )
 
     async def _check_file(self):
-        """
-        Checks for in-band/out-of-band file operations in the
-        `self._watch_file()` background task. This is guaranteed to always run
-        before each save in `self._watch_file()` This detects the following
-        events and acts in response:
+        """Check for file changes and handle in-band/out-of-band operations.
 
-        - In-band move: logs warning (no handling needed)
-        - In-band deletion: calls `self.parent.handle_inband_deletion()`
-        - Out-of-band move/deletion: calls `self.parent.handle_outofband_move()`
-        - Out-of-band change: calls `self.parent.handle_outofband_change()`
+        This method is called before each save in the _watch_file() loop to detect
+        and respond to file system changes. It distinguishes between:
+
+        In-band operations (via ContentsManager):
+        - Move: Detected via FileIdManager, logged as warning
+        - Deletion: Detected via FileIdManager, calls parent.handle_inband_deletion()
+
+        Out-of-band operations (external to Jupyter):
+        - Move/deletion: Detected via 404 from ContentsManager, calls parent.handle_outofband_move()
+        - Modification: Detected via last_modified timestamp, calls parent.handle_outofband_change()
+
+        Raises:
+            RuntimeError: If _last_path is not set (should never happen).
+            HTTPError: If ContentsManager returns unexpected error (non-404).
         """
         # Ensure that the last known path is defined. This should always be set
         # by `load_ydoc_content()`.
@@ -352,17 +479,31 @@ class YRoomFileAPI(LoggingConfigurable):
             )
             self.parent.handle_outofband_change()
 
-    
-    async def save(self, jupyter_ydoc: YBaseDoc):
-        """
-        Saves the given JupyterYDoc to disk. This method works even if the
-        FileAPI is stopped.
 
-        This method should only be called by consumers if the YDoc needs to be
-        saved while the FileAPI is stopped, e.g. when the parent room is
-        stopping. In all other cases, consumers should call `schedule_save()`
-        instead.
+    async def save(self, jupyter_ydoc: YBaseDoc):
+        """Save the JupyterYDoc to disk immediately.
+
+        This method performs a synchronous save operation, writing the YDoc
+        content to the filesystem via ContentsManager. It also:
+        - Processes notebook outputs through OutputsManager if applicable
+        - Updates the last_modified timestamp
+        - Clears the dirty flag on the YDoc
+        - Calculates and updates the adaptive poll interval
+
+        The method works even when the FileAPI is stopped, making it useful
+        for final saves during shutdown.
+
+        Args:
+            jupyter_ydoc: The YBaseDoc instance to save.
+
+        Note:
+            In normal operation, consumers should use schedule_save() instead.
+            Only call this directly when you need an immediate save while the
+            FileAPI is stopped (e.g., during room shutdown).
         """
+        # Record start time for adaptive timing
+        start_time = time.perf_counter()
+
         try:
             # Build arguments to `CM.save()`
             path = self.get_path()
@@ -397,18 +538,41 @@ class YRoomFileAPI(LoggingConfigurable):
             # Set `dirty` to `False` to hide the "unsaved changes" icon in the
             # JupyterLab tab for this YDoc in the frontend.
             jupyter_ydoc.dirty = False
+
+            # Calculate save duration and update adaptive poll interval
+            save_duration = time.perf_counter() - start_time
+            self._last_save_duration = save_duration
+
+            # Calculate new adaptive interval
+            old_interval = self._adaptive_poll_interval
+            new_interval = save_duration * self.poll_interval_multiplier
+            self._adaptive_poll_interval = max(
+                self.min_poll_interval, new_interval
+            )
+
+            self.log.debug(
+                f"Save completed for '{self.room_id}': "
+                f"duration={save_duration:.3f}s, "
+                f"old_interval={old_interval:.3f}s, "
+                f"new_interval={new_interval:.3f}s, "
+                f"adaptive_interval={self._adaptive_poll_interval:.3f}s"
+            )
+
         except Exception as e:
             self.log.error("An exception occurred when saving JupyterYDoc.")
             self.log.exception(e)
     
 
     def stop(self) -> None:
-        """
-        Gracefully stops the `YRoomFileAPI`. This immediately halts the
-        background task saving the YDoc to the `ContentsManager`.
+        """Stop the FileAPI gracefully.
 
-        To save the YDoc after stopping, call `await
-        file_api.save_immediately()` after calling this method.
+        Cancels the _watch_file() background task, immediately halting
+        automatic saves. The FileAPI can still perform manual saves via
+        the save() method after stopping.
+
+        Note:
+            To save pending changes after stopping, call `await file_api.save(jupyter_ydoc)`
+            before the FileAPI is destroyed.
         """
         if self._watch_file_task:
             self._watch_file_task.cancel()
@@ -416,18 +580,23 @@ class YRoomFileAPI(LoggingConfigurable):
 
     @property
     def stopped(self) -> bool:
-        """
-        Returns whether the FileAPI has been stopped via the `stop()` method.
+        """Check if the FileAPI has been stopped.
+
+        Returns:
+            True if stop() has been called, False otherwise.
         """
         return self._stopped
 
     def restart(self) -> None:
-        """
-        Restarts the instance by stopping if the room is not stopped, then
-        clearing its internal state.
+        """Restart the FileAPI by resetting internal state.
 
-        Consumers should call `load_content_into()` again after this method to
-        restart the `_watch_file()` task.
+        This method stops the FileAPI if running, then clears all state
+        including content loading status, save scheduling, file metadata,
+        and adaptive timing. After calling this, consumers must call
+        load_content_into() again to resume normal operation.
+
+        Note:
+            Any pending saves are discarded when restarting.
         """
         # Stop if not stopped already
         if not self.stopped:
@@ -440,8 +609,20 @@ class YRoomFileAPI(LoggingConfigurable):
         self._save_scheduled = False
         self._last_modified = None
         self._last_path = None
+
+        # Reset adaptive timing attributes
+        self._last_save_duration = None
+        self._adaptive_poll_interval = self.poll_interval
+
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
 
-    
-# see https://github.com/jupyterlab/jupyter-collaboration/blob/main/projects/jupyter-server-ydoc/jupyter_server_ydoc/loaders.py#L146-L149
-SAVEABLE_FILE_TYPES = { "directory", "file", "notebook" }
+
+
+# File types that can be saved via ContentsManager
+# See: https://github.com/jupyterlab/jupyter-collaboration/blob/main/projects/jupyter-server-ydoc/jupyter_server_ydoc/loaders.py#L146-L149
+SAVEABLE_FILE_TYPES = {"directory", "file", "notebook"}
+"""Set of file types that ContentsManager.save() accepts.
+
+These types are recognized by Jupyter Server's ContentsManager for save operations.
+Other types should be treated as generic 'file' type when saving.
+"""
