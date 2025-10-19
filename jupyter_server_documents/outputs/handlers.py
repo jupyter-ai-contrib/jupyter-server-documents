@@ -86,5 +86,7 @@ _output_index_regex = r"(?P<output_index>0|[1-9]\d*)"
 
 outputs_handlers = [
     (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}(?:/{_output_index_regex}.output)?", OutputsAPIHandler),
-    (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
+    # We have disabled this for now as OptimizedOutputsManager is experimental.
+    # Uncomment this to use OptimizedOutputsManager.
+    # (rf"/api/outputs/{_file_id_regex}/{_cell_id_regex}/stream", StreamAPIHandler),
 ]

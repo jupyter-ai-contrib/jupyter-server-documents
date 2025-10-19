@@ -8,58 +8,142 @@ from pycrdt import Map
 import nbformat
 
 from traitlets.config import LoggingConfigurable
-from traitlets import Dict, Instance, Int, default
+from traitlets import Dict, Instance, default
 
 from jupyter_core.paths import jupyter_runtime_dir
 
 
-def _is_stream_output(output: dict) -> bool:
-    """Check if an output is a stream output.
+# Private functions
+
+def _create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:
+    """Create the URL for an output or stream.
+
+    Generates a standardized API URL path for accessing notebook cell outputs
+    that have been stored separately from the notebook document.
 
     Args:
-        output (dict): The output dictionary
+        file_id: The unique identifier of the notebook file.
+        cell_id: The unique identifier of the cell within the notebook.
+        output_index: The index of the output within the cell's output array.
 
     Returns:
-        bool: True if the output is a stream output, False otherwise
+        A URL path string in the format '/api/outputs/{file_id}/{cell_id}/{output_index}.output'.
     """
-    return output.get("output_type") == "stream"
+    return f"/api/outputs/{file_id}/{cell_id}/{output_index}.output"
+
+
+def _create_output_placeholder(output_type: str, url: str) -> dict:
+    """Build a placeholder output dict for the given output_type and url.
+
+    Creates a minimal nbformat-compatible output placeholder that references the
+    actual output data via a URL. These placeholders keep the YDoc lightweight
+    while maintaining the structure needed for notebook rendering.
+
+    Note:
+        These placeholders intentionally use minimal structure (metadata-only in
+        some cases) to reduce YDoc size. This deviates slightly from full nbformat
+        spec but remains compatible.
+
+    Args:
+        output_type: The type of output ('stream', 'display_data', 'execute_result', or 'error').
+        url: The URL where the actual output data can be retrieved.
+
+    Returns:
+        A dictionary containing the minimal output structure with metadata containing the URL.
+
+    Raises:
+        ValueError: If the output_type is not one of the recognized types.
+    """
+    metadata = dict(url=url)
+    # These placeholders lack the full proper structure of the nbformat spec, but they are
+    # allowed. We do this to keep the ydoc as small as possible. We should follow up
+    # and make changes to nbformat to clarify what the minimal output is (basically metadata
+    # only)
+    if output_type == "stream":
+        return {"output_type": "stream", "text": "", "metadata": metadata}
+    elif output_type == "display_data":
+        return {"output_type": "display_data", "metadata": metadata}
+    elif output_type == "execute_result":
+        return {"output_type": "execute_result", "metadata": metadata}
+    elif output_type == "error":
+        return {"output_type": "error", "metadata": metadata}
+    else:
+        raise ValueError(f"Unknown output_type: {output_type}")
+
+
+# Main OutputsManager class
 
 
 class OutputsManager(LoggingConfigurable):
+    """Base outputs manager with traditional Jupyter behavior.
+
+    This manager:
+    - Always saves outputs to notebook files
+    - Keeps outputs out of YDoc using placeholders
+    - Stores outputs in runtime directory for HTTP access
+    """
     _last_output_index = Dict(default_value={})
     _output_index_by_display_id = Dict(default_value={})
     _display_ids_by_cell_id = Dict(default_value={})
-    _stream_count = Dict(default_value={})
 
     outputs_path = Instance(PurePath, help="The local runtime dir")
-    stream_limit = Int(default_value=500, config=True, allow_none=True)
 
     @default("outputs_path")
     def _default_outputs_path(self):
+        """Provide default path for outputs storage.
+
+        Returns:
+            Path: The default outputs directory within Jupyter's runtime directory.
+        """
         return Path(jupyter_runtime_dir()) / "outputs"
 
     def _ensure_path(self, file_id, cell_id):
+        """Ensure the directory structure exists for storing outputs.
+
+        Creates nested directories for file_id/cell_id if they don't exist.
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell within the notebook.
+        """
         nested_dir = self.outputs_path / file_id / cell_id
         nested_dir.mkdir(parents=True, exist_ok=True)
 
     def _build_path(self, file_id, cell_id=None, output_index=None):
+        """Build a filesystem path for output storage.
+
+        Constructs a hierarchical path: outputs_path/file_id/cell_id/output_index.output
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell (optional).
+            output_index: The index of the specific output (optional).
+
+        Returns:
+            Path: The constructed filesystem path.
+        """
         path = self.outputs_path / file_id
         if cell_id is not None:
             path = path / cell_id
         if output_index is not None:
             path = path / f"{output_index}.output"
         return path
-    
+
     def _compute_output_index(self, cell_id, display_id=None):
-        """
-        Computes next output index for a cell.
-        
+        """Compute the next output index for a cell.
+
+        Maintains sequential output indexing per cell. If a display_id is provided,
+        it ensures the same index is reused for updates to the same display output.
+        This supports IPython's display update mechanism where outputs can be
+        modified after initial creation.
+
         Args:
-            cell_id (str): The cell identifier
-            display_id (str, optional): A display identifier. Defaults to None.
-        
+            cell_id: The unique identifier of the cell.
+            display_id: Optional display identifier for updatable outputs.
+
         Returns:
-            int: The output index
+            The next available output index for this cell, or the existing index
+            if display_id was already assigned an index.
         """
         last_index = self._last_output_index.get(cell_id, -1)
         if display_id:
@@ -75,15 +159,121 @@ class OutputsManager(LoggingConfigurable):
         else:
             index = last_index + 1
             self._last_output_index[cell_id] = index
-        
+
         return index
 
+    def _upgrade_notebook_format(self, nb: dict) -> dict:
+        """Upgrade notebook to nbformat >= 4.5 to ensure cell IDs exist.
+
+        Cell IDs were introduced in nbformat 4.5 and are required for tracking
+        outputs separately from the notebook document. This method upgrades
+        older notebooks to ensure compatibility.
+
+        Args:
+            nb: The notebook dictionary (NotebookNode).
+
+        Returns:
+            The upgraded notebook with cell IDs and updated format version.
+        """
+        return nbformat.v4.upgrade(nb, from_version=nb.nbformat, from_minor=nb.nbformat_minor)
+
+    def _ensure_cell_id(self, cell: dict) -> None:
+        """Ensure a cell has an ID, creating one if missing.
+
+        Mutates the cell dictionary in-place by adding a UUID-based ID if one
+        doesn't already exist. This is necessary for cells that predate nbformat 4.5.
+
+        Args:
+            cell: The cell dictionary (NotebookNode) to check and potentially modify.
+        """
+        if not cell.get('id'):
+            cell['id'] = str(uuid.uuid4())
+
+    def _process_outputs_from_cell(self, file_id: str, cell_id: str, outputs: list) -> list:
+        """Process outputs from a cell, writing to disk and creating placeholders.
+
+        Iterates through all outputs in a cell, writes each to disk, and returns
+        a list of placeholder outputs to be stored in the YDoc. If writing fails,
+        the original output is preserved as a fallback.
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell.
+            outputs: List of output dictionaries from the notebook cell.
+
+        Returns:
+            List of placeholder output objects (NotebookNode) to be stored in the YDoc.
+        """
+        placeholder_outputs = []
+        for output in outputs:
+            display_id = output.get('metadata', {}).get('display_id')
+
+            # Save output to disk and replace with placeholder
+            placeholder = None
+            try:
+                placeholder = self.write(
+                    file_id,
+                    cell_id,
+                    output,
+                    display_id,
+                    asdict=True,
+                )
+            except Exception as e:
+                # If we can't write the output to disk, keep the original
+                placeholder = output
+
+            if placeholder is not None:
+                placeholder_outputs.append(nbformat.from_dict(placeholder))
+
+        return placeholder_outputs
+
+    def clear(self, file_id, cell_id=None):
+        """Clear the output state and files for a specific cell.
+
+        Removes all tracking data (indices, display_id mappings) and deletes
+        output files from disk for the specified cell. This is typically called
+        when a notebook is reloaded to ensure stale outputs are removed.
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell to clear (optional).
+        """
+        self._last_output_index.pop(cell_id, None)
+        display_ids = self._display_ids_by_cell_id.get(cell_id, [])
+        for display_id in display_ids:
+            self._output_index_by_display_id.pop(display_id, None)
+
+        path = self._build_path(file_id, cell_id)
+        try:
+            shutil.rmtree(path)
+        except FileNotFoundError:
+            pass
+
     def get_output_index(self, display_id: str):
-        """Returns output index for a cell by display_id"""
+        """Retrieve the output index associated with a display ID.
+
+        Args:
+            display_id: The display identifier to lookup.
+
+        Returns:
+            The output index for the given display_id, or None if not found.
+        """
         return self._output_index_by_display_id.get(display_id)
 
     def get_output(self, file_id, cell_id, output_index):
-        """Get an output by file_id, cell_id, and output_index."""
+        """Retrieve a specific output from disk.
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell.
+            output_index: The index of the output within the cell.
+
+        Returns:
+            The output dictionary parsed from the stored JSON file.
+
+        Raises:
+            FileNotFoundError: If the output file doesn't exist at the expected path.
+        """
         path = self._build_path(file_id, cell_id, output_index)
         if not os.path.isfile(path):
             raise FileNotFoundError(f"The output file doesn't exist: {path}")
@@ -92,17 +282,23 @@ class OutputsManager(LoggingConfigurable):
         return output
 
     def get_outputs(self, file_id, cell_id):
-        """Get all outputs by file_id, cell_id.
+        """Retrieve all outputs for a cell from disk.
 
-        Returns all output files from disk in index order. The stream_limit logic
-        is handled during write operations, so this method simply returns what's on disk.
+        Reads all output files for a given cell, sorted by their index numbers,
+        and returns them as JSON strings. This is typically called when saving
+        a notebook to restore full outputs from placeholders.
+
+        Args:
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell.
 
         Returns:
-            list[str]: List of JSON-serialized output dictionaries in index order.
+            List of JSON-serialized output dictionaries in index order. Returns
+            an empty list if no outputs exist for the cell.
         """
         path = self._build_path(file_id, cell_id)
         if not os.path.isdir(path):
-            raise FileNotFoundError(f"The output dir doesn't exist: {path}")
+            return []
 
         output_files = [(f, int(f.stem)) for f in path.glob("*.output")]
         output_files.sort(key=lambda x: x[1])
@@ -115,347 +311,103 @@ class OutputsManager(LoggingConfigurable):
 
         return outputs
 
-    def get_stream(self, file_id, cell_id):
-        "Get the stream output for a cell by file_id and cell_id."
-        path = self._build_path(file_id, cell_id) / "stream"
-        if not os.path.isfile(path):
-            raise FileNotFoundError(f"The output file doesn't exist: {path}")
-        with open(path, "r", encoding="utf-8") as f:
-            output = f.read()
-        return output
+    def write(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
+        """Write an output to disk and return a placeholder for the YDoc.
 
-    def _append_to_stream_file(self, file_id, cell_id, output):
-        """Append stream text to the /stream file.
+        Stores the full output data as a JSON file on disk and creates a minimal
+        placeholder that references the output via URL. The placeholder keeps the
+        YDoc lightweight while maintaining access to the full output data.
 
         Args:
-            file_id (str): The file identifier
-            cell_id (str): The cell identifier
-            output (dict): The stream output dictionary
+            file_id: The unique identifier of the notebook file.
+            cell_id: The unique identifier of the cell.
+            output: The output dictionary to write (must have 'output_type' key).
+            display_id: Optional display identifier for updatable outputs.
+            asdict: If True, return placeholder as dict; if False, return as pycrdt.Map.
+
+        Returns:
+            A placeholder output containing the URL reference, either as a pycrdt.Map
+            (default) or as a plain dict (if asdict=True).
         """
-        self._ensure_path(file_id, cell_id)
-        path = self._build_path(file_id, cell_id) / "stream"
-        text = output["text"]
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(text)
-
-    def write(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
-        """Write a new output for file_id and cell_id.
-
-        For stream outputs with stream_limit enabled:
-        - Streams below limit: written to *.output file and /stream file
-        - Stream at limit: link placeholder written to *.output file, text to /stream file
-        - Streams beyond limit: only written to /stream file (no *.output file)
-
-        Returns a placeholder output (pycrdt.Map) or None if no placeholder
-        output should be written to the ydoc.
-        """
-        # Handle stream outputs with stream_limit enabled
-        if _is_stream_output(output) and self.stream_limit is not None:
-            # Determine what the count will be after this stream
-            count = self._stream_count.get(cell_id, 0) + 1
-
-            # Always append to the /stream file
-            self._append_to_stream_file(file_id, cell_id, output)
-
-            # Update the count
-            self._stream_count[cell_id] = count
-
-            if count < self.stream_limit:
-                # Below limit: write stream output to *.output file normally
-                placeholder = self.write_output(file_id, cell_id, output, display_id=display_id, asdict=asdict)
-                return placeholder
-            elif count == self.stream_limit:
-                # At limit: write link placeholder to *.output file instead of stream
-                url = create_output_url(file_id, cell_id)
-                link_output = create_placeholder_dict("display_data", url, full=True)
-                placeholder = self.write_output(file_id, cell_id, link_output, asdict=asdict)
-                return placeholder
-            else:
-                # Beyond limit: only append to /stream (already done), no *.output file
-                return None
-        else:
-            # Non-stream output or no limit: write normally
-            placeholder = self.write_output(file_id, cell_id, output, display_id, asdict=asdict)
-            return placeholder
-
-    def write_output(self, file_id, cell_id, output, display_id=None, asdict: bool = False) -> Map | dict:
         self._ensure_path(file_id, cell_id)
         index = self._compute_output_index(cell_id, display_id)
         path = self._build_path(file_id, cell_id, index)
         data = json.dumps(output, ensure_ascii=False)
         with open(path, "w", encoding="utf-8") as f:
             f.write(data)
-        url = create_output_url(file_id, cell_id, index)
-        self.log.info(f"Wrote output: {url}")
-        placeholder = create_placeholder_dict(output["output_type"], url)
+        url = _create_output_url(file_id, cell_id, index)
+        placeholder = _create_output_placeholder(output["output_type"], url)
         if not asdict:
             placeholder = Map(placeholder)
         return placeholder
-
-    def clear(self, file_id, cell_id=None):
-        """Clear the state of the manager."""
-        if cell_id is None:
-            self._stream_count = {}
-        else:
-            self._stream_count.pop(cell_id, None)
-            self._last_output_index.pop(cell_id, None)
-            
-            display_ids = self._display_ids_by_cell_id.get(cell_id, [])
-            for display_id in display_ids:
-                self._output_index_by_display_id.pop(display_id, None)
-
-        path = self._build_path(file_id, cell_id)    
-        try:
-            shutil.rmtree(path)
-        except FileNotFoundError:
-            pass
 
     def process_loaded_notebook(self, file_id: str, file_data: dict) -> dict:
         """Process a loaded notebook and handle outputs through the outputs manager.
 
         This method processes a notebook that has been loaded from disk.
-        If the notebook metadata has exclude_outputs set to True, 
-        outputs are loaded from this OutputsManager and set as the cell outputs
-        (as placeholders).
-        
+        In base mode, outputs are always processed from the file.
+
         Args:
             file_id (str): The file identifier
             file_data (dict): The file data containing the notebook content
                 from calling ContentsManager.get()
-            
+
         Returns:
             dict: The modified file data with processed outputs
         """
-        self.log.info(f"Processing loaded notebook: {file_id}")
-
         # Notebook content is a tree of nbformat.NotebookNode objects,
         # which are a subclass of dict.
         nb = file_data['content']
         # We need cell ids which are only in nbformat >4.5. We use this to
         # upgrade all notebooks to 4.5 or later
-        nb = nbformat.v4.upgrade(nb, from_version=nb.nbformat, from_minor=nb.nbformat_minor)
-        
-        # Check if the notebook metadata has exclude_outputs set to True
-        if nb.get('metadata', {}).get('exclude_outputs') is True:
-            nb = self._process_loaded_excluded_outputs(file_id=file_id, nb=nb)
-        else:
-            nb = self._process_loaded_included_outputs(file_id=file_id, nb=nb)           
+        nb = self._upgrade_notebook_format(nb)
 
-        file_data['content'] = nb
-        return file_data
-
-    def _process_loaded_excluded_outputs(self, file_id: str, nb: dict) -> dict:
-        """Process a notebook with excluded_outputs metadata set to True.
-        
-        This method processes notebooks that have been saved with no outputs on disk.
-        In this case, the OutputsManager store the outputs by cell_id and this method
-        attempts to load actual outputs from OutputsManager and creates placeholder outputs
-        for each code cell. If no outputs exist on disk for a cell, the cell's
-        outputs are set to an empty list.
-        
-        Args:
-            file_id (str): The file identifier
-            nb (dict): The notebook dictionary
-            
-        Returns:
-            dict: The notebook with placeholder outputs inserted from OutputsManager
-        """
         for cell in nb.get('cells', []):
             # Ensure all cells have IDs regardless of type
-            if not cell.get('id'):
-                cell['id'] = str(uuid.uuid4())
-            
-            if cell.get('cell_type') == 'code':
-                cell_id = cell['id']
-                try:
-                    # Try to get outputs from disk
-                    output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
-                    outputs = []
-                    for output_string in output_strings:
-                        output_dict = json.loads(output_string)
-                        placeholder = create_placeholder_dict(
-                            output_dict["output_type"],
-                            url=create_output_url(file_id, cell_id)
-                        )
-                        outputs.append(placeholder)
-                    cell['outputs'] = outputs
-                except FileNotFoundError:
-                    # No outputs on disk for this cell, set empty outputs
-                    cell['outputs'] = []
-        return nb
+            self._ensure_cell_id(cell)
 
-    def _process_loaded_included_outputs(self, file_id: str, nb: dict) -> dict:
-        """Process a notebook that has outputs on disk.
-        
-        This method processes notebooks with actual output data in the cells.
-        It saves existing outputs to OutputsManager and replaces them with placeholder
-        outputs that reference the saved files. Outputs that already have
-        a URL in their metadata are left as-is.
-        
-        Args:
-            file_id (str): The file identifier
-            nb (dict): The notebook dictionary
-            
-        Returns:
-            dict: The notebook with outputs saved to OutputsManager and replaced with placeholders
-        """
-        for cell in nb.get('cells', []):
-            # Ensure all cells have IDs regardless of type
-            if not cell.get('id'):
-                cell['id'] = str(uuid.uuid4())
-                
             if cell.get('cell_type') != 'code' or 'outputs' not in cell:
                 continue
 
             cell_id = cell['id']
-            processed_outputs = []
-            for output in cell.get('outputs', []):
-                display_id = output.get('metadata', {}).get('display_id')
-                url = output.get('metadata', {}).get('url')
-                if url is None:
-                    # Save output to disk and replace with placeholder
-                    try:
-                        placeholder = self.write(
-                            file_id,
-                            cell_id,
-                            output,
-                            display_id,
-                            asdict=True,
-                        )
-                    except Exception as e:
-                        self.log.error(f"Error writing output: {e}")
-                        # If we can't write the output to disk, keep the original
-                        placeholder = output
-                else:
-                    # In this case, there is a placeholder already so keep it
-                    placeholder = output
-                
-                if placeholder is not None:
-                    # A placeholder of None means to not add to the YDoc
-                    processed_outputs.append(nbformat.from_dict(placeholder))
-            
-            # Replace the outputs with processed ones
-            cell['outputs'] = processed_outputs
-        return nb
+
+            # Clear existing outputs for this cell to avoid stale data
+            self.clear(file_id, cell_id)
+
+            cell['outputs'] = self._process_outputs_from_cell(
+                file_id, cell_id, cell.get('outputs', [])
+            )
+
+        file_data['content'] = nb
+        return file_data
+
 
     def process_saving_notebook(self, nb: dict, file_id: str) -> dict:
         """Process a notebook before saving to disk.
 
         This method is called when the yroom_file_api saves notebooks.
-
-        The exclude_outputs metadata flag controls whether actual outputs are
-        included in the saved notebook file. To track the default behavior of
-        Jupyter we assume that it is not set at all. In this case, outputs are
-        saved in the notebook on disk (or if exclude_outputs is set to false)
-        and removed from the OutputsManager to ensure the saved file is the
-        source of truth for outputs.
-
-        If the user or frontend has set exclude_outputs to true, outputs are
-        removed from the file saved to disk and retained in OutputsManager.
+        The default implementation write the outputs to the notebook.
 
         Args:
             nb (dict): The notebook dict
             file_id (str): The file identifier
 
         Returns:
-            dict: The modified notebook dict with outputs handled according to
-                  the exclude_outputs flag
+            dict: The modified notebook dict with outputs included
         """
-        # Ensure metadata exists
-        if 'metadata' not in nb:
-            nb['metadata'] = {}
-
-        # Check if we should exclude outputs from the saved file
-        exclude_outputs = nb.get('metadata', {}).get('exclude_outputs', False)
-
-        if exclude_outputs:
-            # Exclude outputs: clear outputs for all code cells
-            for cell in nb.get('cells', []):
-                if cell.get('cell_type') == 'code':
-                    # If outputs is already an empty list, call clear for this cell
-                    if cell.get('outputs') == []:
-                        cell_id = cell.get('id')
-                        if cell_id:
-                            self.clear(file_id, cell_id)
-
+        for cell in nb.get('cells', []):
+            if cell.get('cell_type') == 'code':
+                cell_id = cell.get('id')
+                if cell_id:
+                    # Get outputs from disk
+                    output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
+                    # Parse JSON strings into dictionaries
+                    outputs = [json.loads(output_string) for output_string in output_strings]
+                    # Set the cell's outputs to the actual outputs
+                    cell['outputs'] = outputs
+                else:
+                    # To be safe, create cell ID if one doesn't exist and clear outputs to remove placeholders
+                    cell['id'] = str(uuid.uuid4())
                     cell['outputs'] = []
-        else:
-            # Include outputs: restore actual outputs from disk for all code cells
-            for cell in nb.get('cells', []):
-                if cell.get('cell_type') == 'code':
-                    cell_id = cell.get('id')
-                    if cell_id:
-                        try:
-                            # Get outputs from disk
-                            output_strings = self.get_outputs(file_id=file_id, cell_id=cell_id)
-                            # Parse JSON strings into dictionaries
-                            outputs = [json.loads(output_string) for output_string in output_strings]
-                            # Set the cell's outputs to the actual outputs
-                            cell['outputs'] = outputs
-                        except FileNotFoundError:
-                            # No outputs on disk for this cell, set empty outputs to remove placeholders
-                            cell['outputs'] = []
-                    else:
-                        # To be safe, create cell ID if one doesn't exist and clear outputs to remove placeholders
-                        cell['id'] = str(uuid.uuid4())
-                        cell['outputs'] = []
 
         return nb
-
-
-def create_output_url(file_id: str, cell_id: str, output_index: int = None) -> str:
-        """Create the URL for an output or stream.
-
-        Parameters:
-        - file_id (str): The ID of the file.
-        - cell_id (str): The ID of the cell.
-        - output_index (int, optional): The index of the output. If None, returns the stream URL.
-
-        Returns:
-        - str: The URL string for the output or stream.
-        """
-        if output_index is None:
-            return f"/api/outputs/{file_id}/{cell_id}/stream"
-        else:
-            return f"/api/outputs/{file_id}/{cell_id}/{output_index}.output"
-
-def create_placeholder_dict(output_type: str, url: str, full: bool = False) -> dict:
-    """Build a placeholder output dict for the given output_type and url.
-    
-    If full is True and output_type is "display_data", returns a display_data output
-    with an HTML link to the full stream output.
-
-    Parameters:
-    - output_type (str): The type of the output.
-    - url (str): The URL associated with the output.
-    - full (bool): Whether to create a full output placeholder with a link.
-
-    Returns:
-    - dict: The placeholder output dictionary.
-
-    Raises:
-    - ValueError: If the output_type is unknown.
-    """
-    metadata = dict(url=url)
-    if full and output_type == "display_data":
-        return {
-            "output_type": "display_data",
-            "data": {
-                "text/html": f'<a href="{url}">Click this link to see the full stream output</a>'
-            },
-        }
-    # These placeholders lack the full proper structure of the nbformat spec, but they are 
-    # allowed. We do this to keep the ydoc as small as possible. We should follow up
-    # and make changes to nbformat to clarify what the minimal output is (basically metadata
-    # only)
-    if output_type == "stream":
-        return {"output_type": "stream", "text": "", "metadata": metadata}
-    elif output_type == "display_data":
-        return {"output_type": "display_data", "metadata": metadata}
-    elif output_type == "execute_result":
-        return {"output_type": "execute_result", "metadata": metadata}
-    elif output_type == "error":
-        return {"output_type": "error", "metadata": metadata}
-    else:
-        raise ValueError(f"Unknown output_type: {output_type}")
-
