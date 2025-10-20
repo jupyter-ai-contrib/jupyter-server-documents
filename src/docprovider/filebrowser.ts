@@ -186,7 +186,6 @@ export const ychat: JupyterFrontEndPlugin<void> = {
     }
 
     const onYChatReset = (ychat: YChat) => {
-      console.log('Detected YChat reset. Reseting frontend state.');
       for (const widget of app.shell.widgets()) {
         if (!(widget instanceof DocumentWidget)) {
           continue;
@@ -208,7 +207,6 @@ export const ychat: JupyterFrontEndPlugin<void> = {
         // `contentChanged` signal to update the UI.
         (model as any)._messages = [];
         (model as any)._messagesUpdated.emit();
-        console.log('Chat room reset successfully.');
         break;
       }
     };
