@@ -105,6 +105,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_path = None
         self._last_modified = None
         self._stopped = False
+        self._is_writable = True
 
         # Initialize content-related primitives
         self._content_loading = False
@@ -198,6 +199,10 @@ class YRoomFileAPI(LoggingConfigurable):
                 type=self.file_type,
                 format=self.file_format
             ))
+
+        # The content manager uses this to tell consumers of the API if the file is writable.
+        # We need to save this so we can use it during save.
+        self._is_writable = file_data.get('writable', True)
 
         if self.file_type == "notebook":
             self.log.info(f"Processing outputs for loaded notebook: '{self.room_id}'.")
@@ -364,6 +369,9 @@ class YRoomFileAPI(LoggingConfigurable):
         instead.
         """
         try:
+            # Return immediately if the content manager has marked this file as non-writable
+            if not self._is_writable:
+                return
             # Build arguments to `CM.save()`
             path = self.get_path()
             content = jupyter_ydoc.source
