@@ -52,10 +52,10 @@ import { notebookFactoryPlugin } from './notebook-factory';
 import { disableSavePlugin } from './disablesave';
 
 /**
- * Initialization data for the @jupyter/server-documents extension.
+ * Initialization data for the @jupyter-ai-contrib/server-documents extension.
  */
 export const plugin: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:plugin',
+  id: '@jupyter-ai-contrib/server-documents:plugin',
   description: 'A JupyterLab extension that provides RTC capabilities.',
   autoStart: true,
   optional: [ISettingRegistry],
@@ -63,20 +63,22 @@ export const plugin: JupyterFrontEndPlugin<void> = {
     app: JupyterFrontEnd,
     settingRegistry: ISettingRegistry | null
   ) => {
-    console.log('JupyterLab extension @jupyter/server-documents is activated!');
+    console.log(
+      'JupyterLab extension @jupyter-ai-contrib/server-documents is activated!'
+    );
 
     if (settingRegistry) {
       settingRegistry
         .load(plugin.id)
         .then(settings => {
           console.log(
-            '@jupyter/server-documents settings loaded:',
+            '@jupyter-ai-contrib/server-documents settings loaded:',
             settings.composite
           );
         })
         .catch(reason => {
           console.error(
-            'Failed to load settings for @jupyter/server-documents.',
+            'Failed to load settings for @jupyter-ai-contrib/server-documents.',
             reason
           );
         });
@@ -98,7 +100,7 @@ export const plugin: JupyterFrontEndPlugin<void> = {
  * Jupyter plugin creating a global awareness for RTC.
  */
 export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
-  id: '@jupyter/server-documents:rtc-global-awareness',
+  id: '@jupyter-ai-contrib/server-documents:rtc-global-awareness',
   description: 'Add global awareness to share working document of users.',
   requires: [IStateDB],
   provides: IGlobalAwareness,
@@ -152,7 +154,7 @@ class AwarenessExecutionIndicatorIcon
  * A plugin that provides a execution indicator item to the status bar.
  */
 export const executionIndicator: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:awareness-execution-indicator',
+  id: '@jupyter-ai-contrib/server-documents:awareness-execution-indicator',
   description: 'Adds a notebook execution status widget.',
   autoStart: true,
   requires: [INotebookTracker, ILabShell, ITranslator, IToolbarWidgetRegistry],
@@ -180,7 +182,7 @@ export const executionIndicator: JupyterFrontEndPlugin<void> = {
  * A plugin that provides a kernel status item to the status bar.
  */
 export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
-  id: '@jupyter/server-documents:awareness-kernel-status',
+  id: '@jupyter-ai-contrib/server-documents:awareness-kernel-status',
   description: 'Provides the kernel status indicator model.',
   autoStart: true,
   requires: [IStatusBar],
@@ -301,7 +303,7 @@ export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
  */
 export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
   {
-    id: '@jupyter/server-documents:backup-cell-executor',
+    id: '@jupyter-ai-contrib/server-documents:backup-cell-executor',
     description:
       'Provides a backup default implementation of the notebook cell executor.',
     autoStart: false,

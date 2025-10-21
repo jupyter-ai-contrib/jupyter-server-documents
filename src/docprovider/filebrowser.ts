@@ -45,7 +45,7 @@ const TWO_SESSIONS_WARNING =
 
 export const rtcContentProvider: JupyterFrontEndPlugin<ICollaborativeContentProvider> =
   {
-    id: '@jupyter/server-documents:rtc-content-provider',
+    id: '@jupyter-ai-contrib/server-documents:rtc-content-provider',
     description: 'The RTC content provider',
     provides: ICollaborativeContentProvider,
     requires: [ITranslator],
@@ -86,7 +86,7 @@ export const rtcContentProvider: JupyterFrontEndPlugin<ICollaborativeContentProv
  * Plugin to register the shared model factory for the content type 'file'.
  */
 export const yfile: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:yfile',
+  id: '@jupyter-ai-contrib/server-documents:yfile',
   description:
     "Plugin to register the shared model factory for the content type 'file'",
   autoStart: true,
@@ -111,7 +111,7 @@ export const yfile: JupyterFrontEndPlugin<void> = {
  * Plugin to register the shared model factory for the content type 'notebook'.
  */
 export const ynotebook: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:ynotebook',
+  id: '@jupyter-ai-contrib/server-documents:ynotebook',
   description:
     "Plugin to register the shared model factory for the content type 'notebook'",
   autoStart: true,
@@ -167,7 +167,7 @@ export const ynotebook: JupyterFrontEndPlugin<void> = {
  * was reset. It then clears the content.
  */
 export const ychat: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:ychat',
+  id: '@jupyter-ai-contrib/server-documents:ychat',
   description:
     'Plugin to register a custom YChat factory and handle document resets.',
   autoStart: true,
@@ -232,7 +232,7 @@ export const ychat: JupyterFrontEndPlugin<void> = {
  * The default collaborative drive provider.
  */
 export const logger: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter/server-documents:rtc-drive-logger',
+  id: '@jupyter-ai-contrib/server-documents:rtc-drive-logger',
   description: 'A logging plugin for debugging purposes.',
   autoStart: true,
   optional: [ILoggerRegistry, IEditorTracker, INotebookTracker, ITranslator],

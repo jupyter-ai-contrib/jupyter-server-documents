@@ -16,7 +16,7 @@ from .events import JSD_AWARENESS_EVENT_URI, JSD_ROOM_EVENT_URI
 def _jupyter_labextension_paths():
     return [{
         "src": "labextension",
-        "dest": "@jupyter/server-documents"
+        "dest": "@jupyter-ai-contrib/server-documents"
     }]
 
 
