@@ -272,7 +272,10 @@ class SharedModelFactory implements ISharedModelFactory {
     factory: SharedDocumentFactory
   ) {
     if (this.documentFactories.has(type)) {
-      throw new Error(`The content type ${type} already exists`);
+      // allow YChat shared model factory to be overridden
+      if (type !== 'chat') {
+        throw new Error(`The content type ${type} already exists.`);
+      }
     }
     this.documentFactories.set(type, factory);
   }

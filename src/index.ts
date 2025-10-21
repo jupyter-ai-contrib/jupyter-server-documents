@@ -28,7 +28,13 @@ import { AwarenessExecutionIndicator } from './executionindicator';
 
 import { requestAPI } from './handler';
 
-import { rtcContentProvider, yfile, ynotebook, logger } from './docprovider';
+import {
+  rtcContentProvider,
+  yfile,
+  ynotebook,
+  ychat,
+  logger
+} from './docprovider';
 
 import { IStateDB, StateDB } from '@jupyterlab/statedb';
 import { IGlobalAwareness } from '@jupyter/collaborative-drive';
@@ -317,7 +323,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   notebookFactoryPlugin,
   codemirrorYjsPlugin,
   backupCellExecutorPlugin,
-  disableSavePlugin
+  disableSavePlugin,
+  ychat
 ];
 
 export default plugins;

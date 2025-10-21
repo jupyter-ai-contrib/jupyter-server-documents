@@ -8,7 +8,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Dialog, showDialog } from '@jupyterlab/apputils';
-import { IDocumentWidget } from '@jupyterlab/docregistry';
+import { DocumentWidget, IDocumentWidget } from '@jupyterlab/docregistry';
 import { ContentsManager } from '@jupyterlab/services';
 
 import {
@@ -33,6 +33,10 @@ import {
 } from '@jupyter/collaborative-drive';
 import { RtcContentProvider } from './ydrive';
 import { Awareness } from 'y-protocols/awareness';
+
+import { YChat } from './custom_ydocs';
+import { IChatFactory } from 'jupyterlab-chat';
+import { AbstractChatModel } from '@jupyter/chat';
 
 const TWO_SESSIONS_WARNING =
   'The file %1 has been opened with two different views. ' +
@@ -151,6 +155,76 @@ export const ynotebook: JupyterFrontEndPlugin<void> = {
       yNotebookFactory
     );
     notebookFactory.contentProviderId = 'rtc';
+  }
+};
+
+/**
+ * This plugin provides the YChat shared model and handles document resets by
+ * listening to the `YChat.resetSignal` property automatically.
+ *
+ * Whenever a YChat is reset, this plugin will iterate through all of the app's
+ * document widgets and find the one containing the `YChat` shared model which
+ * was reset. It then clears the content.
+ */
+export const ychat: JupyterFrontEndPlugin<void> = {
+  id: '@jupyter/server-documents:ychat',
+  description:
+    'Plugin to register a custom YChat factory and handle document resets.',
+  autoStart: true,
+  requires: [ICollaborativeContentProvider],
+  optional: [IChatFactory],
+  activate: (
+    app: JupyterFrontEnd,
+    contentProvider: ICollaborativeContentProvider,
+    chatFactory?: IChatFactory
+  ): void => {
+    if (!chatFactory) {
+      console.warn(
+        'No existing shared model factory found for chat. Not providing custom chat shared model.'
+      );
+      return;
+    }
+
+    const onYChatReset = (ychat: YChat) => {
+      for (const widget of app.shell.widgets()) {
+        if (!(widget instanceof DocumentWidget)) {
+          continue;
+        }
+        const model = widget.content.model;
+        const sharedModel = model && model._sharedModel;
+        if (
+          !(model instanceof AbstractChatModel && sharedModel instanceof YChat)
+        ) {
+          continue;
+        }
+        if (sharedModel !== ychat) {
+          continue;
+        }
+
+        // If this point is reached, we have identified the correct parent
+        // `model: AbstractChatModel` that maintains the message state for the
+        // `YChat` which was reset. We clear its content directly & emit a
+        // `contentChanged` signal to update the UI.
+        (model as any)._messages = [];
+        (model as any)._messagesUpdated.emit();
+        break;
+      }
+    };
+
+    // Override the existing `YChat` factory to provide a custom `YChat` with a
+    // `resetSignal`, which is automatically subscribed to & refreshes the UI
+    // state upon document reset.
+    const yChatFactory = () => {
+      const ychat = new YChat();
+      ychat.resetSignal.connect(() => {
+        onYChatReset(ychat);
+      });
+      return ychat;
+    };
+    contentProvider.sharedModelFactory.registerDocumentFactory(
+      'chat',
+      yChatFactory as any
+    );
   }
 };
 
