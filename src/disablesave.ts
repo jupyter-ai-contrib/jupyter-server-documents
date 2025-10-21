@@ -23,7 +23,7 @@ const NOTIFICATION_INTERVAL = 20;
  * Plugin to disable save commands
  */
 export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
-  id: 'disable-save:plugin',
+  id: '@jupyter-ai-contrib/server-documents:disable-save-plugin',
   description:
     'Disables save commands and removes their keyboard shortcuts since documents are autosaved',
   autoStart: true,
