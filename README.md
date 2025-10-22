@@ -1,7 +1,7 @@
 # Jupyter Server Documents
 
 This extension is composed of a Python package named `jupyter_server_documents`
-for the server extension and a NPM package named `@jupyter/server-documents`
+for the server extension and a NPM package named `@jupyter-ai-contrib/server-documents`
 for the frontend extension.
 
 ## Overview
@@ -179,7 +179,7 @@ jlpm dev:uninstall
 In development mode, you will also need to remove the symlink created by
 `jupyter labextension develop` command. To find its location, you can run
 `jupyter labextension list` to figure out where the `labextensions` folder is
-located. Then you can remove the symlink named `@jupyter/server-documents` within that
+located. Then you can remove the symlink named `@jupyter-ai-contrib/server-documents` within that
 folder.
 
 ### Testing the extension

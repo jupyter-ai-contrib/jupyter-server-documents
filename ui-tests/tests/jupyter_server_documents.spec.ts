@@ -17,7 +17,9 @@ test('should emit an activation console message', async ({ page }) => {
 
   expect(
     logs.filter(
-      s => s === 'JupyterLab extension @jupyter/server-documents is activated!'
+      s =>
+        s ===
+        'JupyterLab extension @jupyter-ai-contrib/server-documents is activated!'
     )
   ).toHaveLength(1);
 });

@@ -1,7 +1,7 @@
 {
   "jupyter.lab.shortcuts": [],
-  "title": "@jupyter/server-documents",
-  "description": "@jupyter/server-documents settings.",
+  "title": "@jupyter-ai-contrib/server-documents",
+  "description": "@jupyter-ai-contrib/server-documents settings.",
   "type": "object",
   "properties": {},
   "additionalProperties": false,
