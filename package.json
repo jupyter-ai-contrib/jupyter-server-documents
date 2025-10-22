@@ -1,6 +1,6 @@
 {
     "name": "@jupyter-ai-contrib/server-documents",
-    "version": "0.1.0-a6",
+    "version": "0.1.0-a7",
     "description": "A JupyterLab extension that provides RTC capabilities.",
     "keywords": [
         "jupyter",
