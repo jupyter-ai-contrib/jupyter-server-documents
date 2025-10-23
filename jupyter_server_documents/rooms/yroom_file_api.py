@@ -45,14 +45,6 @@ class YRoomFileAPI(LoggingConfigurable):
         file_id: The unique identifier for this file.
     """
 
-    poll_interval = Float(
-        default_value=0.5,
-        help="Sets the initial interval for saving the YDoc & checking the file "
-        "for changes. This serves as the starting value before adaptive timing "
-        "takes effect. Defaults to 0.5 seconds.",
-        config=True,
-    )
-
     min_poll_interval = Float(
         default_value=0.5,
         help="Minimum autosave interval in seconds. The adaptive timing will "
@@ -159,7 +151,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_lock = asyncio.Lock()
 
         # Initialize adaptive timing attributes
-        self._adaptive_poll_interval = self.poll_interval
+        self._adaptive_poll_interval = self.min_poll_interval
 
 
     def get_path(self) -> str | None:
@@ -611,7 +603,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_path = None
 
         # Reset adaptive timing attributes
-        self._adaptive_poll_interval = self.poll_interval
+        self._adaptive_poll_interval = self.min_poll_interval
 
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
 
