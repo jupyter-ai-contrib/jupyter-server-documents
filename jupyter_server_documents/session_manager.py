@@ -5,7 +5,8 @@ from jupyter_server.serverapp import ServerApp
 from jupyter_server_fileid.manager import BaseFileIdManager
 from jupyter_server_documents.rooms.yroom_manager import YRoomManager
 from jupyter_server_documents.rooms.yroom import YRoom
-from jupyter_server_documents.kernels.kernel_client import DocumentAwareKernelClient
+from jupyter_server_documents.kernel_client import DocumentAwareKernelClient
+from nextgen_kernels_api.services.kernels.client_manager import KernelClientManager
 
 
 class YDocSessionManager(SessionManager): 
@@ -30,6 +31,11 @@ class YDocSessionManager(SessionManager):
         """The Jupyter Server's YRoom Manager."""
         return self.serverapp.web_app.settings["yroom_manager"]
 
+    @property
+    def client_manager(self) -> KernelClientManager:
+        """The Kernel Client Manager."""
+        return self.serverapp.web_app.settings["client_manager"]
+
     _room_ids: dict[str, str]
     """
     Dictionary of room IDs, keyed by session ID.
@@ -38,12 +44,6 @@ class YDocSessionManager(SessionManager):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._room_ids = {}
-
-    def get_kernel_client(self, kernel_id: str) -> DocumentAwareKernelClient:
-        """Get the kernel client for a running kernel."""
-        kernel_manager = self.kernel_manager.get_kernel(kernel_id)
-        kernel_client = kernel_manager.main_client
-        return kernel_client
 
     def get_yroom(self, session_id: str) -> YRoom:
         """
@@ -128,7 +128,7 @@ class YDocSessionManager(SessionManager):
         # created after the kernel starts fully. We need the 
         # kernel client instantiated _before_ trying to connect
         # the yroom.
-        kernel_client = self.get_kernel_client(kernel_id)
+        kernel_client = self.client_manager.get_client(kernel_id)
         await kernel_client.add_yroom(yroom)
         self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
         return session_model
@@ -158,10 +158,10 @@ class YDocSessionManager(SessionManager):
         )
         yroom = self.get_yroom(session_id)
         if old_kernel_id:
-            old_kernel_client = self.get_kernel_client(old_kernel_id)
+            old_kernel_client = self.client_manager.get_client(old_kernel_id)
             await old_kernel_client.remove_yroom(yroom=yroom)
         if new_kernel_id:
-            new_kernel_client = self.get_kernel_client(new_kernel_id)
+            new_kernel_client = self.client_manager.get_client(new_kernel_id)
             await new_kernel_client.add_yroom(yroom=yroom)
 
         # Apply update and return
@@ -177,7 +177,7 @@ class YDocSessionManager(SessionManager):
 
         # Remove YRoom from session's kernel client
         yroom = self.get_yroom(session_id)
-        kernel_client = self.get_kernel_client(kernel_id)
+        kernel_client = self.client_manager.get_client(kernel_id)
         await kernel_client.remove_yroom(yroom)
 
         # Remove room ID stored for the session

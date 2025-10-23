@@ -1,6 +1,6 @@
 import pytest
 from collections import OrderedDict
-from jupyter_server_documents.kernels.message_cache import InvalidKeyException, KernelMessageCache, MissingKeyException  # Replace your_module
+from nextgen_kernels_api.services.kernels.cache import InvalidKeyException, KernelMessageCache, MissingKeyException
 
 
 def create_cache(maxsize=None):
