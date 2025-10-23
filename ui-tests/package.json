@@ -11,5 +11,13 @@
   "devDependencies": {
     "@jupyterlab/galata": "^5.0.5",
     "@playwright/test": "^1.37.0"
+  },
+  "resolutions": {
+    "vega-util": "^1.17.3",
+    "vega-dataflow": "^5.7.7",
+    "vega-selections": "5.6.0",
+    "vega-scale": "^7.4.2",
+    "vega-scenegraph": "^4.13.1",
+    "vega-time": "^2.1.3"
   }
 }

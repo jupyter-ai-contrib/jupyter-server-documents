@@ -8,7 +8,7 @@ from jupyter_server.utils import ensure_async
 import logging
 from tornado.web import HTTPError
 from traitlets.config import LoggingConfigurable
-from traitlets import Float
+from traitlets import Float, validate
 
 if TYPE_CHECKING:
     from typing import Any, Coroutine, Literal
@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from jupyter_server.services.contents.manager import ContentsManager
     from ..outputs.manager import OutputsManager
 
+DEFAULT_MIN_POLL_INTERVAL = 0.5
+DEFAULT_POLL_INTERVAL_MULTIPLIER = 5.0
 class YRoomFileAPI(LoggingConfigurable):
     """Provides an API to interact with a single file for a YRoom.
 
@@ -45,23 +47,15 @@ class YRoomFileAPI(LoggingConfigurable):
         file_id: The unique identifier for this file.
     """
 
-    poll_interval = Float(
-        default_value=0.5,
-        help="Sets the initial interval for saving the YDoc & checking the file "
-        "for changes. This serves as the starting value before adaptive timing "
-        "takes effect. Defaults to 0.5 seconds.",
-        config=True,
-    )
-
     min_poll_interval = Float(
-        default_value=0.5,
+        default_value=DEFAULT_MIN_POLL_INTERVAL,
         help="Minimum autosave interval in seconds. The adaptive timing will "
         "never go below this value. Defaults to 0.5 seconds.",
         config=True,
     )
 
     poll_interval_multiplier = Float(
-        default_value=5.0,
+        default_value=DEFAULT_POLL_INTERVAL_MULTIPLIER,
         help="Multiplier applied to save duration to calculate the next poll "
         "interval. For example, if a save takes 1 second and the multiplier is "
         "5.0, the next poll interval will be 5 seconds (bounded by min/max). "
@@ -126,12 +120,6 @@ class YRoomFileAPI(LoggingConfigurable):
     dual-writes or dirty-reads.
     """
 
-    _last_save_duration: float | None
-    """
-    The duration in seconds of the last save operation. Used to calculate the
-    adaptive poll interval.
-    """
-
     _adaptive_poll_interval: float
     """
     The current adaptive poll interval in seconds, calculated based on the last
@@ -165,8 +153,26 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_lock = asyncio.Lock()
 
         # Initialize adaptive timing attributes
-        self._last_save_duration = None
-        self._adaptive_poll_interval = self.poll_interval
+        self._adaptive_poll_interval = self.min_poll_interval
+    
+    @validate("min_poll_interval", "poll_interval_multiplier")
+    def _validate_adaptive_timing_traits(self, proposal):
+        trait_name = proposal['trait'].name
+        value = proposal['value']
+
+        if trait_name == "min_poll_interval":
+            default_value = DEFAULT_MIN_POLL_INTERVAL
+        else:
+            default_value = DEFAULT_POLL_INTERVAL_MULTIPLIER
+
+        if value <= 0:
+            self.log.warning(
+                f"`YRoomFileAPI.{trait_name}` must be >0. Received: {value}. "
+                f"Reverting to default value {default_value}."
+            )
+            return default_value
+
+        return proposal["value"]
 
 
     def get_path(self) -> str | None:
@@ -547,9 +553,8 @@ class YRoomFileAPI(LoggingConfigurable):
             # JupyterLab tab for this YDoc in the frontend.
             jupyter_ydoc.dirty = False
 
-            # Calculate save duration and update adaptive poll interval
+            # Calculate save duration
             save_duration = time.perf_counter() - start_time
-            self._last_save_duration = save_duration
 
             # Calculate new adaptive interval
             old_interval = self._adaptive_poll_interval
@@ -619,8 +624,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_path = None
 
         # Reset adaptive timing attributes
-        self._last_save_duration = None
-        self._adaptive_poll_interval = self.poll_interval
+        self._adaptive_poll_interval = self.min_poll_interval
 
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
 
