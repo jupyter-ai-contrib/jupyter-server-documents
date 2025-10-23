@@ -2,6 +2,23 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.0a8
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a7...dcf8a50078d525356737c69a94ca919281c2e379))
+
+### Enhancements made
+
+- Cleanup and add validation to new adaptive saving strategy [#169](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/169) ([@dlqqq](https://github.com/dlqqq))
+- Refactor OutputsManager to align with default Jupyter behavior [#163](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/163) ([@ellisonbg](https://github.com/ellisonbg))
+
+### Contributors to this release
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-10-22&to=2025-10-23&type=c))
+
+[@3coins](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-10-22..2025-10-23&type=Issues) | [@dlqqq](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-10-22..2025-10-23&type=Issues) | [@ellisonbg](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aellisonbg+updated%3A2025-10-22..2025-10-23&type=Issues)
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.0a7
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a6...a1dbf46fc33e3e02fe475b3f197d1e17501d3374))
@@ -20,8 +37,6 @@
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-10-14&to=2025-10-22&type=c))
 
 [@3coins](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-10-14..2025-10-22&type=Issues) | [@dlqqq](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-10-14..2025-10-22&type=Issues) | [@ellisonbg](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aellisonbg+updated%3A2025-10-14..2025-10-22&type=Issues)
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.0a6
 
