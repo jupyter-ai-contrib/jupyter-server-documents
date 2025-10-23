@@ -8,7 +8,7 @@ from jupyter_server.utils import ensure_async
 import logging
 from tornado.web import HTTPError
 from traitlets.config import LoggingConfigurable
-from traitlets import Float
+from traitlets import Float, validate
 
 if TYPE_CHECKING:
     from typing import Any, Coroutine, Literal
@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from jupyter_server.services.contents.manager import ContentsManager
     from ..outputs.manager import OutputsManager
 
+DEFAULT_MIN_POLL_INTERVAL = 0.5
+DEFAULT_POLL_INTERVAL_MULTIPLIER = 5.0
 class YRoomFileAPI(LoggingConfigurable):
     """Provides an API to interact with a single file for a YRoom.
 
@@ -46,14 +48,14 @@ class YRoomFileAPI(LoggingConfigurable):
     """
 
     min_poll_interval = Float(
-        default_value=0.5,
+        default_value=DEFAULT_MIN_POLL_INTERVAL,
         help="Minimum autosave interval in seconds. The adaptive timing will "
         "never go below this value. Defaults to 0.5 seconds.",
         config=True,
     )
 
     poll_interval_multiplier = Float(
-        default_value=5.0,
+        default_value=DEFAULT_POLL_INTERVAL_MULTIPLIER,
         help="Multiplier applied to save duration to calculate the next poll "
         "interval. For example, if a save takes 1 second and the multiplier is "
         "5.0, the next poll interval will be 5 seconds (bounded by min/max). "
@@ -152,6 +154,25 @@ class YRoomFileAPI(LoggingConfigurable):
 
         # Initialize adaptive timing attributes
         self._adaptive_poll_interval = self.min_poll_interval
+    
+    @validate("min_poll_interval", "poll_interval_multiplier")
+    def _validate_adaptive_timing_traits(self, proposal):
+        trait_name = proposal['trait'].name
+        value = proposal['value']
+
+        if trait_name == "min_poll_interval":
+            default_value = DEFAULT_MIN_POLL_INTERVAL
+        else:
+            default_value = DEFAULT_POLL_INTERVAL_MULTIPLIER
+
+        if value <= 0:
+            self.log.warning(
+                f"`YRoomFileAPI.{trait_name}` must be >0. Received: {value}. "
+                f"Reverting to default value {default_value}."
+            )
+            return default_value
+
+        return proposal["value"]
 
 
     def get_path(self) -> str | None:
