@@ -126,12 +126,6 @@ class YRoomFileAPI(LoggingConfigurable):
     dual-writes or dirty-reads.
     """
 
-    _last_save_duration: float | None
-    """
-    The duration in seconds of the last save operation. Used to calculate the
-    adaptive poll interval.
-    """
-
     _adaptive_poll_interval: float
     """
     The current adaptive poll interval in seconds, calculated based on the last
@@ -165,7 +159,6 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_lock = asyncio.Lock()
 
         # Initialize adaptive timing attributes
-        self._last_save_duration = None
         self._adaptive_poll_interval = self.poll_interval
 
 
@@ -547,9 +540,8 @@ class YRoomFileAPI(LoggingConfigurable):
             # JupyterLab tab for this YDoc in the frontend.
             jupyter_ydoc.dirty = False
 
-            # Calculate save duration and update adaptive poll interval
+            # Calculate save duration
             save_duration = time.perf_counter() - start_time
-            self._last_save_duration = save_duration
 
             # Calculate new adaptive interval
             old_interval = self._adaptive_poll_interval
@@ -619,7 +611,6 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_path = None
 
         # Reset adaptive timing attributes
-        self._last_save_duration = None
         self._adaptive_poll_interval = self.poll_interval
 
         self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
