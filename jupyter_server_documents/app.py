@@ -95,35 +95,42 @@ class ServerDocsApp(ExtensionApp):
         )
     
     def _link_jupyter_server_extension(self, server_app):
-        """Setup custom config needed by this extension."""
+        """Setup custom config needed by this extension.
+
+        Only applies configuration if not already set by user config.
+        """
         c = Config()
-        # Use nextgen-kernels-api's multi-kernel manager
-        # This manager disables activity watching and buffering (which we don't need)
-        c.ServerApp.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.MultiKernelManager"
-        c.ServerApp.kernel_websocket_connection_class = 'nextgen_kernels_api.services.kernels.connection.kernel_client_connection.KernelClientWebsocketConnection'
 
-        # Configure MultiKernelManager to use nextgen's KernelManager
-        c.MultiKernelManager.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.KernelManager"
+        # Only configure if not already set in user config
+        if not server_app.config.ServerApp.get("kernel_manager_class"):
+            c.ServerApp.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.MultiKernelManager"
 
-        # Configure the KernelManager to use DocumentAwareKernelClient
-        c.KernelManager.client_class = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
-        c.KernelManager.client_factory = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
+        if not server_app.config.ServerApp.get("kernel_websocket_connection_class"):
+            c.ServerApp.kernel_websocket_connection_class = "nextgen_kernels_api.services.kernels.connection.kernel_client_connection.KernelClientWebsocketConnection"
 
-        # Use custom session manager for YRoom integration
-        c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
+        if not server_app.config.ServerApp.get("session_manager_class"):
+            c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
 
-        # Configure websocket connection to exclude output messages
-        # Output messages are handled by DocumentAwareKernelClient's output processor
-        # and should not be sent to websocket clients to avoid duplicate processing
-        c.KernelClientWebsocketConnection.exclude_msg_types = [
-            ("status", "iopub"),
-            ("stream", "iopub"),
-            ("display_data", "iopub"),
-            ("execute_result", "iopub"),
-            ("error", "iopub"),
-            ("update_display_data", "iopub"),
-            ("clear_output", "iopub")
-        ]
+        # Configure kernel manager hierarchy
+        if not server_app.config.MultiKernelManager.get("kernel_manager_class"):
+            c.MultiKernelManager.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.KernelManager"
+
+        # Configure kernel client
+        if not server_app.config.KernelManager.get("client_class"):
+            c.KernelManager.client_class = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
+            c.KernelManager.client_factory = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
+
+        # Configure websocket message filtering
+        if not server_app.config.KernelClientWebsocketConnection.get("exclude_msg_types"):
+            c.KernelClientWebsocketConnection.exclude_msg_types = [
+                ("status", "iopub"),
+                ("stream", "iopub"),
+                ("display_data", "iopub"),
+                ("execute_result", "iopub"),
+                ("error", "iopub"),
+                ("update_display_data", "iopub"),
+                ("clear_output", "iopub"),
+            ]
 
         server_app.update_config(c)
         super()._link_jupyter_server_extension(server_app)
