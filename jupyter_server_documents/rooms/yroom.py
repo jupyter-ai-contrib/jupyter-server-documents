@@ -526,17 +526,11 @@ class YRoom(LoggingConfigurable):
             self.log.debug(f"Handled AwarenessUpdate from '{client_id}' for room '{self.room_id}'.")
         # Handle Sync messages
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
-            self.log.info(f"Received SS1 from '{client_id}' for room '{self.room_id}'.")
             self.handle_sync_step1(client_id, message)
-            self.log.info(f"Handled SS1 from '{client_id}' for room '{self.room_id}'.")
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-            self.log.info(f"Received SS2 from '{client_id}' for room '{self.room_id}'.")
             self.handle_sync_step2(client_id, message)
-            self.log.info(f"Handled SS2 from '{client_id}' for room '{self.room_id}'.")
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
-            self.log.info(f"Received SyncUpdate from '{client_id}  for room '{self.room_id}''.")
             self.handle_sync_update(client_id, message)
-            self.log.info(f"Handled SyncUpdate from '{client_id}  for room '{self.room_id}''.")
 
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
@@ -570,7 +564,6 @@ class YRoom(LoggingConfigurable):
             # TODO: remove the assert once websocket is made required
             assert isinstance(new_client.websocket, WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message, binary=True)
-            self.log.info(f"Sent SS2 reply to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing the SyncStep2 reply "
@@ -578,7 +571,7 @@ class YRoom(LoggingConfigurable):
             )
             self.log.exception(e)
             return
-        
+
         self.clients.mark_synced(client_id)
 
         # Send SyncStep1 message
@@ -586,7 +579,6 @@ class YRoom(LoggingConfigurable):
             assert isinstance(new_client.websocket, WebSocketHandler)
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
             new_client.websocket.write_message(sync_step1_message, binary=True)
-            self.log.info(f"Sent SS1 message to client '{client_id}'.")
         except Exception as e:
             self.log.error(
                 "An exception occurred when writing a SyncStep1 message "
@@ -777,11 +769,6 @@ class YRoom(LoggingConfigurable):
         if not client_count:
             return
 
-        if message_type == "SyncUpdate":
-            self.log.info(
-                f"Broadcasting {message_type} to all {client_count} synced clients."
-            )
-
         for client in clients:
             try:
                 # TODO: remove this assertion once websocket is made required
@@ -795,11 +782,6 @@ class YRoom(LoggingConfigurable):
                 )
                 self.log.exception(e)
                 continue
-        
-        if message_type == "SyncUpdate":
-            self.log.info(
-                f"Broadcast of {message_type} complete for room {self.room_id}."
-            )
                 
     def _on_awareness_update(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
         """
