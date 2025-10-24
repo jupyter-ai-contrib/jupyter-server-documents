@@ -1,7 +1,9 @@
 from jupyter_server.extension.application import ExtensionApp
 from traitlets.config import Config
-
 from traitlets import Instance, Type
+
+from nextgen_kernels_api.services.kernels.client_manager import KernelClientManager
+
 from .handlers import RouteHandler, FileIDIndexHandler
 from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
@@ -47,6 +49,8 @@ class ServerDocsApp(ExtensionApp):
 
     yroom_manager = Instance(klass=YRoomManager, allow_none=True)
 
+    client_manager = Instance(klass=KernelClientManager, allow_none=True)
+
     def initialize(self):
         super().initialize()
 
@@ -71,6 +75,17 @@ class ServerDocsApp(ExtensionApp):
         self.outputs_manager = self.outputs_manager_class(parent=self)
         self.settings["outputs_manager"] = self.outputs_manager
 
+        # Initialize KernelClientRegistry as singleton
+        # The KernelClientWebsocketConnection from nextgen-kernels-api will access this via .instance()
+        self.client_manager = KernelClientManager.instance(
+            parent=self,
+            multi_kernel_manager=self.serverapp.kernel_manager
+        )
+        self.settings["client_manager"] = self.client_manager
+
+        # Register event listener for client management
+        self.client_manager.register_event_listener(self.serverapp.event_logger)
+
         # Serve Jupyter Collaboration API on
         # `self.settings["jupyter_server_ydoc"]` for compatibility with
         # extensions depending on Jupyter Collaboration
@@ -80,12 +95,43 @@ class ServerDocsApp(ExtensionApp):
         )
     
     def _link_jupyter_server_extension(self, server_app):
-        """Setup custom config needed by this extension."""
+        """Setup custom config needed by this extension.
+
+        Only applies configuration if not already set by user config.
+        """
         c = Config()
-        c.ServerApp.kernel_websocket_connection_class = "jupyter_server_documents.kernels.websocket_connection.NextGenKernelWebsocketConnection"
-        c.ServerApp.kernel_manager_class = "jupyter_server_documents.kernels.multi_kernel_manager.NextGenMappingKernelManager"
-        c.MultiKernelManager.kernel_manager_class = "jupyter_server_documents.kernels.kernel_manager.NextGenKernelManager"
-        c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
+
+        # Only configure if not already set in user config
+        if not server_app.config.ServerApp.get("kernel_manager_class"):
+            c.ServerApp.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.MultiKernelManager"
+
+        if not server_app.config.ServerApp.get("kernel_websocket_connection_class"):
+            c.ServerApp.kernel_websocket_connection_class = "nextgen_kernels_api.services.kernels.connection.kernel_client_connection.KernelClientWebsocketConnection"
+
+        if not server_app.config.ServerApp.get("session_manager_class"):
+            c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
+
+        # Configure kernel manager hierarchy
+        if not server_app.config.MultiKernelManager.get("kernel_manager_class"):
+            c.MultiKernelManager.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.KernelManager"
+
+        # Configure kernel client
+        if not server_app.config.KernelManager.get("client_class"):
+            c.KernelManager.client_class = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
+            c.KernelManager.client_factory = "jupyter_server_documents.kernel_client.DocumentAwareKernelClient"
+
+        # Configure websocket message filtering
+        if not server_app.config.KernelClientWebsocketConnection.get("exclude_msg_types"):
+            c.KernelClientWebsocketConnection.exclude_msg_types = [
+                ("status", "iopub"),
+                ("stream", "iopub"),
+                ("display_data", "iopub"),
+                ("execute_result", "iopub"),
+                ("error", "iopub"),
+                ("update_display_data", "iopub"),
+                ("clear_output", "iopub"),
+            ]
+
         server_app.update_config(c)
         super()._link_jupyter_server_extension(server_app)
     
