@@ -6,7 +6,6 @@ from jupyter_server_fileid.manager import BaseFileIdManager
 from jupyter_server_documents.rooms.yroom_manager import YRoomManager
 from jupyter_server_documents.rooms.yroom import YRoom
 from jupyter_server_documents.kernel_client import DocumentAwareKernelClient
-from nextgen_kernels_api.services.kernels.client_manager import KernelClientManager
 
 
 class YDocSessionManager(SessionManager): 
@@ -30,11 +29,6 @@ class YDocSessionManager(SessionManager):
     def yroom_manager(self) -> YRoomManager:
         """The Jupyter Server's YRoom Manager."""
         return self.serverapp.web_app.settings["yroom_manager"]
-
-    @property
-    def client_manager(self) -> KernelClientManager:
-        """The Kernel Client Manager."""
-        return self.serverapp.web_app.settings["client_manager"]
 
     _room_ids: dict[str, str]
     """
@@ -83,7 +77,34 @@ class YDocSessionManager(SessionManager):
     ) -> dict[str, Any]:
         """
         After creating a session, connects the yroom to the kernel client.
+        Sets kernel status to "starting" before kernel launch.
         """
+        # For notebooks, set up the YRoom and set initial status before starting kernel
+        should_setup_yroom = (
+            type == "notebook" and
+            name is not None and
+            path is not None
+        )
+
+        yroom = None
+        if should_setup_yroom:
+            # Calculate the real path
+            real_path = os.path.join(os.path.split(path)[0], name)
+            
+            # Initialize the YRoom before starting the kernel
+            file_id = self.file_id_manager.index(real_path)
+            room_id = f"json:notebook:{file_id}"
+            yroom = self.yroom_manager.get_room(room_id)
+
+            # Set initial kernel status to "starting" in awareness
+            awareness = yroom.get_awareness()
+            if awareness is not None:
+                self.log.info("Setting kernel execution_state to 'starting' before kernel launch")
+                awareness.set_local_state_field(
+                    "kernel", {"execution_state": "starting"}
+                )
+
+        # Now create the session and start the kernel
         session_model = await super().create_session(
             path,
             name,
@@ -108,27 +129,21 @@ class YDocSessionManager(SessionManager):
             self.log.warning(f"`name` or `path` was not given for new session at '{path}'.")
             return session_model
 
-        # Otherwise, get a `YRoom` and add it to this session's kernel client.
+        # Otherwise, add the YRoom to this session's kernel client.
 
-        # When JupyterLab creates a session, it uses a fake path
-        # which is the relative path + UUID, i.e. the notebook
-        # name is incorrect temporarily. It later makes multiple
-        # updates to the session to correct the path.
-        # 
-        # Here, we create the true path to store in the fileID service
-        # by dropping the UUID and appending the file name.
-        real_path = os.path.join(os.path.split(path)[0], name)
-
-        # Get YRoom for this session and store its ID in `self._room_ids`
-        yroom = self._init_session_yroom(session_id, real_path)
+        # Store the room ID for this session
+        if yroom:
+            self._room_ids[session_id] = yroom.room_id
+        else:
+            # Shouldn't happen, but handle it anyway
+            real_path = os.path.join(os.path.split(path)[0], name)
+            yroom = self._init_session_yroom(session_id, real_path)
 
         # Add YRoom to this session's kernel client
-        # TODO: we likely have a race condition here... need to 
-        # think about it more. Currently, the kernel client gets
-        # created after the kernel starts fully. We need the 
-        # kernel client instantiated _before_ trying to connect
-        # the yroom.
-        kernel_client = self.client_manager.get_client(kernel_id)
+        # Ensure the kernel client is fully connected before proceeding
+        # to avoid queuing messages on first execution
+        kernel_manager = self.serverapp.kernel_manager.get_kernel(kernel_id)
+        kernel_client = kernel_manager.kernel_client
         await kernel_client.add_yroom(yroom)
         self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
         return session_model
@@ -158,10 +173,12 @@ class YDocSessionManager(SessionManager):
         )
         yroom = self.get_yroom(session_id)
         if old_kernel_id:
-            old_kernel_client = self.client_manager.get_client(old_kernel_id)
+            old_kernel_manager = self.serverapp.kernel_manager.get_kernel(old_kernel_id)
+            old_kernel_client = old_kernel_manager.kernel_client
             await old_kernel_client.remove_yroom(yroom=yroom)
         if new_kernel_id:
-            new_kernel_client = self.client_manager.get_client(new_kernel_id)
+            new_kernel_manager = self.serverapp.kernel_manager.get_kernel(new_kernel_id)
+            new_kernel_client = new_kernel_manager.kernel_client
             await new_kernel_client.add_yroom(yroom=yroom)
 
         # Apply update and return
@@ -177,7 +194,8 @@ class YDocSessionManager(SessionManager):
 
         # Remove YRoom from session's kernel client
         yroom = self.get_yroom(session_id)
-        kernel_client = self.client_manager.get_client(kernel_id)
+        kernel_manager = self.serverapp.kernel_manager.get_kernel(kernel_id)
+        kernel_client = kernel_manager.kernel_client
         await kernel_client.remove_yroom(yroom)
 
         # Remove room ID stored for the session

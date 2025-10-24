@@ -32,7 +32,7 @@ dependencies = [
     "jupyter_server_fileid>=0.9.0,<0.10.0",
     "pycrdt>=0.12.0,<0.13.0",
     "jupyter_ydoc>=3.0.0,<4.0.0",
-    "nextgen-kernels-api>=0.6.0",
+    "nextgen-kernels-api>=0.9.0",
 ]
 dynamic = ["version", "description", "authors", "urls", "keywords"]
 
@@ -97,3 +97,7 @@ before-build-python = ["jlpm clean:all"]
 
 [tool.check-wheel-contents]
 ignore = ["W002"]
+
+[tool.pytest.ini_options]
+testpaths = ["jupyter_server_documents/tests"]
+norecursedirs = ["repos", ".git", ".pixi", "node_modules"]
