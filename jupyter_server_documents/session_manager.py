@@ -64,8 +64,135 @@ class YDocSessionManager(SessionManager):
         room_id = f"json:notebook:{file_id}"
         yroom = self.yroom_manager.get_room(room_id)
         self._room_ids[session_id] = room_id
-
         return yroom
+
+    async def _ensure_yroom_connected(self, session_id: str, kernel_id: str) -> None:
+        """
+        Ensures that a session's yroom is connected to its kernel client.
+
+        This method is critical for maintaining the connection between collaborative
+        document state (yroom) and kernel execution state. It handles scenarios where
+        the yroom-kernel connection may have been lost, such as:
+
+        - Server restarts where sessions persist but in-memory connections are lost
+        - Remote/persistent kernels that survive across server lifecycles
+        - Recovery from transient failures or race conditions during session setup
+
+        The method is idempotent - it checks if the yroom is already connected before
+        attempting to add it, preventing duplicate connections.
+
+        Args:
+            session_id: The unique identifier for the session
+            kernel_id: The unique identifier for the kernel
+
+        Note:
+            This method silently handles cases where the yroom or kernel don't exist,
+            or where the session has no associated yroom. Failures are logged but
+            don't raise exceptions.
+        """
+        # Check if this session has an associated yroom in the cache
+        room_id = self._room_ids.get(session_id)
+
+        # If not cached, populate it from the session's path
+        # This handles persistent sessions that survive server restarts
+        if not room_id:
+            try:
+                # Get the session from the database to find its path
+                # Use super() to avoid infinite recursion since we're called from get_session
+                session = await super().get_session(session_id=session_id)
+                if session and session.get("type") == "notebook":
+                    path = session.get("path")
+                    if path:
+                        # Use the same logic as _init_session_yroom to calculate room_id
+                        file_id = self.file_id_manager.index(path)
+                        room_id = f"json:notebook:{file_id}"
+                        # Cache it for future calls
+                        self._room_ids[session_id] = room_id
+                        self.log.debug(f"Populated room_id {room_id} from session path for session {session_id}")
+                    else:
+                        self.log.debug(f"Session {session_id} has no path")
+                        return
+                else:
+                    self.log.debug(f"Session {session_id} is not a notebook type")
+                    return
+            except Exception as e:
+                self.log.warning(f"Failed to lookup session {session_id}: {e}")
+                return
+
+        if not room_id:
+            # Session has no yroom (e.g., console session or non-notebook type)
+            return
+
+        # Get the yroom if it exists
+        yroom = self.yroom_manager.get_room(room_id)
+        if not yroom:
+            # Room doesn't exist yet or was cleaned up
+            return
+
+        # Ensure the yroom is added to the kernel client
+        try:
+            kernel_manager = self.serverapp.kernel_manager.get_kernel(kernel_id)
+            kernel_client = kernel_manager.kernel_client
+
+            # Check if yroom is already connected to avoid duplicate connections
+            if hasattr(kernel_client, '_yrooms') and yroom not in kernel_client._yrooms:
+                await kernel_client.add_yroom(yroom)
+                self.log.info(
+                    f"Reconnected yroom {room_id} to kernel_client for session {session_id}. "
+                    f"This ensures kernel messages are routed to the collaborative document."
+                )
+        except Exception as e:
+            # Log but don't fail - the session is still valid even if yroom connection fails
+            self.log.warning(
+                f"Failed to connect yroom to kernel_client for session {session_id}: {e}"
+            )
+
+    async def get_session(self, **kwargs) -> Optional[dict[str, Any]]:
+        """
+        Retrieves a session and ensures the yroom-kernel connection is established.
+
+        This override of the parent's get_session() adds a critical step: verifying
+        and restoring the connection between the session's yroom (collaborative state)
+        and its kernel client (execution engine).
+
+        Why this matters:
+        - When reconnecting to persistent/remote kernels, the in-memory yroom connection
+          may not exist even though both the session and kernel are valid
+        - Server restarts can break yroom-kernel connections while sessions persist
+        - This ensures that every time a session is retrieved, it's fully functional
+          for collaborative notebook editing and execution
+
+        Args:
+            **kwargs: Arguments passed to the parent's get_session() method
+                     (e.g., session_id, path, kernel_id)
+
+        Returns:
+            The session model dict, or None if no session is found
+        """
+        session = await super().get_session(**kwargs)
+
+        # If no session found, return None
+        if session is None:
+            return None
+
+        # Extract session and kernel information
+        session_id = session.get("id")
+        kernel_info = session.get("kernel")
+
+        # Only process sessions with valid kernel and session ID
+        if not kernel_info or not session_id:
+            return session
+
+        kernel_id = kernel_info.get("id")
+        if not kernel_id:
+            return session
+
+        # Ensure the yroom is connected to the kernel client
+        # This is especially important for persistent kernels that survive server restarts
+        await self._ensure_yroom_connected(session_id, kernel_id)
+
+        return session
+
 
     async def create_session(
         self,
@@ -103,7 +230,7 @@ class YDocSessionManager(SessionManager):
                 awareness.set_local_state_field(
                     "kernel", {"execution_state": "starting"}
                 )
-
+        
         # Now create the session and start the kernel
         session_model = await super().create_session(
             path,
@@ -129,8 +256,6 @@ class YDocSessionManager(SessionManager):
             self.log.warning(f"`name` or `path` was not given for new session at '{path}'.")
             return session_model
 
-        # Otherwise, add the YRoom to this session's kernel client.
-
         # Store the room ID for this session
         if yroom:
             self._room_ids[session_id] = yroom.room_id
@@ -138,7 +263,7 @@ class YDocSessionManager(SessionManager):
             # Shouldn't happen, but handle it anyway
             real_path = os.path.join(os.path.split(path)[0], name)
             yroom = self._init_session_yroom(session_id, real_path)
-
+        
         # Add YRoom to this session's kernel client
         # Ensure the kernel client is fully connected before proceeding
         # to avoid queuing messages on first execution
@@ -148,7 +273,6 @@ class YDocSessionManager(SessionManager):
         self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
         return session_model
     
-
     async def update_session(self, session_id: str, **update) -> None:
         """
         Updates the session identified by `session_id` using the keyword
