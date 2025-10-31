@@ -6,19 +6,35 @@ for persistent kernels that survive server restarts.
 """
 import pytest
 from unittest.mock import AsyncMock, Mock, MagicMock, patch
+from traitlets.config import LoggingConfigurable
 from jupyter_server_documents.session_manager import YDocSessionManager
 
 
 @pytest.fixture
 def session_manager():
     """Create a mock session manager for testing."""
-    manager = YDocSessionManager()
+    # Create mock dependencies
+    mock_file_id_manager = Mock()
+    mock_yroom_manager = Mock()
+    mock_kernel_manager = Mock()
 
-    # Mock required dependencies
-    manager.serverapp = Mock()
-    manager.file_id_manager = Mock()
-    manager.yroom_manager = Mock()
-    manager.log = Mock()
+    # Create a Configurable parent with the proper structure
+    class MockServerApp(LoggingConfigurable):
+        @property
+        def kernel_manager(self):
+            return mock_kernel_manager
+
+        @property
+        def web_app(self):
+            mock_web_app = Mock()
+            mock_web_app.settings = {
+                "file_id_manager": mock_file_id_manager,
+                "yroom_manager": mock_yroom_manager
+            }
+            return mock_web_app
+
+    # Create the session manager with mock parent
+    manager = YDocSessionManager(parent=MockServerApp())
 
     # Initialize the _room_ids dict
     manager._room_ids = {}
@@ -59,6 +75,9 @@ class TestEnsureYRoomConnected:
         session_manager.yroom_manager.get_room.return_value = mock_yroom
         mock_yroom.room_id = room_id
 
+        # Mock kernel client's add_yroom method as async
+        mock_kernel_client.add_yroom = AsyncMock()
+
         # Mock kernel manager
         mock_kernel_manager = Mock()
         mock_kernel_manager.kernel_client = mock_kernel_client
@@ -69,8 +88,8 @@ class TestEnsureYRoomConnected:
         # Verify cached room_id was used
         session_manager.yroom_manager.get_room.assert_called_once_with(room_id)
 
-        # Verify yroom was added to kernel client
-        assert mock_yroom in mock_kernel_client._yrooms
+        # Verify add_yroom was called with the mock yroom
+        mock_kernel_client.add_yroom.assert_called_once_with(mock_yroom)
 
     @pytest.mark.asyncio
     async def test_reconstructs_room_id_from_session_path(self, session_manager, mock_yroom, mock_kernel_client):
@@ -81,16 +100,16 @@ class TestEnsureYRoomConnected:
         file_id = "reconstructed-file-id"
         room_id = f"json:notebook:{file_id}"
 
-        # Mock get_session to return session with path
+        # Mock get_session from parent (SessionManager) to return session with path
         mock_session = {
             "id": session_id,
             "type": "notebook",
             "path": path
         }
 
-        with patch.object(YDocSessionManager, 'get_session', new_callable=AsyncMock) as mock_get_session:
-            # Use super() call to avoid recursion
-            mock_get_session.return_value = mock_session
+        # Patch the parent class's get_session method
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_parent_get_session:
+            mock_parent_get_session.return_value = mock_session
 
             # Mock file_id_manager
             session_manager.file_id_manager.index.return_value = file_id
@@ -98,6 +117,9 @@ class TestEnsureYRoomConnected:
             # Mock yroom manager
             session_manager.yroom_manager.get_room.return_value = mock_yroom
             mock_yroom.room_id = room_id
+
+            # Mock kernel client's add_yroom as async
+            mock_kernel_client.add_yroom = AsyncMock()
 
             # Mock kernel manager
             mock_kernel_manager = Mock()
@@ -112,8 +134,8 @@ class TestEnsureYRoomConnected:
             # Verify room_id was cached
             assert session_manager._room_ids[session_id] == room_id
 
-            # Verify yroom was added to kernel client
-            assert mock_yroom in mock_kernel_client._yrooms
+            # Verify add_yroom was called
+            mock_kernel_client.add_yroom.assert_called_once_with(mock_yroom)
 
     @pytest.mark.asyncio
     async def test_skips_non_notebook_sessions(self, session_manager):
@@ -128,8 +150,8 @@ class TestEnsureYRoomConnected:
             "path": "/path/to/console"
         }
 
-        with patch.object(YDocSessionManager, 'get_session', new_callable=AsyncMock) as mock_get_session:
-            mock_get_session.return_value = mock_session
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_parent_get_session:
+            mock_parent_get_session.return_value = mock_session
 
             await session_manager._ensure_yroom_connected(session_id, kernel_id)
 
@@ -221,8 +243,9 @@ class TestGetSession:
             "type": "notebook"
         }
 
-        with patch.object(YDocSessionManager, 'get_session', new_callable=AsyncMock) as mock_super_get_session:
-            mock_super_get_session.return_value = mock_session
+        # Patch the parent SessionManager's get_session
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_parent_get_session:
+            mock_parent_get_session.return_value = mock_session
 
             with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock) as mock_ensure:
                 result = await session_manager.get_session(session_id=session_id)
@@ -236,8 +259,8 @@ class TestGetSession:
     @pytest.mark.asyncio
     async def test_handles_none_session(self, session_manager):
         """Test that get_session handles None session gracefully."""
-        with patch.object(YDocSessionManager, 'get_session', new_callable=AsyncMock) as mock_super_get_session:
-            mock_super_get_session.return_value = None
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_parent_get_session:
+            mock_parent_get_session.return_value = None
 
             with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock) as mock_ensure:
                 result = await session_manager.get_session(session_id="missing-session")
@@ -257,8 +280,8 @@ class TestGetSession:
             "type": "notebook"
         }
 
-        with patch.object(YDocSessionManager, 'get_session', new_callable=AsyncMock) as mock_super_get_session:
-            mock_super_get_session.return_value = mock_session
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_parent_get_session:
+            mock_parent_get_session.return_value = mock_session
 
             with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock) as mock_ensure:
                 result = await session_manager.get_session(session_id="session-123")
