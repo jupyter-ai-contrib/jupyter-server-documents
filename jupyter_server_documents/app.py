@@ -96,9 +96,9 @@ class ServerDocsApp(ExtensionApp):
         if not server_app.config.ServerApp.get("session_manager_class"):
             c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
 
-        # Configure kernel manager hierarchy
-        if not server_app.config.MultiKernelManager.get("kernel_manager_class"):
-            c.MultiKernelManager.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.KernelManager"
+        # # Configure kernel manager hierarchy
+        # if not server_app.config.MultiKernelManager.get("kernel_manager_class"):
+        #     c.MultiKernelManager.kernel_manager_class = "nextgen_kernels_api.services.kernels.kernelmanager.KernelManager"
 
         # Configure kernel client
         if not server_app.config.KernelManager.get("client_class"):

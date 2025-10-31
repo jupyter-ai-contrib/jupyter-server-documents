@@ -7,7 +7,7 @@ requires = [
 build-backend = "hatchling.build"
 
 [project]
-name = "jupyter_server_documents"
+name = "apple_zsailer_jupyter_server_documents"
 readme = "README.md"
 license = { file = "LICENSE" }
 requires-python = ">=3.9"
@@ -56,6 +56,9 @@ fields = ["description", "authors", "urls", "keywords"]
 [tool.hatch.build.targets.sdist]
 artifacts = ["jupyter_server_documents/labextension"]
 exclude = [".github", "binder"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["jupyter_server_documents"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "jupyter_server_documents/labextension" = "share/jupyter/labextensions/@jupyter-ai-contrib/server-documents"
