@@ -10,7 +10,7 @@ Jupyter Server Documents is a powerful extension for JupyterLab that enhances yo
 
 ### Real-Time Collaboration
 
-- New, optimized real-time collabortion engine for Jupyter Server
+- New, optimized real-time collaboration engine for Jupyter Server
 - Significant performance and memory usage improvements
 - Proper handling of out-of-band changes (e.g. `git checkout`)
 - No data loss or duplication
