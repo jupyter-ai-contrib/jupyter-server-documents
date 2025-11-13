@@ -483,46 +483,43 @@ class YRoom(LoggingConfigurable):
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
     
-    def get_cell_execution_states(self) -> dict:
-        """
-        Returns the persistent cell execution states for this room.
-        These states survive client disconnections but are not saved to disk.
-        """
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states: dict[str, str] = {}
-        return self._cell_execution_states
-    
     def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
         """
-        Sets the execution state for a specific cell.
-        This state persists across client disconnections.
-        """
-        if self._stopped:
-            self.restart()
-        self._update_activity("set_cell_execution_state")
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states = {}
-        self._cell_execution_states[cell_id] = execution_state
-
-    def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
-        """
         Sets the execution state for a specific cell in the awareness system.
-        This provides real-time updates to all connected clients.
+        This provides real-time updates to all connected clients and persists
+        while the server is running (survives client reconnections).
         """
-        if self._stopped:
-            self.restart()
         awareness = self.get_awareness()
         if awareness is None:
             return
 
-        self._update_activity("set_cell_awareness_state")
         local_state = awareness.get_local_state()
         if local_state is not None:
             cell_states = local_state.get("cell_execution_states", {})
         else:
             cell_states = {}
+
         cell_states[cell_id] = execution_state
         awareness.set_local_state_field("cell_execution_states", cell_states)
+
+    def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
+        """
+        Alias for set_cell_execution_state for backward compatibility.
+        """
+        self.set_cell_execution_state(cell_id, execution_state)
+
+    def set_kernel_execution_state(self, execution_state: str) -> None:
+        """
+        Sets the kernel execution state in awareness.
+        This provides real-time updates to all connected clients.
+        """
+        if self._stopped:
+            self.restart()
+        awareness = self.get_awareness()
+        if awareness is not None:
+            awareness.set_local_state_field(
+                "kernel", {"execution_state": execution_state}
+            )
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
@@ -754,6 +751,7 @@ class YRoom(LoggingConfigurable):
         - Computing and sending a SyncStep2 reply,
         - Marking the client as synced (ready to receive server updates),
         - Sending a new SyncStep1 message immediately after.
+        - Sending awareness state to the new client.
 
         Should re-raise all exceptions so they are caught by `handle_sync()`.
         """
@@ -786,6 +784,21 @@ class YRoom(LoggingConfigurable):
                 f"to newly-synced client '{new_client.id}':"
             )
             raise
+
+        # Send current awareness state to the new client
+        try:
+            # Get all awareness client IDs and broadcast the current state
+            all_client_ids = list(self._awareness._states.keys())
+            if all_client_ids:
+                awareness_update = self._awareness.encode_awareness_update(all_client_ids)
+                awareness_message = pycrdt.create_awareness_message(awareness_update)
+                new_client.websocket.write_message(awareness_message, binary=True)
+        except Exception as e:
+            self.log.error(
+                f"An exception occurred when sending awareness to "
+                f"newly-synced client '{new_client.id}':"
+            )
+            self.log.exception(e)
 
     def handle_sync_step2(self, client_id: str, message: bytes) -> None:
         """
@@ -1001,7 +1014,7 @@ class YRoom(LoggingConfigurable):
                 See: `pycrdt._awareness.Awareness._emit()`
             changes: A tuple of (dict with "added", "updated", "removed" client
                 ID lists, origin).
-        """        
+        """
         # Only update activity on "change" events, which indicate actual state
         # differences (added/removed/updated). "update" events fire on every
         # mutation including clock-only renewals, which would keep the room

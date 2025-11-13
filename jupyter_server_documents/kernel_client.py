@@ -12,6 +12,7 @@ import asyncio
 import typing as t
 
 from nextgen_kernels_api.services.kernels.client import JupyterServerKernelClient
+from nextgen_kernels_api.services.kernels.message_utils import extract_src_id, extract_channel
 from traitlets import Instance, Set, Type, default
 
 from jupyter_server_documents.outputs import OutputProcessor
@@ -40,6 +41,9 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+
+        # Track last message ID per cell to detect re-executions
+        self._cell_msg_ids: dict[str, str] = {}
 
         # Register listener for document-related messages
         # Combines state updates and outputs to share deserialization logic
@@ -92,10 +96,11 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
             self.log.debug(f"Skipping message that can't be deserialized: {e}")
             return
 
-        # Extract parent message context for cell ID lookup
+        # Extract parent message context for cell ID and channel lookup
+        # Cell ID and channel are now encoded directly in the parent msg_id
         parent_msg_id = dmsg.get("parent_header", {}).get("msg_id")
-        parent_msg_data = self.message_cache.get(parent_msg_id) if parent_msg_id else None
-        cell_id = parent_msg_data.get("cell_id") if parent_msg_data else None
+        cell_id = extract_src_id(parent_msg_id) if parent_msg_id else None
+        parent_channel = extract_channel(parent_msg_id) if parent_msg_id else None
 
         # Dispatch to appropriate handler
         msg_type = dmsg.get("msg_type")
@@ -103,7 +108,7 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
             case "kernel_info_reply":
                 await self._handle_kernel_info_reply(dmsg)
             case "status":
-                await self._handle_status_message(dmsg, parent_msg_data, cell_id)
+                await self._handle_status_message(dmsg, parent_channel, cell_id)
             case "execute_input":
                 await self._handle_execute_input(dmsg, cell_id)
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
@@ -124,7 +129,7 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
                     self.log.warning(f"Failed to update language info for yroom: {e}")
 
     async def _handle_status_message(
-        self, dmsg: dict, parent_msg_data: dict | None, cell_id: str | None
+        self, dmsg: dict, parent_channel: str | None, cell_id: str | None
     ):
         """Update kernel and cell execution states from status messages.
 
@@ -135,20 +140,14 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
         execution_state = content.get("execution_state")
 
         for yroom in self._yrooms:
-            awareness = yroom.get_awareness()
-            if awareness is None:
-                continue
-
             # Update document-level kernel status if this is a top-level status message
-            if parent_msg_data and parent_msg_data.get("channel") == "shell":
-                awareness.set_local_state_field(
-                    "kernel", {"execution_state": execution_state}
-                )
+            # (i.e., parent message came from shell channel)
+            if parent_channel == "shell":
+                yroom.set_kernel_execution_state(execution_state)
 
             # Update cell execution state for persistence and awareness
             if cell_id:
                 yroom.set_cell_execution_state(cell_id, execution_state)
-                yroom.set_cell_awareness_state(cell_id, execution_state)
                 break
 
     async def _handle_execute_input(self, dmsg: dict, cell_id: str | None):
@@ -205,9 +204,13 @@ class DocumentAwareKernelClient(JupyterServerKernelClient):
 
             if cell_id:
                 # Clear outputs if this is a re-execution of the same cell
-                existing = self.message_cache.get(cell_id=cell_id)
-                if existing and existing["msg_id"] != msg_id:
+                # (different msg_id for the same cell_id)
+                last_msg_id = self._cell_msg_ids.get(cell_id)
+                if last_msg_id and last_msg_id != msg_id:
                     asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+
+                # Track this message ID for the cell
+                self._cell_msg_ids[cell_id] = msg_id
 
                 # Set awareness state immediately for queued cells
                 if msg_type == "execute_request" and channel_name == "shell":
