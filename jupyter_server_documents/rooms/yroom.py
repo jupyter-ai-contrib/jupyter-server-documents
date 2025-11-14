@@ -866,6 +866,9 @@ class YRoom(LoggingConfigurable):
         IMPORTANT: If the server is shutting down, the YRoomManager should call
         `await room.until_saved`. See `until_saved` documentation for more info.
         """
+        if self._stopped:
+            return
+
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
         # Disconnect all clients with the given close code
