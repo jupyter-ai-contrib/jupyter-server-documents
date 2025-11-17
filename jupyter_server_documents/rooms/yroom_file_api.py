@@ -321,8 +321,8 @@ class YRoomFileAPI(LoggingConfigurable):
 
         # Replace CRLF line terminators with LF line terminators
         # Fixes #176, see issue description for more context.
-        content: str = file_data['content']
-        if '\r\n' in content:
+        content = file_data.get('content')
+        if isinstance(content, str) and '\r\n' in content:
             self.log.warning(f"Detected CRLF line terminators in '{path}'.")
             content = content.replace('\r\n', '\n')
             self.log.info("Replaced CRLF line terminators with LF line terminators.")
