@@ -319,9 +319,17 @@ class YRoomFileAPI(LoggingConfigurable):
             self.log.info(f"Processing outputs for loaded notebook: '{self.room_id}'.")
             file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
+        # Replace CRLF line terminators with LF line terminators
+        # Fixes #176, see issue description for more context.
+        content = file_data.get('content')
+        if isinstance(content, str) and '\r\n' in content:
+            self.log.warning(f"Detected CRLF line terminators in '{path}'.")
+            content = content.replace('\r\n', '\n')
+            self.log.info("Replaced CRLF line terminators with LF line terminators.")
+
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
         # changes" icon in the UI
-        jupyter_ydoc.source = file_data['content']
+        jupyter_ydoc.source = content
         jupyter_ydoc.dirty = False
 
         # Set `_last_modified` timestamp
