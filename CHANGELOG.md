@@ -2,6 +2,31 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.0a9
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a8...dccb851a90d057da08c55a9c7e4d4da77bb80c8b))
+
+### Enhancements made
+
+- Remove excessive sync message logging [#172](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/172) ([@Zsailer](https://github.com/Zsailer))
+
+### Bugs fixed
+
+- Replace CRLF with LF when loading file [#177](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/177) ([@dlqqq](https://github.com/dlqqq))
+- Fixes server error when deleted rooms are saved at shutdown [#175](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/175) ([@3coins](https://github.com/3coins))
+
+### Documentation improvements
+
+- docs: fix small typo [#173](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/173) ([@rgbkrk](https://github.com/rgbkrk))
+
+### Contributors to this release
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-10-23&to=2025-11-18&type=c))
+
+[@3coins](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-10-23..2025-11-18&type=Issues) | [@dlqqq](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-10-23..2025-11-18&type=Issues) | [@rgbkrk](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Argbkrk+updated%3A2025-10-23..2025-11-18&type=Issues) | [@Zsailer](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2025-10-23..2025-11-18&type=Issues)
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.0a8
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a7...dcf8a50078d525356737c69a94ca919281c2e379))
@@ -16,8 +41,6 @@
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-10-22&to=2025-10-23&type=c))
 
 [@3coins](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-10-22..2025-10-23&type=Issues) | [@dlqqq](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-10-22..2025-10-23&type=Issues) | [@ellisonbg](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aellisonbg+updated%3A2025-10-22..2025-10-23&type=Issues)
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.0a7
 
