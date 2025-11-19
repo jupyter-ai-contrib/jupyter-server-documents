@@ -130,3 +130,6 @@ Untitled*
 
 .vscode/
 playground/
+# pixi environments
+.pixi/*
+!.pixi/config.toml

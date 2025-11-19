@@ -405,38 +405,41 @@ class YRoom(LoggingConfigurable):
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
     
-    def get_cell_execution_states(self) -> dict:
-        """
-        Returns the persistent cell execution states for this room.
-        These states survive client disconnections but are not saved to disk.
-        """
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states: dict[str, str] = {}
-        return self._cell_execution_states
-    
     def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
         """
-        Sets the execution state for a specific cell.
-        This state persists across client disconnections.
+        Sets the execution state for a specific cell in the awareness system.
+        This provides real-time updates to all connected clients and persists
+        while the server is running (survives client reconnections).
         """
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states = {}
-        self._cell_execution_states[cell_id] = execution_state
+        awareness = self.get_awareness()
+        if awareness is None:
+            return
+
+        local_state = awareness.get_local_state()
+        if local_state is not None:
+            cell_states = local_state.get("cell_execution_states", {})
+        else:
+            cell_states = {}
+
+        cell_states[cell_id] = execution_state
+        awareness.set_local_state_field("cell_execution_states", cell_states)
 
     def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
         """
-        Sets the execution state for a specific cell in the awareness system.
+        Alias for set_cell_execution_state for backward compatibility.
+        """
+        self.set_cell_execution_state(cell_id, execution_state)
+
+    def set_kernel_execution_state(self, execution_state: str) -> None:
+        """
+        Sets the kernel execution state in awareness.
         This provides real-time updates to all connected clients.
         """
         awareness = self.get_awareness()
         if awareness is not None:
-            local_state = awareness.get_local_state()
-            if local_state is not None:
-                cell_states = local_state.get("cell_execution_states", {})
-            else:
-                cell_states = {}
-            cell_states[cell_id] = execution_state
-            awareness.set_local_state_field("cell_execution_states", cell_states)
+            awareness.set_local_state_field(
+                "kernel", {"execution_state": execution_state}
+            )
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
@@ -540,6 +543,7 @@ class YRoom(LoggingConfigurable):
         - Computing a SyncStep2 reply,
         - Sending the reply to the client over WS, and
         - Sending a new SyncStep1 message immediately after.
+        - Sending awareness state to the new client.
         """
         # Mark client as desynced
         new_client = self.clients.get(client_id)
@@ -583,6 +587,22 @@ class YRoom(LoggingConfigurable):
             self.log.error(
                 "An exception occurred when writing a SyncStep1 message "
                 f"to newly-synced client '{new_client.id}':"
+            )
+            self.log.exception(e)
+
+        # Send current awareness state to the new client
+        try:
+            # Get all awareness client IDs and broadcast the current state
+            all_client_ids = list(self._awareness._states.keys())
+            if all_client_ids:
+                awareness_update = self._awareness.encode_awareness_update(all_client_ids)
+                awareness_message = pycrdt.create_awareness_message(awareness_update)
+                assert isinstance(new_client.websocket, WebSocketHandler)
+                new_client.websocket.write_message(awareness_message, binary=True)
+        except Exception as e:
+            self.log.error(
+                f"An exception occurred when sending awareness to "
+                f"newly-synced client '{new_client.id}':"
             )
             self.log.exception(e)
 
@@ -791,8 +811,8 @@ class YRoom(LoggingConfigurable):
         Arguments:
             type: The change type.
             changes: The awareness changes.
-        """        
-        
+        """
+
         self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
         self.log.debug(f"awareness update, updated_clients={updated_clients}")

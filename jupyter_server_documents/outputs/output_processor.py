@@ -4,7 +4,7 @@ from pycrdt import Map
 
 from traitlets import Unicode, Bool, Set
 from traitlets.config import LoggingConfigurable
-from jupyter_server_documents.kernels.message_cache import KernelMessageCache
+from jupyter_server.serverapp import ServerApp
 
 class OutputProcessor(LoggingConfigurable):
     
@@ -18,10 +18,8 @@ class OutputProcessor(LoggingConfigurable):
 
     @property
     def settings(self):
-        """A shortcut for the Tornado web app settings."""
-        #      self.KernelClient.KernelManager.AsyncMultiKernelManager.ServerApp
-        return self.parent.parent.parent.parent.web_app.settings
-
+        return ServerApp.instance().web_app.settings
+    
     @property
     def kernel_client(self):
         """A shortcut to the kernel client this output processor is attached to."""
@@ -82,7 +80,7 @@ class OutputProcessor(LoggingConfigurable):
 
     def process_output(self, msg_type: str, cell_id: str, content: dict):
         """Process outgoing messages from the kernel.
-        
+
         This returns the input dmsg if no the message should be sent to
         clients, or None if it should not be sent.
 
@@ -93,11 +91,20 @@ class OutputProcessor(LoggingConfigurable):
         The content has not been deserialized yet as we need to verify we
         should process it.
         """
+
+        def task_done_callback(task):
+            try:
+                task.result()  # This will raise any exception that occurred
+            except Exception as e:
+                self.log.error(f"Error in output task: {e}", exc_info=True)
+
         if msg_type == "clear_output":
-            asyncio.create_task(self.clear_output_task(cell_id, content))
+            task = asyncio.create_task(self.clear_output_task(cell_id, content))
+            task.add_done_callback(task_done_callback)
         else:
-            asyncio.create_task(self.output_task(msg_type, cell_id, content))
-        
+            task = asyncio.create_task(self.output_task(msg_type, cell_id, content))
+            task.add_done_callback(task_done_callback)
+
         return None # Don't allow the original message to propagate to the frontend
 
     async def clear_output_task(self, cell_id, content):
@@ -163,7 +170,6 @@ class OutputProcessor(LoggingConfigurable):
                 target_cell["outputs"][output_index] = output
             else:
                 target_cell["outputs"].append(output)
-            self.log.info(f"Wrote output to ydoc: {path} {cell_id} {output}")
 
     
     def transform_output(self, msg_type, content, ydoc=False):

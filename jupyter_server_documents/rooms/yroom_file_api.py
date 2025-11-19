@@ -554,7 +554,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
             # Set most recent `last_modified` timestamp
             if file_data['last_modified']:
-                self.log.info(f"Reseting last_modified to {file_data['last_modified']}")
+                self.log.debug(f"Resetting last_modified to {file_data['last_modified']}")
                 self._last_modified = file_data['last_modified']
 
             # Set `dirty` to `False` to hide the "unsaved changes" icon in the
