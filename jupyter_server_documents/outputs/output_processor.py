@@ -163,7 +163,7 @@ class OutputProcessor(LoggingConfigurable):
                 target_cell["outputs"][output_index] = output
             else:
                 target_cell["outputs"].append(output)
-            self.log.info(f"Wrote output to ydoc: {path} {cell_id} {output}")
+            self.log.debug(f"Wrote output to ydoc: {path} {cell_id} {output}")
 
     
     def transform_output(self, msg_type, content, ydoc=False):
