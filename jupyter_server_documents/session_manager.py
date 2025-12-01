@@ -39,6 +39,18 @@ class YDocSessionManager(SessionManager):
         super().__init__(*args, **kwargs)
         self._room_ids = {}
 
+    def _ensure_real_path(self, path, name):
+        """
+        When JupyterLab creates a session, it uses a fake path
+        which is the relative path + UUID, i.e. the notebook
+        name is incorrect temporarily. It later makes multiple
+        updates to the session to correct the path.
+        
+        Here, we create the true path to store in the fileID service
+        by dropping the UUID and appending the file name.
+        """
+        return os.path.join(os.path.split(path)[0], name)
+
     def get_yroom(self, session_id: str) -> YRoom:
         """
         Get the `YRoom` for a session given its ID. The session must have
@@ -49,7 +61,6 @@ class YDocSessionManager(SessionManager):
         if not yroom:
             raise LookupError(f"No room found for session '{session_id}'.")
         return yroom
-    
 
     def _init_session_yroom(self, session_id: str, path: str) -> YRoom:
         """
@@ -102,9 +113,11 @@ class YDocSessionManager(SessionManager):
                 session = await super().get_session(session_id=session_id)
                 if session and session.get("type") == "notebook":
                     path = session.get("path")
-                    if path:
+                    name = session.get("name")
+                    real_path = self._ensure_real_path(path, name)
+                    if real_path:
                         # Use the same logic as _init_session_yroom to calculate room_id
-                        file_id = self.file_id_manager.index(path)
+                        file_id = self.file_id_manager.index(real_path)
                         room_id = f"json:notebook:{file_id}"
                         # Cache it for future calls
                         self._room_ids[session_id] = room_id
@@ -207,6 +220,7 @@ class YDocSessionManager(SessionManager):
         Sets kernel status to "starting" before kernel launch.
         """
         # For notebooks, set up the YRoom and set initial status before starting kernel
+        
         should_setup_yroom = (
             type == "notebook" and
             name is not None and
@@ -215,12 +229,13 @@ class YDocSessionManager(SessionManager):
 
         yroom = None
         if should_setup_yroom:
-            # Calculate the real path
-            real_path = os.path.join(os.path.split(path)[0], name)
+            real_path = self._ensure_real_path(path, name)
             
             # Initialize the YRoom before starting the kernel
             file_id = self.file_id_manager.index(real_path)
             room_id = f"json:notebook:{file_id}"
+            self.log.critical(f"{real_path}  {file_id}  {room_id}")
+
             yroom = self.yroom_manager.get_room(room_id)
 
             # Set initial kernel status to "starting" in awareness
