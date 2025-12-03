@@ -3,7 +3,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Clipboard } from '@jupyterlab/apputils';
-import { INotebookTracker, Notebook, NotebookActions } from '@jupyterlab/notebook';
+import { INotebookTracker, Notebook } from '@jupyterlab/notebook';
 import * as nbformat from '@jupyterlab/nbformat';
 import { JSONObject } from '@lumino/coreutils';
 
@@ -40,38 +40,153 @@ function selectedCellsWithoutOutputs(notebook: Notebook): nbformat.ICell[] {
 }
 
 /**
- * Copy or cut the selected cell data to the clipboard without outputs.
- *
- * This is based on the private `copyOrCut()` function from JupyterLab's
- * notebook actions.
- *
- * @param notebook - The target notebook widget.
- * @param cut - True if the cells should be cut, false if they should be copied.
- */
-function copyOrCut(notebook: Notebook, cut: boolean): void {
-  if (!notebook.model || !notebook.activeCell) {
-    return;
+   * The interface for a widget state.
+   */
+  export interface IState {
+    /**
+     * Whether the widget had focus.
+     */
+    wasFocused: boolean;
+
+    /**
+     * The active cell id before the action.
+     *
+     * We cannot rely on the Cell widget or model as it may be
+     * discarded by action such as move.
+     */
+    activeCellId: string | null;
   }
 
-  const clipboard = Clipboard.getInstance();
+  /**
+   * Get the state of a widget before running an action.
+   */
+  export function getState(notebook: Notebook): IState {
+    return {
+      wasFocused: notebook.node.contains(document.activeElement),
+      activeCellId: notebook.activeCell?.model.id ?? null
+    };
+  }
 
-  notebook.mode = 'command';
-  clipboard.clear();
+  /**
+     * Handle the state of a widget after running an action.
+     */
+    export async function handleState(
+      notebook: Notebook,
+      state: IState,
+      scrollIfNeeded = false
+    ): Promise<void> {
+      const { activeCell, activeCellIndex } = notebook;
+      if (scrollIfNeeded && activeCell) {
+        await notebook.scrollToItem(activeCellIndex, 'auto', 0).catch(reason => {
+          // no-op
+        });
+      }
+      if (state.wasFocused || notebook.mode === 'edit') {
+        notebook.activate();
+      }
+    }
 
-  // Get selected cells without outputs
-  const data = selectedCellsWithoutOutputs(notebook);
-  console.log(data)
+/**
+   * Delete the selected cells.
+   *
+   * @param notebook - The target notebook widget.
+   *
+   * #### Notes
+   * The cell after the last selected cell will be activated.
+   * If the last cell is deleted, then the previous one will be activated.
+   * It will add a code cell if all cells are deleted.
+   * This action can be undone.
+   */
+  export function deleteCells(notebook: Notebook): void {
+    const model = notebook.model!;
+    const sharedModel = model.sharedModel;
+    const toDelete: number[] = [];
 
-  clipboard.setData(JUPYTER_CELL_MIME, data);
+    notebook.mode = 'command';
 
-  if (cut) {
-    NotebookActions.deleteCells(notebook);
-    notebook.lastClipboardInteraction = 'cut';
-  } else {
+    // Find the cells to delete.
+    notebook.widgets.forEach((child, index) => {
+      const deletable = child.model.getMetadata('deletable') !== false;
+
+      if (notebook.isSelectedOrActive(child) && deletable) {
+        toDelete.push(index);
+        notebook.model?.deletedCells.push(child.model.id);
+      }
+    });
+
+    // If cells are not deletable, we may not have anything to delete.
+    if (toDelete.length > 0) {
+      // Delete the cells as one undo event.
+      sharedModel.transact(() => {
+        // Delete cells in reverse order to maintain the correct indices.
+        toDelete.reverse().forEach(index => {
+          sharedModel.deleteCell(index);
+        });
+
+        // Add a new cell if the notebook is empty. This is done
+        // within the compound operation to make the deletion of
+        // a notebook's last cell undoable.
+        if (sharedModel.cells.length == toDelete.length) {
+          sharedModel.insertCell(0, {
+            cell_type: notebook.notebookConfig.defaultCell,
+            metadata:
+              notebook.notebookConfig.defaultCell === 'code'
+                ? {
+                    // This is an empty cell created in empty notebook, thus is trusted
+                    trusted: true
+                  }
+                : {}
+          });
+        }
+      });
+      // Select the *first* interior cell not deleted or the cell
+      // *after* the last selected cell.
+      // Note: The activeCellIndex is clamped to the available cells,
+      // so if the last cell is deleted the previous cell will be activated.
+      // The *first* index is the index of the last cell in the initial
+      // toDelete list due to the `reverse` operation above.
+      notebook.activeCellIndex = toDelete[0] - toDelete.length + 1;
+    }
+
+    // Deselect any remaining, undeletable cells. Do this even if we don't
+    // delete anything so that users are aware *something* happened.
     notebook.deselectAll();
-    notebook.lastClipboardInteraction = 'copy';
   }
-}
+
+/**
+   * Copy or cut the selected cell data to the clipboard without outputs.
+   *
+   * @param notebook - The target notebook widget.
+   *
+   * @param cut - True if the cells should be cut, false if they should be copied.
+   */
+  export function copyOrCut(notebook: Notebook, cut: boolean): void {
+    if (!notebook.model || !notebook.activeCell) {
+      return;
+    }
+
+    const state = getState(notebook);
+    const clipboard = Clipboard.getInstance();
+
+    notebook.mode = 'command';
+    clipboard.clear();
+
+    const data = selectedCellsWithoutOutputs(notebook);
+    console.log(data)
+
+    clipboard.setData(JUPYTER_CELL_MIME, data);
+    if (cut) {
+      deleteCells(notebook);
+    } else {
+      notebook.deselectAll();
+    }
+    if (cut) {
+      notebook.lastClipboardInteraction = 'cut';
+    } else {
+      notebook.lastClipboardInteraction = 'copy';
+    }
+    void handleState(notebook, state);
+  }
 
 /**
  * Duplicate selected cells without outputs.
@@ -194,8 +309,6 @@ export const overrideCopyPlugin: JupyterFrontEndPlugin<void> = {
           duplicateWithoutOutputs(notebook);
         }
       });
-
-      console.log('Copy/cut/duplicate commands overridden to exclude outputs');
     });
   }
 };
