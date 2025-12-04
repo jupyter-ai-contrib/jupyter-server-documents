@@ -111,6 +111,40 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
         }
       });
 
+      /**
+       * Remove save buttons from toolbar
+       */
+      const removeSaveButtons = () => {
+        const widgets = app.shell.widgets('main');
+
+        for (const widget of widgets) {
+          const toolbar = (widget as any)?.toolbar;
+          if (!toolbar?.node) {
+            continue;
+          }
+
+          const selector =
+            `[data-command="${SAVE_COMMANDS.save}"],` +
+            `[data-command="${SAVE_COMMANDS.saveAs}"],` +
+            `[data-command="${SAVE_COMMANDS.saveAll}"]`;
+
+          toolbar.node
+            .querySelectorAll(selector)
+            .forEach((button: { remove: () => void }) => {
+              button.remove();
+            });
+        }
+      };
+
+      setTimeout(() => removeSaveButtons(), 100);
+
+      const labShell = app.shell as any;
+      if (labShell.currentChanged) {
+        labShell.currentChanged.connect(() => {
+          requestAnimationFrame(() => removeSaveButtons());
+        });
+      }
+
       console.log('Full autosave enabled, save commands disabled');
     });
   }
