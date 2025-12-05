@@ -7,9 +7,9 @@
         "jupyterlab",
         "jupyterlab-extension"
     ],
-    "homepage": "https://github.com/jupyter-ai-contrib/jupyter_server_documents",
+    "homepage": "https://github.com/jupyter-ai-contrib/jupyter-server-documents",
     "bugs": {
-        "url": "https://github.com/jupyter-ai-contrib/jupyter_server_documents/issues"
+        "url": "https://github.com/jupyter-ai-contrib/jupyter-server-documents/issues"
     },
     "license": "BSD-3-Clause",
     "author": {
