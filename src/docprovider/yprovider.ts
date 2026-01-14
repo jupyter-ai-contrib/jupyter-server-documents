@@ -269,18 +269,6 @@ export class WebSocketProvider implements IDocumentProvider {
 
     // Re-connect
     this.reconnect();
-
-    // Emit notification if document is open & visible to the user (i.e. the tab
-    // exists & the content of that tab is being shown)
-    const docWidget = this.parentDocumentWidget;
-    if (docWidget && docWidget.isVisible) {
-      Notification.info(
-        `The file '${this._path}' was modified on disk. The document tab has been reset.`,
-        {
-          autoClose: 10000
-        }
-      );
-    }
   }
 
   /**
