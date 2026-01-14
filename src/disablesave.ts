@@ -3,6 +3,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Notification } from '@jupyterlab/apputils';
+import type { CommandRegistry } from '@lumino/commands';
 
 const SAVE_MESSAGE = 'Autosaving is enabled, manual saves are not needed';
 
@@ -37,7 +38,10 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
      */
     app.restored.then(() => {
       // Helper function to remove existing command and add new one
-      const overrideCommand = (commandId: string, options: any) => {
+      const overrideCommand = (
+        commandId: string,
+        options: CommandRegistry.ICommandOptions
+      ) => {
         if (app.commands.hasCommand(commandId)) {
           // Remove existing command using private API
           const commandRegistry = app.commands as any;
