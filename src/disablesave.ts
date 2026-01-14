@@ -3,6 +3,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Notification } from '@jupyterlab/apputils';
+import type { CommandRegistry } from '@lumino/commands';
 
 const SAVE_MESSAGE = 'Autosaving is enabled, manual saves are not needed';
 
@@ -37,7 +38,10 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
      */
     app.restored.then(() => {
       // Helper function to remove existing command and add new one
-      const overrideCommand = (commandId: string, options: any) => {
+      const overrideCommand = (
+        commandId: string,
+        options: CommandRegistry.ICommandOptions
+      ) => {
         if (app.commands.hasCommand(commandId)) {
           // Remove existing command using private API
           const commandRegistry = app.commands as any;
@@ -110,40 +114,6 @@ export const disableSavePlugin: JupyterFrontEndPlugin<void> = {
           return Promise.resolve();
         }
       });
-
-      /**
-       * Remove save buttons from toolbar
-       */
-      const removeSaveButtons = () => {
-        const widgets = app.shell.widgets('main');
-
-        for (const widget of widgets) {
-          const toolbar = (widget as any)?.toolbar;
-          if (!toolbar?.node) {
-            continue;
-          }
-
-          const selector =
-            `[data-command="${SAVE_COMMANDS.save}"],` +
-            `[data-command="${SAVE_COMMANDS.saveAs}"],` +
-            `[data-command="${SAVE_COMMANDS.saveAll}"]`;
-
-          toolbar.node
-            .querySelectorAll(selector)
-            .forEach((button: { remove: () => void }) => {
-              button.remove();
-            });
-        }
-      };
-
-      setTimeout(() => removeSaveButtons(), 100);
-
-      const labShell = app.shell as any;
-      if (labShell.currentChanged) {
-        labShell.currentChanged.connect(() => {
-          requestAnimationFrame(() => removeSaveButtons());
-        });
-      }
 
       console.log('Full autosave enabled, save commands disabled');
     });
