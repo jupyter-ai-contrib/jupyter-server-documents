@@ -2,6 +2,37 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.0
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a9...a65fd2129eca2e844fa02590020af8a2f7159fd3))
+
+### Enhancements made
+
+- Disable OOB change notification [#187](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/187) ([@dlqqq](https://github.com/dlqqq), [@ellisonbg](https://github.com/ellisonbg))
+
+### Bugs fixed
+
+- Remove save toolbar buttons [#180](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/180) ([@nakul-py](https://github.com/nakul-py), [@dlqqq](https://github.com/dlqqq))
+
+### Maintenance and upkeep improvements
+
+- Update verbose logs to debug level [#181](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/181) ([@3coins](https://github.com/3coins), [@dlqqq](https://github.com/dlqqq))
+
+### Other merged PRs
+
+- Fix metadata links [#184](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/184) ([@ktaletsk](https://github.com/ktaletsk), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-11-18&to=2026-01-15&type=c))
+
+@3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-11-18..2026-01-15&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-11-18..2026-01-15&type=Issues)) | @ellisonbg ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aellisonbg+updated%3A2025-11-18..2026-01-15&type=Issues)) | @ktaletsk ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aktaletsk+updated%3A2025-11-18..2026-01-15&type=Issues)) | @nakul-py ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Anakul-py+updated%3A2025-11-18..2026-01-15&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.0a9
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a8...dccb851a90d057da08c55a9c7e4d4da77bb80c8b))
@@ -24,8 +55,6 @@
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-10-23&to=2025-11-18&type=c))
 
 [@3coins](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-10-23..2025-11-18&type=Issues) | [@dlqqq](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-10-23..2025-11-18&type=Issues) | [@rgbkrk](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Argbkrk+updated%3A2025-10-23..2025-11-18&type=Issues) | [@Zsailer](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2025-10-23..2025-11-18&type=Issues)
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.0a8
 
