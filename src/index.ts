@@ -133,7 +133,7 @@ class AwarenessExecutionIndicatorIcon
     const item = new AwarenessExecutionIndicator();
     const nb = panel.content;
     item.model.attachNotebook({ content: nb });
-    panel.toolbar.insertAfter('kernelName', 'awarenessExecutionProgress', item);
+    panel.toolbar.addItem('awarenessExecutionProgress', item);
     return item;
   }
 }
