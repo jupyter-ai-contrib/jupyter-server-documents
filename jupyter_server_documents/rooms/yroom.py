@@ -564,6 +564,45 @@ class YRoom(LoggingConfigurable):
         """Remove a cell's entry from a namespace."""
         self._update_cell_data(namespace, cell_id, None)
 
+    # --- Generic cell data API (metadata) ---
+
+    async def set_cell_metadata(self, cell_id: str, namespace: str, data) -> None:
+        """Replace the entire namespace in a cell's metadata."""
+        notebook = await self.get_jupyter_ydoc()
+        _, cell = notebook.find_cell(cell_id)
+        if cell is None:
+            return
+        cell["metadata"][namespace] = data
+
+    async def update_cell_metadata(self, cell_id: str, namespace: str, **fields) -> None:
+        """Merge non-None fields into existing namespace metadata."""
+        notebook = await self.get_jupyter_ydoc()
+        _, cell = notebook.find_cell(cell_id)
+        if cell is None:
+            return
+        existing = cell["metadata"].to_py().get(namespace, {})
+        existing.update({k: v for k, v in fields.items() if v is not None})
+        cell["metadata"][namespace] = existing
+
+    async def get_cell_metadata(self, cell_id: str, namespace: str) -> dict:
+        """Read current namespace data from cell metadata."""
+        notebook = await self.get_jupyter_ydoc()
+        _, cell = notebook.find_cell(cell_id)
+        if cell is None:
+            return {}
+        return cell["metadata"].to_py().get(namespace, {})
+
+    async def remove_cell_metadata(self, cell_id: str, namespace: str) -> None:
+        """Remove a namespace from cell metadata."""
+        notebook = await self.get_jupyter_ydoc()
+        _, cell = notebook.find_cell(cell_id)
+        if cell is None:
+            return
+        meta = cell["metadata"].to_py()
+        if namespace in meta:
+            del meta[namespace]
+            cell["metadata"] = meta
+
     def add_message(self, client_id: str, message: bytes) -> None:
         """
         Adds new message to the message queue. Items placed in the message queue
