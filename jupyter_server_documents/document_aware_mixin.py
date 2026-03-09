@@ -149,7 +149,7 @@ class DocumentAwareMixin:
 
                 # Update cell execution state
                 if cell_id:
-                    yroom.set_cell_execution_state(cell_id, execution_state)
+                    yroom.set_cell_awareness(cell_id, "execution_state", {"state": execution_state})
                     break
         except Exception as e:
             self.log.error(f"Error in _handle_status_message: {e}", exc_info=True)
@@ -230,7 +230,7 @@ class DocumentAwareMixin:
                 # Set awareness state immediately for queued cells
                 if msg_type == "execute_request" and channel_name == "shell":
                     for yroom in self._yrooms:
-                        yroom.set_cell_awareness_state(cell_id, "busy")
+                        yroom.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 
