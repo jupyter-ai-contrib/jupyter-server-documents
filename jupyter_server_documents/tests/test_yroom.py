@@ -87,6 +87,74 @@ class TestYRoomCallbacks():
         stop_mock.assert_not_called()
 
 
+class TestCellAwarenessAPI():
+    """
+    Tests for the generic cell awareness API on YRoom.
+    """
+
+    @pytest.mark.asyncio
+    async def test_set_cell_awareness(self, make_yroom: MakeYRoom):
+        """Set data for a cell in a namespace and read it back."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "execution_state", {"status": "running"})
+        result = room.get_cell_awareness("cell-1", "execution_state")
+        assert result == {"status": "running"}
+
+    @pytest.mark.asyncio
+    async def test_update_cell_awareness_merges_fields(self, make_yroom: MakeYRoom):
+        """Set initial data, then update with partial fields and verify merge."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "execution_state", {"status": "running", "count": 1})
+        room.update_cell_awareness("cell-1", "execution_state", count=2, new_field="hello")
+        result = room.get_cell_awareness("cell-1", "execution_state")
+        assert result == {"status": "running", "count": 2, "new_field": "hello"}
+
+    @pytest.mark.asyncio
+    async def test_update_cell_awareness_ignores_none(self, make_yroom: MakeYRoom):
+        """Verify that None values are not merged into existing data."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "ns", {"a": 1, "b": 2})
+        room.update_cell_awareness("cell-1", "ns", a=None, b=3)
+        result = room.get_cell_awareness("cell-1", "ns")
+        assert result == {"a": 1, "b": 3}
+
+    @pytest.mark.asyncio
+    async def test_remove_cell_awareness(self, make_yroom: MakeYRoom):
+        """Set data, remove it, and verify it returns empty dict."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "ns", {"data": True})
+        room.remove_cell_awareness("cell-1", "ns")
+        result = room.get_cell_awareness("cell-1", "ns")
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_namespaces_are_isolated(self, make_yroom: MakeYRoom):
+        """Two namespaces for the same cell don't interfere."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "ns_a", {"x": 1})
+        room.set_cell_awareness("cell-1", "ns_b", {"y": 2})
+        assert room.get_cell_awareness("cell-1", "ns_a") == {"x": 1}
+        assert room.get_cell_awareness("cell-1", "ns_b") == {"y": 2}
+
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_returns_empty_dict(self, make_yroom: MakeYRoom):
+        """Reading data for a missing cell/namespace returns {}."""
+        room = await make_yroom()
+        assert room.get_cell_awareness("no-such-cell", "no-such-ns") == {}
+
+    @pytest.mark.asyncio
+    async def test_awareness_structure(self, make_yroom: MakeYRoom):
+        """Verify data is stored under the 'cell_data' top-level awareness key."""
+        room = await make_yroom()
+        room.set_cell_awareness("cell-1", "execution_state", {"status": "idle"})
+        awareness = room.get_awareness()
+        local_state = awareness.get_local_state()
+        assert "cell_data" in local_state
+        assert "execution_state" in local_state["cell_data"]
+        assert "cell-1" in local_state["cell_data"]["execution_state"]
+        assert local_state["cell_data"]["execution_state"]["cell-1"] == {"status": "idle"}
+
+
 class TestYRoomInactivity():
     """
     Tests for `YRoom` inactivity timeout behavior.
