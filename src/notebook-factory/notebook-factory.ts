@@ -238,11 +238,13 @@ class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
   // Look through all client states for cell execution states
   let hasAnyExecutionStates = false;
   for (const [_, clientState] of awarenessStates) {
-    if (clientState && 'cell_execution_states' in clientState) {
-      const cellStates = clientState['cell_execution_states'];
+    if (clientState && 'cell_data' in clientState) {
+      const cellData = clientState['cell_data'] as Record<string, Record<string, unknown>>;
+      const cellStates = cellData?.['execution_state'];
       hasAnyExecutionStates = true;
       if (cellStates && this.model.sharedModel.getId() in cellStates) {
-        return cellStates[this.model.sharedModel.getId()];
+        const entry = cellStates[this.model.sharedModel.getId()] as { state?: string };
+        return entry?.state;
       }
     }
   }
