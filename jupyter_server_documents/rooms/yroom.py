@@ -521,6 +521,49 @@ class YRoom(LoggingConfigurable):
                 "kernel", {"execution_state": execution_state}
             )
 
+    # --- Generic cell data API (awareness) ---
+
+    def _update_cell_data(self, namespace: str, cell_id: str, value: dict | None) -> None:
+        """Read-modify-write for the cell_data awareness key.
+        If value is None, removes the cell's entry. Otherwise sets it.
+        """
+        awareness = self.get_awareness()
+        if awareness is None:
+            return
+        local_state = awareness.get_local_state()
+        cell_data = local_state.get("cell_data", {}) if local_state else {}
+        ns = cell_data.get(namespace, {})
+        if value is None:
+            ns.pop(cell_id, None)
+        else:
+            ns[cell_id] = value
+        cell_data[namespace] = ns
+        awareness.set_local_state_field("cell_data", cell_data)
+
+    def set_cell_awareness(self, cell_id: str, namespace: str, data: dict) -> None:
+        """Replace the entire entry for a cell in a namespace."""
+        self._update_cell_data(namespace, cell_id, data)
+
+    def update_cell_awareness(self, cell_id: str, namespace: str, **fields) -> None:
+        """Merge non-None fields into the existing entry."""
+        current = self.get_cell_awareness(cell_id, namespace)
+        current.update({k: v for k, v in fields.items() if v is not None})
+        self._update_cell_data(namespace, cell_id, current)
+
+    def get_cell_awareness(self, cell_id: str, namespace: str) -> dict:
+        """Read current data for a cell in a namespace."""
+        awareness = self.get_awareness()
+        if awareness is None:
+            return {}
+        local_state = awareness.get_local_state()
+        if local_state is None:
+            return {}
+        return local_state.get("cell_data", {}).get(namespace, {}).get(cell_id, {})
+
+    def remove_cell_awareness(self, cell_id: str, namespace: str) -> None:
+        """Remove a cell's entry from a namespace."""
+        self._update_cell_data(namespace, cell_id, None)
+
     def add_message(self, client_id: str, message: bytes) -> None:
         """
         Adds new message to the message queue. Items placed in the message queue
