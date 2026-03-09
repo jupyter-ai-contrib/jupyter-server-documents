@@ -483,31 +483,6 @@ class YRoom(LoggingConfigurable):
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
     
-    def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
-        """
-        Sets the execution state for a specific cell in the awareness system.
-        This provides real-time updates to all connected clients and persists
-        while the server is running (survives client reconnections).
-        """
-        awareness = self.get_awareness()
-        if awareness is None:
-            return
-
-        local_state = awareness.get_local_state()
-        if local_state is not None:
-            cell_states = local_state.get("cell_execution_states", {})
-        else:
-            cell_states = {}
-
-        cell_states[cell_id] = execution_state
-        awareness.set_local_state_field("cell_execution_states", cell_states)
-
-    def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
-        """
-        Alias for set_cell_execution_state for backward compatibility.
-        """
-        self.set_cell_execution_state(cell_id, execution_state)
-
     def set_kernel_execution_state(self, execution_state: str) -> None:
         """
         Sets the kernel execution state in awareness.
