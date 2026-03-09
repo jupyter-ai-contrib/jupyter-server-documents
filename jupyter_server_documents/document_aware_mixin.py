@@ -63,6 +63,7 @@ class DocumentAwareMixin:
                 ("kernel_info_reply", "shell"),
                 ("status", "iopub"),
                 ("execute_input", "iopub"),
+                ("execute_reply", "shell"),
                 ("stream", "iopub"),
                 ("display_data", "iopub"),
                 ("execute_result", "iopub"),
@@ -114,6 +115,8 @@ class DocumentAwareMixin:
                 await self._handle_status_message(dmsg, parent_channel, cell_id)
             case "execute_input":
                 await self._handle_execute_input(dmsg, cell_id)
+            case "execute_reply":
+                await self._handle_execute_reply(dmsg, cell_id)
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 await self._handle_output_message(dmsg, msg_type, cell_id)
 
@@ -155,23 +158,70 @@ class DocumentAwareMixin:
             self.log.error(f"Error in _handle_status_message: {e}", exc_info=True)
 
     async def _handle_execute_input(self, dmsg: dict, cell_id: str | None):
-        """Update cell execution count when execution begins."""
+        """Update cell execution count and record start timestamp."""
         if not cell_id:
             return
 
-        try:
-            content = self.session.unpack(dmsg["content"])
-            execution_count = content.get("execution_count")
+        content = self.session.unpack(dmsg["content"])
+        execution_count = content.get("execution_count")
+        start_time = dmsg.get("header", {}).get("date")
 
-            if execution_count is not None:
-                for yroom in self._yrooms:
+        # Metadata write — isolated so failure does NOT block awareness
+        try:
+            for yroom in self._yrooms:
+                if execution_count is not None:
                     notebook = await yroom.get_jupyter_ydoc()
                     _, target_cell = notebook.find_cell(cell_id)
                     if target_cell:
                         target_cell["execution_count"] = execution_count
-                        break
+                if start_time:
+                    await yroom.update_cell_metadata(
+                        cell_id, "execution", **{"iopub.execute_input": start_time}
+                    )
+                break
         except Exception as e:
-            self.log.error(f"Error in _handle_execute_input: {e}", exc_info=True)
+            self.log.error(f"Error updating metadata in _handle_execute_input: {e}", exc_info=True)
+
+        # Awareness — merge start timestamp into existing timing entry
+        if start_time:
+            try:
+                for yroom in self._yrooms:
+                    yroom.update_cell_awareness(cell_id, "execution_timing", start=start_time)
+                    break
+            except Exception as e:
+                self.log.error(f"Error updating awareness in _handle_execute_input: {e}", exc_info=True)
+
+    async def _handle_execute_reply(self, dmsg: dict, cell_id: str | None):
+        """Record end timestamp and status when execution completes."""
+        if not cell_id:
+            return
+
+        end_time = dmsg.get("header", {}).get("date")
+        content = self.session.unpack(dmsg["content"])
+        status = content.get("status", "ok")
+
+        # Metadata write — isolated so failure does NOT block awareness
+        if end_time:
+            try:
+                fields = {"shell.execute_reply": end_time}
+                if status == "error":
+                    fields["execution_failed"] = end_time
+                for yroom in self._yrooms:
+                    await yroom.update_cell_metadata(cell_id, "execution", **fields)
+                    break
+            except Exception as e:
+                self.log.error(f"Error updating metadata in _handle_execute_reply: {e}", exc_info=True)
+
+        # Awareness — mark completed/failed, then remove (caller-managed pruning)
+        timing_status = "failed" if status == "error" else "completed"
+        try:
+            for yroom in self._yrooms:
+                yroom.update_cell_awareness(
+                    cell_id, "execution_timing", status=timing_status, end=end_time
+                )
+                break
+        except Exception as e:
+            self.log.error(f"Error updating awareness in _handle_execute_reply: {e}", exc_info=True)
 
     async def _handle_output_message(self, dmsg: dict, msg_type: str, cell_id: str | None):
         """Process output messages through output processor."""
@@ -231,6 +281,7 @@ class DocumentAwareMixin:
                 if msg_type == "execute_request" and channel_name == "shell":
                     for yroom in self._yrooms:
                         yroom.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
+                        yroom.set_cell_awareness(cell_id, "execution_timing", {"status": "running"})
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 
