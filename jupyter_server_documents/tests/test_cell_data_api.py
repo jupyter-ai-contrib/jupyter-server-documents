@@ -48,54 +48,54 @@ async def notebook_yroom(mock_yroom_manager: YRoomManager, mock_notebook_path: P
 
 
 class TestCellMetadataAPI:
-    """Tests for the generic cell metadata API on YRoom."""
+    """Tests for the cell metadata API on YNotebook (accessed via YRoom.jupyter_ydoc)."""
 
     @pytest.mark.asyncio
     async def test_set_cell_metadata(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        await yroom.set_cell_metadata("test-cell-1", "execution", {"start": "T1"})
+        notebook = notebook_yroom.jupyter_ydoc
+        notebook.set_cell_metadata("test-cell-1", "execution", {"start": "T1"})
 
-        result = await yroom.get_cell_metadata("test-cell-1", "execution")
+        result = notebook.get_cell_metadata("test-cell-1", "execution")
         assert result == {"start": "T1"}
 
     @pytest.mark.asyncio
     async def test_update_cell_metadata_merges(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        await yroom.set_cell_metadata("test-cell-1", "execution", {"start": "T1"})
-        await yroom.update_cell_metadata("test-cell-1", "execution", end="T2")
+        notebook = notebook_yroom.jupyter_ydoc
+        notebook.set_cell_metadata("test-cell-1", "execution", {"start": "T1"})
+        notebook.update_cell_metadata("test-cell-1", "execution", end="T2")
 
-        result = await yroom.get_cell_metadata("test-cell-1", "execution")
+        result = notebook.get_cell_metadata("test-cell-1", "execution")
         assert result == {"start": "T1", "end": "T2"}
 
     @pytest.mark.asyncio
     async def test_update_cell_metadata_ignores_none(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        await yroom.set_cell_metadata("test-cell-1", "ns", {"a": "1", "b": "2"})
-        await yroom.update_cell_metadata("test-cell-1", "ns", a="new", b=None)
+        notebook = notebook_yroom.jupyter_ydoc
+        notebook.set_cell_metadata("test-cell-1", "ns", {"a": "1", "b": "2"})
+        notebook.update_cell_metadata("test-cell-1", "ns", a="new", b=None)
 
-        result = await yroom.get_cell_metadata("test-cell-1", "ns")
+        result = notebook.get_cell_metadata("test-cell-1", "ns")
         assert result == {"a": "new", "b": "2"}
 
     @pytest.mark.asyncio
     async def test_remove_cell_metadata(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        await yroom.set_cell_metadata("test-cell-1", "ns", {"data": True})
-        await yroom.remove_cell_metadata("test-cell-1", "ns")
+        notebook = notebook_yroom.jupyter_ydoc
+        notebook.set_cell_metadata("test-cell-1", "ns", {"data": True})
+        notebook.remove_cell_metadata("test-cell-1", "ns")
 
-        result = await yroom.get_cell_metadata("test-cell-1", "ns")
+        result = notebook.get_cell_metadata("test-cell-1", "ns")
         assert result == {}
 
     @pytest.mark.asyncio
     async def test_nonexistent_cell_returns_empty(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        result = await yroom.get_cell_metadata("no-such-cell", "ns")
+        notebook = notebook_yroom.jupyter_ydoc
+        result = notebook.get_cell_metadata("no-such-cell", "ns")
         assert result == {}
 
     @pytest.mark.asyncio
     async def test_namespaces_isolated(self, notebook_yroom: YRoom):
-        yroom = notebook_yroom
-        await yroom.set_cell_metadata("test-cell-1", "ns_a", {"a": True})
-        await yroom.set_cell_metadata("test-cell-1", "ns_b", {"b": True})
+        notebook = notebook_yroom.jupyter_ydoc
+        notebook.set_cell_metadata("test-cell-1", "ns_a", {"a": True})
+        notebook.set_cell_metadata("test-cell-1", "ns_b", {"b": True})
 
-        assert await yroom.get_cell_metadata("test-cell-1", "ns_a") == {"a": True}
-        assert await yroom.get_cell_metadata("test-cell-1", "ns_b") == {"b": True}
+        assert notebook.get_cell_metadata("test-cell-1", "ns_a") == {"a": True}
+        assert notebook.get_cell_metadata("test-cell-1", "ns_b") == {"b": True}

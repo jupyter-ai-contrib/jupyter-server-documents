@@ -152,7 +152,9 @@ class DocumentAwareMixin:
 
                 # Update cell execution state
                 if cell_id:
-                    yroom.set_cell_awareness(cell_id, "execution_state", {"state": execution_state})
+                    notebook = yroom.jupyter_ydoc
+                    if notebook and hasattr(notebook, 'set_cell_awareness'):
+                        notebook.set_cell_awareness(cell_id, "execution_state", {"state": execution_state})
                     break
         except Exception as e:
             self.log.error(f"Error in _handle_status_message: {e}", exc_info=True)
@@ -168,14 +170,16 @@ class DocumentAwareMixin:
 
         # Metadata write — isolated so failure does NOT block awareness
         try:
-            for yroom in self._yrooms:
-                if execution_count is not None:
-                    notebook = await yroom.get_jupyter_ydoc()
+            if execution_count is not None:
+                for yroom in self._yrooms:
+                    notebook = yroom.jupyter_ydoc
+                    if notebook is None:
+                        continue
                     _, target_cell = notebook.find_cell(cell_id)
                     if target_cell:
                         target_cell["execution_count"] = execution_count
                 if start_time:
-                    await yroom.update_cell_metadata(
+                    notebook.update_cell_metadata(
                         cell_id, "execution", **{"iopub.execute_input": start_time}
                     )
                 break
@@ -186,7 +190,9 @@ class DocumentAwareMixin:
         if start_time:
             try:
                 for yroom in self._yrooms:
-                    yroom.update_cell_awareness(cell_id, "execution_timing", start=start_time)
+                    notebook = yroom.jupyter_ydoc
+                    if notebook and hasattr(notebook, 'update_cell_awareness'):
+                        notebook.update_cell_awareness(cell_id, "execution_timing", start=start_time)
                     break
             except Exception as e:
                 self.log.error(f"Error updating awareness in _handle_execute_input: {e}", exc_info=True)
@@ -207,7 +213,9 @@ class DocumentAwareMixin:
                 if status == "error":
                     fields["execution_failed"] = end_time
                 for yroom in self._yrooms:
-                    await yroom.update_cell_metadata(cell_id, "execution", **fields)
+                    notebook = yroom.jupyter_ydoc
+                    if notebook and hasattr(notebook, 'update_cell_metadata'):
+                        notebook.update_cell_metadata(cell_id, "execution", **fields)
                     break
             except Exception as e:
                 self.log.error(f"Error updating metadata in _handle_execute_reply: {e}", exc_info=True)
@@ -216,9 +224,11 @@ class DocumentAwareMixin:
         timing_status = "failed" if status == "error" else "completed"
         try:
             for yroom in self._yrooms:
-                yroom.update_cell_awareness(
-                    cell_id, "execution_timing", status=timing_status, end=end_time
-                )
+                notebook = yroom.jupyter_ydoc
+                if notebook and hasattr(notebook, 'update_cell_awareness'):
+                    notebook.update_cell_awareness(
+                        cell_id, "execution_timing", status=timing_status, end=end_time
+                    )
                 break
         except Exception as e:
             self.log.error(f"Error updating awareness in _handle_execute_reply: {e}", exc_info=True)
@@ -280,8 +290,11 @@ class DocumentAwareMixin:
                 # Set awareness state immediately for queued cells
                 if msg_type == "execute_request" and channel_name == "shell":
                     for yroom in self._yrooms:
-                        yroom.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
-                        yroom.set_cell_awareness(cell_id, "execution_timing", {"status": "running"})
+                        notebook = yroom.jupyter_ydoc
+                        if notebook is None or not hasattr(notebook, 'set_cell_awareness'):
+                            break
+                        notebook.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
+                        notebook.set_cell_awareness(cell_id, "execution_timing", {"status": "running"})
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 

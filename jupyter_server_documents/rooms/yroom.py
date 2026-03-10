@@ -419,6 +419,11 @@ class YRoom(LoggingConfigurable):
         """Returns whether this room is inactive and has no connected clients."""
         return self.inactive and self.empty
 
+    @property
+    def jupyter_ydoc(self) -> YBaseDoc | None:
+        """Sync access to the Jupyter YDoc (may not have content loaded yet)."""
+        return self._jupyter_ydoc
+
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
         Returns a reference to the room's Jupyter YDoc
@@ -495,88 +500,6 @@ class YRoom(LoggingConfigurable):
             awareness.set_local_state_field(
                 "kernel", {"execution_state": execution_state}
             )
-
-    # --- Generic cell data API (awareness) ---
-
-    def _update_cell_data(self, namespace: str, cell_id: str, value: dict | None) -> None:
-        """Read-modify-write for the cell_data awareness key.
-        If value is None, removes the cell's entry. Otherwise sets it.
-        """
-        awareness = self.get_awareness()
-        if awareness is None:
-            return
-        local_state = awareness.get_local_state()
-        cell_data = local_state.get("cell_data", {}) if local_state else {}
-        ns = cell_data.get(namespace, {})
-        if value is None:
-            ns.pop(cell_id, None)
-        else:
-            ns[cell_id] = value
-        cell_data[namespace] = ns
-        awareness.set_local_state_field("cell_data", cell_data)
-
-    def set_cell_awareness(self, cell_id: str, namespace: str, data: dict) -> None:
-        """Replace the entire entry for a cell in a namespace."""
-        self._update_cell_data(namespace, cell_id, data)
-
-    def update_cell_awareness(self, cell_id: str, namespace: str, **fields) -> None:
-        """Merge non-None fields into the existing entry."""
-        current = self.get_cell_awareness(cell_id, namespace)
-        current.update({k: v for k, v in fields.items() if v is not None})
-        self._update_cell_data(namespace, cell_id, current)
-
-    def get_cell_awareness(self, cell_id: str, namespace: str) -> dict:
-        """Read current data for a cell in a namespace."""
-        awareness = self.get_awareness()
-        if awareness is None:
-            return {}
-        local_state = awareness.get_local_state()
-        if local_state is None:
-            return {}
-        return local_state.get("cell_data", {}).get(namespace, {}).get(cell_id, {})
-
-    def remove_cell_awareness(self, cell_id: str, namespace: str) -> None:
-        """Remove a cell's entry from a namespace."""
-        self._update_cell_data(namespace, cell_id, None)
-
-    # --- Generic cell data API (metadata) ---
-
-    async def set_cell_metadata(self, cell_id: str, namespace: str, data) -> None:
-        """Replace the entire namespace in a cell's metadata."""
-        notebook = await self.get_jupyter_ydoc()
-        _, cell = notebook.find_cell(cell_id)
-        if cell is None:
-            return
-        cell["metadata"][namespace] = data
-
-    async def update_cell_metadata(self, cell_id: str, namespace: str, **fields) -> None:
-        """Merge non-None fields into existing namespace metadata."""
-        notebook = await self.get_jupyter_ydoc()
-        _, cell = notebook.find_cell(cell_id)
-        if cell is None:
-            return
-        existing = cell["metadata"].to_py().get(namespace, {})
-        existing.update({k: v for k, v in fields.items() if v is not None})
-        cell["metadata"][namespace] = existing
-
-    async def get_cell_metadata(self, cell_id: str, namespace: str) -> dict:
-        """Read current namespace data from cell metadata."""
-        notebook = await self.get_jupyter_ydoc()
-        _, cell = notebook.find_cell(cell_id)
-        if cell is None:
-            return {}
-        return cell["metadata"].to_py().get(namespace, {})
-
-    async def remove_cell_metadata(self, cell_id: str, namespace: str) -> None:
-        """Remove a namespace from cell metadata."""
-        notebook = await self.get_jupyter_ydoc()
-        _, cell = notebook.find_cell(cell_id)
-        if cell is None:
-            return
-        meta = cell["metadata"].to_py()
-        if namespace in meta:
-            del meta[namespace]
-            cell["metadata"] = meta
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
