@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from .yroom import YRoom
 from .gc_debug_logger import GcDebugLogger
-from typing import TYPE_CHECKING
+from typing import cast, Callable, TYPE_CHECKING
 import asyncio
 import gc
 import time
@@ -99,6 +99,25 @@ class YRoomManager(LoggingConfigurable):
         # Start `self._auto_free_rooms()` as a background task to automatically
         # free rooms from memory
         self._auto_free_rooms_task = asyncio.get_event_loop().create_task(self._auto_free_rooms())
+
+        # Registry of plugin handlers for cell-level kernel messages
+        self._cell_data_handlers: list[tuple[set[str], Callable]] = []
+
+    def register_cell_data_handler(
+        self, msg_types: list[str], handler: Callable
+    ) -> None:
+        """Register a handler for kernel messages that writes cell-level data.
+
+        Plugins call this at extension load time to react to kernel messages
+        and write cell data through the generic cell data API on YRoom.
+
+        Args:
+            msg_types: Kernel message types to listen for
+                (e.g. ["execute_input", "execute_reply"]).
+            handler: Async callable with signature
+                (yroom, cell_id, msg_type, content, header) -> None.
+        """
+        self._cell_data_handlers.append((set(msg_types), handler))
 
 
     @property
