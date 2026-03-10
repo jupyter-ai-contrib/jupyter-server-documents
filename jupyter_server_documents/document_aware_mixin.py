@@ -56,22 +56,10 @@ class DocumentAwareMixin:
         # Track last message ID per cell to detect re-executions
         self._cell_msg_ids: dict[str, str] = {}
 
-        # Register listener for document-related messages
-        self.add_listener(
-            self._handle_document_messages,
-            msg_types=[
-                ("kernel_info_reply", "shell"),
-                ("status", "iopub"),
-                ("execute_input", "iopub"),
-                ("execute_reply", "shell"),
-                ("stream", "iopub"),
-                ("display_data", "iopub"),
-                ("execute_result", "iopub"),
-                ("error", "iopub"),
-                ("update_display_data", "iopub"),
-                ("clear_output", "iopub"),
-            ],
-        )
+        # Register listener for all kernel messages (no msg_types filter).
+        # Core handlers dispatch via match/case; registered plugin handlers
+        # are called for any message type they requested.
+        self.add_listener(self._handle_document_messages)
 
     async def _handle_document_messages(self, channel_name: str, msg: list[bytes]):
         """Route kernel messages to document state and output handlers."""
@@ -106,7 +94,7 @@ class DocumentAwareMixin:
         cell_id = extract_src_id(parent_msg_id) if parent_msg_id else None
         parent_channel = extract_channel(parent_msg_id) if parent_msg_id else None
 
-        # Dispatch to appropriate handler
+        # Dispatch to core handlers
         msg_type = dmsg.get("msg_type")
         match msg_type:
             case "kernel_info_reply":
@@ -115,10 +103,20 @@ class DocumentAwareMixin:
                 await self._handle_status_message(dmsg, parent_channel, cell_id)
             case "execute_input":
                 await self._handle_execute_input(dmsg, cell_id)
-            case "execute_reply":
-                await self._handle_execute_reply(dmsg, cell_id)
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 await self._handle_output_message(dmsg, msg_type, cell_id)
+
+        # Dispatch to registered plugin handlers
+        if cell_id:
+            for yroom in self._yrooms:
+                for handler_msg_types, handler in yroom.parent._cell_data_handlers:
+                    if msg_type in handler_msg_types:
+                        try:
+                            content = self.session.unpack(dmsg["content"])
+                            await handler(yroom, cell_id, msg_type, content, dmsg["header"])
+                        except Exception as e:
+                            self.log.warning(f"Cell data handler error: {e}")
+                break
 
     async def _handle_kernel_info_reply(self, msg: dict):
         """Update notebook metadata with kernel language info."""
@@ -160,16 +158,14 @@ class DocumentAwareMixin:
             self.log.error(f"Error in _handle_status_message: {e}", exc_info=True)
 
     async def _handle_execute_input(self, dmsg: dict, cell_id: str | None):
-        """Update cell execution count and record start timestamp."""
+        """Update cell execution count when execution begins."""
         if not cell_id:
             return
 
-        content = self.session.unpack(dmsg["content"])
-        execution_count = content.get("execution_count")
-        start_time = dmsg.get("header", {}).get("date")
-
-        # Metadata write — isolated so failure does NOT block awareness
         try:
+            content = self.session.unpack(dmsg["content"])
+            execution_count = content.get("execution_count")
+
             if execution_count is not None:
                 for yroom in self._yrooms:
                     notebook = yroom.jupyter_ydoc
@@ -178,60 +174,9 @@ class DocumentAwareMixin:
                     _, target_cell = notebook.find_cell(cell_id)
                     if target_cell:
                         target_cell["execution_count"] = execution_count
-                if start_time:
-                    notebook.update_cell_metadata(
-                        cell_id, "execution", **{"iopub.execute_input": start_time}
-                    )
-                break
+                        break
         except Exception as e:
-            self.log.error(f"Error updating metadata in _handle_execute_input: {e}", exc_info=True)
-
-        # Awareness — merge start timestamp into existing timing entry
-        if start_time:
-            try:
-                for yroom in self._yrooms:
-                    notebook = yroom.jupyter_ydoc
-                    if notebook and hasattr(notebook, 'update_cell_awareness'):
-                        notebook.update_cell_awareness(cell_id, "execution_timing", start=start_time)
-                    break
-            except Exception as e:
-                self.log.error(f"Error updating awareness in _handle_execute_input: {e}", exc_info=True)
-
-    async def _handle_execute_reply(self, dmsg: dict, cell_id: str | None):
-        """Record end timestamp and status when execution completes."""
-        if not cell_id:
-            return
-
-        end_time = dmsg.get("header", {}).get("date")
-        content = self.session.unpack(dmsg["content"])
-        status = content.get("status", "ok")
-
-        # Metadata write — isolated so failure does NOT block awareness
-        if end_time:
-            try:
-                fields = {"shell.execute_reply": end_time}
-                if status == "error":
-                    fields["execution_failed"] = end_time
-                for yroom in self._yrooms:
-                    notebook = yroom.jupyter_ydoc
-                    if notebook and hasattr(notebook, 'update_cell_metadata'):
-                        notebook.update_cell_metadata(cell_id, "execution", **fields)
-                    break
-            except Exception as e:
-                self.log.error(f"Error updating metadata in _handle_execute_reply: {e}", exc_info=True)
-
-        # Awareness — mark completed/failed, then remove (caller-managed pruning)
-        timing_status = "failed" if status == "error" else "completed"
-        try:
-            for yroom in self._yrooms:
-                notebook = yroom.jupyter_ydoc
-                if notebook and hasattr(notebook, 'update_cell_awareness'):
-                    notebook.update_cell_awareness(
-                        cell_id, "execution_timing", status=timing_status, end=end_time
-                    )
-                break
-        except Exception as e:
-            self.log.error(f"Error updating awareness in _handle_execute_reply: {e}", exc_info=True)
+            self.log.error(f"Error in _handle_execute_input: {e}", exc_info=True)
 
     async def _handle_output_message(self, dmsg: dict, msg_type: str, cell_id: str | None):
         """Process output messages through output processor."""
@@ -294,7 +239,6 @@ class DocumentAwareMixin:
                         if notebook is None or not hasattr(notebook, 'set_cell_awareness'):
                             break
                         notebook.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
-                        notebook.set_cell_awareness(cell_id, "execution_timing", {"status": "running"})
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 
