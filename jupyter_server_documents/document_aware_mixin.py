@@ -246,6 +246,19 @@ class DocumentAwareMixin:
                         # Clear stale timing data from previous execution so queued
                         # cells don't show old completed/running state
                         notebook.remove_cell_awareness(cell_id, "execution_timing")
+                        # Dispatch to registered plugin handlers so they can clear
+                        # their own stale metadata before execute_input/reply arrive
+                        handlers = yroom.parent._cell_data_handlers
+                        for handler_msg_types, handler in handlers:
+                            if msg_type in handler_msg_types:
+                                try:
+                                    content = self.session.unpack(msg[3])
+                                    asyncio.create_task(
+                                        handler(notebook, cell_id, msg_type, content, header)
+                                    )
+                                except Exception as e:
+                                    self.log.debug(f"Handler dispatch error for {msg_type}: {e}")
+                        break
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 
