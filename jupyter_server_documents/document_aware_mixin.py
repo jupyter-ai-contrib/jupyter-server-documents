@@ -109,13 +109,17 @@ class DocumentAwareMixin:
         # Dispatch to registered plugin handlers
         if cell_id:
             for yroom in self._yrooms:
-                for handler_msg_types, handler in yroom.parent._cell_data_handlers:
+                handlers = yroom.parent._cell_data_handlers
+                for handler_msg_types, handler in handlers:
                     if msg_type in handler_msg_types:
                         try:
                             content = self.session.unpack(dmsg["content"])
+                            self.log.debug(
+                                f"Dispatching {msg_type} for cell {cell_id} to {handler.__name__}"
+                            )
                             await handler(yroom, cell_id, msg_type, content, dmsg["header"])
                         except Exception as e:
-                            self.log.warning(f"Cell data handler error: {e}")
+                            self.log.warning(f"Cell data handler error: {e}", exc_info=True)
                 break
 
     async def _handle_kernel_info_reply(self, msg: dict):
@@ -239,6 +243,9 @@ class DocumentAwareMixin:
                         if notebook is None or not hasattr(notebook, 'set_cell_awareness'):
                             break
                         notebook.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
+                        # Clear stale timing data from previous execution so queued
+                        # cells don't show old completed/running state
+                        notebook.remove_cell_awareness(cell_id, "execution_timing")
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
 
