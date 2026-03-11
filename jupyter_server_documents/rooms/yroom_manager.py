@@ -103,8 +103,14 @@ class YRoomManager(LoggingConfigurable):
         # Registry of plugin handlers for cell-level kernel messages
         self._cell_data_handlers: list[tuple[set[str], Callable]] = []
 
+        # Sync hooks called inline in handle_incoming_message on execute_request
+        self._execute_request_hooks: list[Callable] = []
+
     def register_cell_data_handler(
-        self, msg_types: list[str], handler: Callable
+        self,
+        msg_types: list[str],
+        handler: Callable,
+        on_execute_request: Callable | None = None,
     ) -> None:
         """Register a handler for kernel messages that writes cell-level data.
 
@@ -115,9 +121,15 @@ class YRoomManager(LoggingConfigurable):
             msg_types: Kernel message types to listen for
                 (e.g. ["execute_input", "execute_reply"]).
             handler: Async callable with signature
-                (yroom, cell_id, msg_type, content, header) -> None.
+                (notebook, cell_id, msg_type, content, header) -> None.
+            on_execute_request: Optional sync callable with signature
+                (notebook, cell_id) -> None. Called inline (no create_task)
+                in handle_incoming_message when execute_request arrives,
+                before the message is forwarded to the kernel.
         """
         self._cell_data_handlers.append((set(msg_types), handler))
+        if on_execute_request is not None:
+            self._execute_request_hooks.append(on_execute_request)
 
 
     @property
