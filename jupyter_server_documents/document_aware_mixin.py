@@ -38,6 +38,9 @@ class DocumentAwareMixin:
         # Traitlets don't work properly in mixins
         self._yrooms: t.Set[YRoom] = set()
 
+        # Track pending async tasks so they can be cancelled on cleanup
+        self._pending_tasks: set[asyncio.Task] = set()
+
         # Create output processor with proper parent chain if not already set
         # The parent chain allows OutputProcessor to access kernel_manager via self.parent.parent
         if not hasattr(self, 'output_processor') or self.output_processor is None:
@@ -206,6 +209,11 @@ class DocumentAwareMixin:
     async def remove_yroom(self, yroom: YRoom):
         """Unregister a YRoom from receiving kernel messages."""
         self._yrooms.discard(yroom)
+        # Cancel pending tasks when no yrooms remain
+        if not self._yrooms:
+            for task in self._pending_tasks:
+                task.cancel()
+            self._pending_tasks.clear()
 
     def handle_incoming_message(self, channel_name: str, msg: list[bytes]):
         """Handle messages from WebSocket clients before routing to kernel.
@@ -231,7 +239,9 @@ class DocumentAwareMixin:
                 # Clear outputs if this is a re-execution
                 last_msg_id = self._cell_msg_ids.get(cell_id)
                 if last_msg_id and last_msg_id != msg_id and self.output_processor:
-                    asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+                    task = asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+                    self._pending_tasks.add(task)
+                    task.add_done_callback(self._pending_tasks.discard)
 
                 # Track this message ID
                 self._cell_msg_ids[cell_id] = msg_id
@@ -243,21 +253,12 @@ class DocumentAwareMixin:
                         if notebook is None or not hasattr(notebook, 'set_cell_awareness'):
                             break
                         notebook.set_cell_awareness(cell_id, "execution_state", {"state": "busy"})
-                        # Clear stale timing data from previous execution so queued
-                        # cells don't show old completed/running state
-                        notebook.remove_cell_awareness(cell_id, "execution_timing")
-                        # Dispatch to registered plugin handlers so they can clear
-                        # their own stale metadata before execute_input/reply arrive
-                        handlers = yroom.parent._cell_data_handlers
-                        for handler_msg_types, handler in handlers:
-                            if msg_type in handler_msg_types:
-                                try:
-                                    content = self.session.unpack(msg[3])
-                                    asyncio.create_task(
-                                        handler(notebook, cell_id, msg_type, content, header)
-                                    )
-                                except Exception as e:
-                                    self.log.debug(f"Handler dispatch error for {msg_type}: {e}")
+                        # Call registered sync hooks for execute_request
+                        for hook in yroom.parent._execute_request_hooks:
+                            try:
+                                hook(notebook, cell_id)
+                            except Exception as e:
+                                self.log.debug(f"execute_request hook error: {e}")
                         break
         except Exception as e:
             self.log.debug(f"Error handling awareness for incoming message: {e}")
