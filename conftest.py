@@ -1,15 +1,25 @@
 from __future__ import annotations
 import pytest
+import pytest_asyncio
 
 import asyncio
 import logging
+import os
+import uuid
 from traitlets.config import Config, LoggingConfigurable
 from jupyter_server.services.contents.filemanager import AsyncFileContentsManager
 from typing import TYPE_CHECKING
 from jupyter_server_documents.rooms.yroom_manager import YRoomManager
+from jupyter_server_documents.rooms.yroom import YRoom
 
 if TYPE_CHECKING:
+    from pathlib import Path
+    from typing import Callable, Coroutine
     from jupyter_server.serverapp import ServerApp
+
+    MakeRoomFile = Callable[..., str]
+    MakeYRoomManager = Callable[..., YRoomManager]
+    MakeYRoom = Callable[..., Coroutine[None, None, YRoom]]
 
 
 pytest_plugins = ("pytest_jupyter.jupyter_server", "jupyter_server.pytest_plugin", "pytest_asyncio")
@@ -81,10 +91,65 @@ def mock_server_docs_app(jp_server_config, jp_configurable_serverapp) -> MockSer
     return MockServerDocsApp(config=jp_server_config, serverapp=serverapp)
 
 @pytest.fixture
-def mock_yroom_manager(mock_server_docs_app) -> YRoomManager:
+def make_yroom_manager(mock_server_docs_app: MockServerDocsApp) -> MakeYRoomManager:
     """
-    Returns a mocked `YRoomManager` which can be passed as the `parent` argument
-    to `YRoom` for testing purposes.
+    Factory fixture that returns a configured `YRoomManager` instance.
+    Accepts optional kwargs passed to the `YRoomManager` constructor.
     """
+    def _make_yroom_manager(**kwargs) -> YRoomManager:
+        return YRoomManager(parent=mock_server_docs_app, **kwargs)
 
-    return YRoomManager(parent=mock_server_docs_app)
+    return _make_yroom_manager
+
+
+@pytest_asyncio.fixture
+async def make_yroom(make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+    """
+    Factory fixture that returns a configured `YRoom` instance.
+    Accepts optional kwargs passed to the `YRoom` constructor (e.g.
+    `inactivity_timeout`).
+    """
+    manager = make_yroom_manager()
+    rooms: list[YRoom] = []
+
+    async def _make_yroom(**kwargs) -> YRoom:
+        room_id = make_room_file()
+        room = YRoom(parent=manager, room_id=room_id, **kwargs)
+        await room.file_api.until_content_loaded
+        rooms.append(room)
+        return room
+
+    yield _make_yroom
+
+    for room in rooms:
+        room.stop(immediately=True)
+
+
+@pytest.fixture
+def make_room_file(tmp_path: Path, make_yroom_manager: MakeYRoomManager, request: pytest.FixtureRequest) -> MakeRoomFile:
+    """
+    Factory fixture that creates a text file and returns its room ID.
+
+    Accepts an optional `filename` argument, defaulting to a UUID-based `.txt`
+    filename. The file is created under `tmp_path` and cleaned up after the
+    test.
+    """
+    manager = make_yroom_manager()
+    created_files: list[Path] = []
+
+    def _make_room_file(filename: str | None = None) -> str:
+        if filename is None:
+            filename = f"{uuid.uuid4()}.txt"
+        path = tmp_path / filename
+        path.touch()
+        created_files.append(path)
+        file_id = manager.fileid_manager.index(str(path))
+        return f"text:file:{file_id}"
+
+    def _cleanup():
+        for path in created_files:
+            if path.exists():
+                os.remove(path)
+
+    request.addfinalizer(_cleanup)
+    return _make_room_file

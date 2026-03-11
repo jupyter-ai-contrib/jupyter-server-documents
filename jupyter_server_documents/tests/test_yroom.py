@@ -1,82 +1,26 @@
 from __future__ import annotations
 import asyncio
 import pytest
-import pytest_asyncio
-import os
 from unittest.mock import Mock
-from jupyter_server_documents.rooms.yroom import YRoom
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from pathlib import Path
-    from typing import Callable, Coroutine
-    from jupyter_server_documents.rooms import YRoomManager
+    from ...conftest import MakeYRoom
 
-    MakeYRoom = Callable[..., Coroutine[None, None, YRoom]]
-
-@pytest.fixture
-def mock_textfile_path(tmp_path: Path):
-    """
-    Returns the path of a mock text file under `/tmp`.
-
-    Automatically creates the file before each test & deletes the file after
-    each test.
-    """
-    # Create file before test and yield the path
-    path: Path = tmp_path / "test.txt"
-    path.touch()
-    yield path
-
-    # Cleanup after test
-    os.remove(path)
-
-
-@pytest_asyncio.fixture
-async def make_yroom(mock_yroom_manager: YRoomManager, mock_textfile_path: Path):
-    """
-    Factory fixture that returns a configured `YRoom` instance.
-    Accepts optional kwargs passed to the `YRoom` constructor (e.g.
-    `inactivity_timeout`).
-
-    Uses the `mock_yroom_manager` fixture defined in `conftest.py`.
-    """
-    rooms: list[YRoom] = []
-
-    async def _make_yroom(**kwargs) -> YRoom:
-        file_id = mock_yroom_manager.fileid_manager.index(str(mock_textfile_path))
-        room_id = f"text:file:{file_id}"
-        room = YRoom(parent=mock_yroom_manager, room_id=room_id, **kwargs)
-        await room.file_api.until_content_loaded
-        rooms.append(room)
-        return room
-
-    yield _make_yroom
-
-    for room in rooms:
-        room.stop(immediately=True)
-
-
-@pytest_asyncio.fixture
-async def default_yroom(make_yroom: MakeYRoom):
-    """
-    Returns a configured `YRoom` instance that serves an empty text file under
-    `/tmp`, using default settings.
-    """
-    yield await make_yroom()
 
 class TestDefaultYRoom():
     """
-    Tests that assert against the `default_yroom` fixture defined above.
+    Tests that assert against a default `YRoom` created via `make_yroom()`.
     """
 
     @pytest.mark.asyncio
-    async def test_on_reset_callbacks(self, default_yroom: YRoom):
+    async def test_on_reset_callbacks(self, make_yroom: MakeYRoom):
         """
         Asserts that the `on_reset()` callback passed to
         `YRoom.get_{awareness,jupyter_ydoc,ydoc}()` methods are each called with
         the expected object when the YDoc is reset.
         """
-        yroom = default_yroom
+        yroom = await make_yroom()
         
         # Create mock callbacks
         awareness_reset_mock = Mock()
