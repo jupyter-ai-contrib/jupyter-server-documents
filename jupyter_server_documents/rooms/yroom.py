@@ -49,6 +49,21 @@ class YRoom(LoggingConfigurable):
     ID of the room to provide. This is a required argument.
     """
 
+    inactivity_timeout = traitlets.Int(
+        default_value=300,
+        config=True,
+        help="Number of seconds of inactivity before a room is considered inactive."
+    )
+    """
+    Number of seconds of inactivity before a room is considered inactive.
+
+    Activity is recorded when either:
+    - A consumer accesses the room via `get_ydoc()`, `get_awareness()`, or
+    `get_jupyter_ydoc()`, or
+    - A meaningful update is made to the YDoc or Awareness objects (excludes
+    no-op state updates).
+    """
+
     file_api_class = traitlets.Type(
         klass=YRoomFileAPI,
         help="The `YRoomFileAPI` class.",
@@ -352,16 +367,14 @@ class YRoom(LoggingConfigurable):
 
         return self._client_group
 
-    INACTIVITY_TIMEOUT = 300  # seconds
-
     def _update_activity(self) -> None:
         """Updates the last activity timestamp to the current time."""
         self._last_activity = time.monotonic()
 
     @property
     def inactive(self) -> bool:
-        """Returns whether this room has been inactive for longer than `INACTIVITY_TIMEOUT`."""
-        return (time.monotonic() - self._last_activity) > self.INACTIVITY_TIMEOUT
+        """Returns whether this room has been inactive for longer than `inactivity_timeout`."""
+        return (time.monotonic() - self._last_activity) > self.inactivity_timeout
 
 
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
