@@ -1,6 +1,7 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
 from typing import TYPE_CHECKING, cast, Any
 import asyncio
+import time
 import uuid
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
@@ -213,6 +214,7 @@ class YRoom(LoggingConfigurable):
         self._stopped = False
         self._updated = False
         self._save_task = None
+        self._last_activity = time.monotonic()
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         ClientGroupClass = self.client_group_class
@@ -350,6 +352,17 @@ class YRoom(LoggingConfigurable):
 
         return self._client_group
 
+    INACTIVITY_TIMEOUT = 300  # seconds
+
+    def _update_activity(self) -> None:
+        """Updates the last activity timestamp to the current time."""
+        self._last_activity = time.monotonic()
+
+    @property
+    def inactive(self) -> bool:
+        """Returns whether this room has been inactive for longer than `INACTIVITY_TIMEOUT`."""
+        return (time.monotonic() - self._last_activity) > self.INACTIVITY_TIMEOUT
+
 
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
@@ -362,12 +375,16 @@ class YRoom(LoggingConfigurable):
         YDoc whenever the YDoc is reset, e.g. in response to an out-of-band
         change.
         """
+        # Raise exception if room does not contain a JupyterYDoc
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
             self.log.error(message)
             raise Exception(message)
         if self._jupyter_ydoc is None:
             raise RuntimeError("Jupyter YDoc is not available")
+
+        # Otherwise, update activity and return the JupyterYDoc once loaded
+        self._update_activity()
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -385,6 +402,7 @@ class YRoom(LoggingConfigurable):
         YDoc as an argument. This callback is run with the new YDoc object
         whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
+        self._update_activity()
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -401,6 +419,7 @@ class YRoom(LoggingConfigurable):
         Awareness object whenever the YDoc is reset, e.g. in response to an
         out-of-band change.
         """
+        self._update_activity()
         if on_reset:
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
@@ -419,6 +438,7 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell.
         This state persists across client disconnections.
         """
+        self._update_activity()
         if not hasattr(self, '_cell_execution_states'):
             self._cell_execution_states = {}
         self._cell_execution_states[cell_id] = execution_state
@@ -429,14 +449,17 @@ class YRoom(LoggingConfigurable):
         This provides real-time updates to all connected clients.
         """
         awareness = self.get_awareness()
-        if awareness is not None:
-            local_state = awareness.get_local_state()
-            if local_state is not None:
-                cell_states = local_state.get("cell_execution_states", {})
-            else:
-                cell_states = {}
-            cell_states[cell_id] = execution_state
-            awareness.set_local_state_field("cell_execution_states", cell_states)
+        if awareness is None:
+            return
+
+        self._update_activity()
+        local_state = awareness.get_local_state()
+        if local_state is not None:
+            cell_states = local_state.get("cell_execution_states", {})
+        else:
+            cell_states = {}
+        cell_states[cell_id] = execution_state
+        awareness.set_local_state_field("cell_execution_states", cell_states)
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
@@ -635,6 +658,20 @@ class YRoom(LoggingConfigurable):
             return
         
 
+    def handle_awareness_update(self, client_id: str, message: bytes) -> None:
+        # Apply the AwarenessUpdate message
+        try:
+            message_payload = pycrdt.read_message(message[1:])
+            self._awareness.apply_awareness_update(message_payload, origin=self)
+        except Exception as e:
+            self.log.error(
+                "An exception occurred when applying an AwarenessUpdate "
+                f"message from client '{client_id}':"
+            )
+            self.log.exception(e)
+            return
+
+
     def _on_ydoc_update(self, event: TransactionEvent) -> None:
         """
         This method is an observer on `self._ydoc` which broadcasts a
@@ -642,6 +679,7 @@ class YRoom(LoggingConfigurable):
 
         The YDoc is saved in the `self._on_jupyter_ydoc_update()` observer.
         """
+        self._update_activity()
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
         self._broadcast_message(message, message_type="SyncUpdate")
@@ -722,6 +760,7 @@ class YRoom(LoggingConfigurable):
                 return
         
         # Otherwise, a change was made.
+        self._update_activity()
         # Call all observers added by consumers first.
         for observer in self._jupyter_ydoc_observers.values():
             observer(updated_key, event)
@@ -730,20 +769,6 @@ class YRoom(LoggingConfigurable):
         self._updated = True
         self.file_api.schedule_save()
     
-
-    def handle_awareness_update(self, client_id: str, message: bytes) -> None:
-        # Apply the AwarenessUpdate message
-        try:
-            message_payload = pycrdt.read_message(message[1:])
-            self._awareness.apply_awareness_update(message_payload, origin=self)
-        except Exception as e:
-            self.log.error(
-                "An exception occurred when applying an AwarenessUpdate "
-                f"message from client '{client_id}':"
-            )
-            self.log.exception(e)
-            return
-
 
     def _should_ignore_update(self, client_id: str, message_type: Literal['AwarenessUpdate', 'SyncUpdate']) -> bool:
         """
@@ -798,7 +823,7 @@ class YRoom(LoggingConfigurable):
             type: The change type.
             changes: The awareness changes.
         """        
-        
+        self._update_activity()
         self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
         self.log.debug(f"awareness update, updated_clients={updated_clients}")
@@ -990,6 +1015,8 @@ class YRoom(LoggingConfigurable):
         immediately)` with the given arguments. Otherwise, `close_code` and
         `immediately` are ignored.
         """
+        self._update_activity()
+
         # Stop if not stopped already
         if not self._stopped:
             self.stop(close_code=close_code, immediately=immediately)
