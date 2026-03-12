@@ -921,7 +921,7 @@ class YRoom(LoggingConfigurable):
         self._awareness.unobserve(self._awareness_subscription)
         if self._jupyter_ydoc:
             self._jupyter_ydoc.unobserve()
-        
+
         # Empty the message queue based on `immediately` argument
         while not self._message_queue.empty():
             if immediately:
@@ -951,7 +951,6 @@ class YRoom(LoggingConfigurable):
             self._save_task = asyncio.create_task(
                 self.file_api.save(prev_jupyter_ydoc)
             )
-        self._reset_ydoc()
         self._stopped = True
     
 
@@ -1042,11 +1041,14 @@ class YRoom(LoggingConfigurable):
         # Stop if not stopped already
         if not self._stopped:
             self.stop(close_code=close_code, immediately=immediately)
-        
+
         # Reset internal state
         self._stopped = False
         self._updated = False
 
+        # Re-attach observers
+        self._reset_ydoc()
+        
         # Restart client group
         self.clients.restart()
 
