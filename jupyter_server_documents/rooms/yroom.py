@@ -57,11 +57,7 @@ class YRoom(LoggingConfigurable):
     """
     Number of seconds of inactivity before a room is considered inactive.
 
-    Activity is recorded when either:
-    - A consumer accesses the room via `get_ydoc()`, `get_awareness()`, or
-    `get_jupyter_ydoc()`, or
-    - A meaningful update is made to the YDoc or Awareness objects (excludes
-    no-op state updates).
+    See `YRoom.inactive` for more details on how activity is tracked.
     """
 
     file_api_class = traitlets.Type(
@@ -373,9 +369,22 @@ class YRoom(LoggingConfigurable):
 
     @property
     def inactive(self) -> bool:
-        """Returns whether this room has been inactive for longer than `inactivity_timeout`."""
-        return (time.monotonic() - self._last_activity) > self.inactivity_timeout
+        """
+        Returns whether this room has been inactive for longer than
+        `self.inactivity_timeout`. Activity is recorded when either:
 
+        - A consumer accesses the room via `get_ydoc()`, `get_awareness()`, or
+        `get_jupyter_ydoc()`, or
+
+        - A meaningful update is made to the YDoc or Awareness objects (excludes
+        no-op state updates).
+        """
+        return (time.monotonic() - self._last_activity) > self.inactivity_timeout
+    
+    @property
+    def inactive_and_empty(self) -> bool:
+        """Returns whether this room is inactive and has no connected clients."""
+        return self.inactive and self.clients.count == 0
 
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
