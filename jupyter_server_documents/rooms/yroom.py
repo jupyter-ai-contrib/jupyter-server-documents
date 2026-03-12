@@ -940,18 +940,20 @@ class YRoom(LoggingConfigurable):
         # Return early if the room is not a document room, as no more action is
         # needed.
         if not self.file_api or not self._jupyter_ydoc:
+            self._stopped = True
+            self.log.info(f"Stopped YRoom '{self.room_id}'.")
             return
 
-        # Otherwise, stop the file API.
+        # Otherwise, stop the file API and save the previous content if
+        # `immediately=False`.
         self.file_api.stop()
-
-        # Clear the YDoc, saving the previous content unless `immediately=True`
         if not immediately:
             prev_jupyter_ydoc = self._jupyter_ydoc
             self._save_task = asyncio.create_task(
                 self.file_api.save(prev_jupyter_ydoc)
             )
         self._stopped = True
+        self.log.info(f"Stopped YRoom '{self.room_id}'.")
     
 
     @property
