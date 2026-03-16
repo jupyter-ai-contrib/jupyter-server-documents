@@ -50,7 +50,7 @@ class YRoom(LoggingConfigurable):
     """
 
     inactivity_timeout = traitlets.Int(
-        default_value=300,
+        default_value=60,
         config=True,
         help="Number of seconds of inactivity before a room is considered inactive."
     )

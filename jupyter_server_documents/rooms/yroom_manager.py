@@ -73,9 +73,10 @@ class YRoomManager(LoggingConfigurable):
     seconds.
     """
 
-    auto_free_interval = traitlets.Int(default_value=60, config=True)
+    auto_free_interval = traitlets.Int(default_value=300, config=True)
     """
-    Interval in seconds between checks for inactive rooms to free from memory.
+    Interval in seconds between checks for inactive and empty rooms to free from
+    memory.
     """
 
     show_gc_debug = traitlets.Bool(default_value=False, config=True)
