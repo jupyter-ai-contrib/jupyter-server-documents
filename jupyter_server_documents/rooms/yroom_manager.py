@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .yroom import YRoom
+from .gc_debug_logger import GcDebugLogger
 from typing import TYPE_CHECKING
 import asyncio
 import gc
@@ -243,11 +244,13 @@ class YRoomManager(LoggingConfigurable):
             
             if rooms_to_free:
                 if self.show_gc_debug:
+                    gc_logger = GcDebugLogger(self.log)
                     for room in rooms_to_free:
                         self.log.error(f"Referrers of room '{room.room_id}':")
-                        self._log_referrers(room)
+                        gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
                     del room
                 rooms_to_free.clear()
+                self.log.info("Triggering garbage collection.")
                 gc.collect()
                 
 
@@ -370,72 +373,5 @@ class YRoomManager(LoggingConfigurable):
                 f"{room_count} YRooms."
             )
         
-
-    def _log_referrers(self, obj: object) -> None:
-        """
-        Logs all objects holding a reference to `obj`. Used exclusively for
-        debugging garbage collection.
-
-        This is disabled by default because it is computationally expensive. Set
-        `show_gc_debug = True` to enable these logs.
-        """
-        for referrer in gc.get_referrers(obj):
-            if isinstance(referrer, dict):
-                for parent in gc.get_referrers(referrer):
-                    if any(
-                        getattr(parent, attr, None) is referrer
-                        for attr in ('__dict__', '_trait_values')
-                    ):
-                        self.log.error(f"{type(parent).__name__} @ {id(parent):#x}")
-                        break
-                else:
-                    self.log.error(f"dict: {list(referrer.keys())[:8]}")
-            elif hasattr(referrer, 'cr_code'):
-                # Coroutine
-                label = f"coroutine: {referrer.cr_code.co_qualname}"
-                if referrer.cr_frame:
-                    locals_ = referrer.cr_frame.f_locals
-                    if 'self' in locals_:
-                        s = locals_['self']
-                        label += f" (self={type(s).__name__} @ {id(s):#x})"
-                    label += f" locals={list(locals_.keys())}"
-                else:
-                    label += " (frame=None, suspended)"
-                self.log.error(label)
-            elif type(referrer).__name__ == 'frame':
-                self.log.error(
-                    f"frame: {referrer.f_code.co_qualname} "
-                    f"at {referrer.f_code.co_filename}:{referrer.f_lineno} "
-                    f"locals={list(referrer.f_locals.keys())}"
-                )
-            else:
-                label = f"{type(referrer).__name__} @ {id(referrer):#x}"
-                if callable(referrer) and hasattr(referrer, '__qualname__'):
-                    label += f" ({referrer.__qualname__})"
-                self.log.error(label)
-                # Chase one level deeper for methods/callables/tuples/lists
-                if callable(referrer) or isinstance(referrer, (tuple, list)):
-                    for r2 in gc.get_referrers(referrer):
-                        if r2 is obj:
-                            continue
-                        r2label = f"  └─ {type(r2).__name__} @ {id(r2):#x}"
-                        if hasattr(r2, 'cr_code'):
-                            r2label = f"  └─ coroutine: {r2.cr_code.co_qualname}"
-                        elif type(r2).__name__ == 'cell':
-                            # Find which function owns this closure cell
-                            owners = []
-                            for owner in gc.get_referrers(r2):
-                                if owner is referrer:
-                                    continue
-                                owners.append(f"{type(owner).__name__}"
-                                    + (f" ({owner.__qualname__})" if hasattr(owner, '__qualname__') else f" @ {id(owner):#x}"))
-                            r2label = f"  └─ cell @ {id(r2):#x} val={type(r2.cell_contents).__name__ if r2 != type(None) else '?'} owners={owners}"
-                        elif callable(r2) and hasattr(r2, '__qualname__'):
-                            r2label += f" ({r2.__qualname__})"
-                        elif isinstance(r2, dict):
-                            r2label = f"  └─ dict: {list(r2.keys())[:8]}"
-                        elif isinstance(r2, (tuple, list)):
-                            r2label = f"  └─ {type(r2).__name__} len={len(r2)}"
-                        self.log.error(r2label)
 
 
