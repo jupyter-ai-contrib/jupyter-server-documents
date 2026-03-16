@@ -420,6 +420,9 @@ class YRoom(LoggingConfigurable):
         YDoc whenever the YDoc is reset, e.g. in response to an out-of-band
         change.
         """
+        if self._stopped:
+            self.restart()
+
         # Raise exception if room does not contain a JupyterYDoc
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
@@ -446,6 +449,8 @@ class YRoom(LoggingConfigurable):
         YDoc as an argument. This callback is run with the new YDoc object
         whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
+        if self._stopped:
+            self.restart()
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -462,6 +467,8 @@ class YRoom(LoggingConfigurable):
         Awareness object whenever the YDoc is reset, e.g. in response to an
         out-of-band change.
         """
+        if self._stopped:
+            self.restart()
         if on_reset:
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
@@ -480,6 +487,8 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell.
         This state persists across client disconnections.
         """
+        if self._stopped:
+            self.restart()
         self._update_activity("set_cell_execution_state")
         if not hasattr(self, '_cell_execution_states'):
             self._cell_execution_states = {}
@@ -490,6 +499,8 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell in the awareness system.
         This provides real-time updates to all connected clients.
         """
+        if self._stopped:
+            self.restart()
         awareness = self.get_awareness()
         if awareness is None:
             return
@@ -1054,7 +1065,6 @@ class YRoom(LoggingConfigurable):
         Returns whether the room is stopped.
         """
         return self._stopped
-    
 
     @property
     def updated(self) -> bool:
@@ -1084,6 +1094,9 @@ class YRoom(LoggingConfigurable):
         # Stop if not stopped already
         if not self._stopped:
             self.stop(close_code=close_code, immediately=immediately, restarting=True)
+
+        # Re-add to YRoomManager if this room was freed
+        self.parent.add_room(self)
 
         # Reset internal state
         self._stopped = False

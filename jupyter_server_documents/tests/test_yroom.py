@@ -5,7 +5,7 @@ from unittest.mock import Mock
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from ...conftest import MakeYRoom
+    from ...conftest import MakeYRoom, MakeYRoomManager, MakeRoomFile
 
 
 class TestYRoomCallbacks():
@@ -87,7 +87,7 @@ class TestYRoomCallbacks():
         stop_mock.assert_not_called()
 
 
-class TestYRoomTimeout():
+class TestYRoomInactivity():
     """
     Tests for `YRoom` inactivity timeout behavior.
     """
@@ -136,3 +136,57 @@ class TestYRoomTimeout():
         room.restart()
         await asyncio.sleep(0.6)
         assert room.inactive is False
+
+
+class TestYRoomAutoRestart():
+    """Tests that stopped/freed rooms auto-restart when accessed."""
+
+    async def _make_stopped_room(self, manager, make_room_file):
+        """Helper: creates a room via the manager, loads it, then deletes it."""
+        room_id = make_room_file()
+        room = manager.create_room(room_id)
+        await room.file_api.until_content_loaded
+        await manager.delete_room(room_id)
+        assert room.stopped
+        assert not manager.has_room(room_id)
+        return room, room_id
+
+    @pytest.mark.asyncio
+    async def test_get_jupyter_ydoc_restarts_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        manager = make_yroom_manager()
+        room, room_id = await self._make_stopped_room(manager, make_room_file)
+        await room.get_jupyter_ydoc()
+        assert not room.stopped
+        assert manager.has_room(room_id)
+
+    @pytest.mark.asyncio
+    async def test_get_ydoc_restarts_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        manager = make_yroom_manager()
+        room, room_id = await self._make_stopped_room(manager, make_room_file)
+        await room.get_ydoc()
+        assert not room.stopped
+        assert manager.has_room(room_id)
+
+    @pytest.mark.asyncio
+    async def test_get_awareness_restarts_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        manager = make_yroom_manager()
+        room, room_id = await self._make_stopped_room(manager, make_room_file)
+        room.get_awareness()
+        assert not room.stopped
+        assert manager.has_room(room_id)
+
+    @pytest.mark.asyncio
+    async def test_set_cell_execution_state_restarts_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        manager = make_yroom_manager()
+        room, room_id = await self._make_stopped_room(manager, make_room_file)
+        room.set_cell_execution_state("cell-1", "busy")
+        assert not room.stopped
+        assert manager.has_room(room_id)
+
+    @pytest.mark.asyncio
+    async def test_set_cell_awareness_state_restarts_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        manager = make_yroom_manager()
+        room, room_id = await self._make_stopped_room(manager, make_room_file)
+        room.set_cell_awareness_state("cell-1", "busy")
+        assert not room.stopped
+        assert manager.has_room(room_id)

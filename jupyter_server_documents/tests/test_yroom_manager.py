@@ -57,3 +57,25 @@ class TestYRoomManager():
         manager = make_yroom_manager()
         result = await manager.delete_room("text:file:nonexistent")
         assert result is True
+
+    @pytest.mark.asyncio
+    async def test_add_room_re_registers_stopped_room(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        """Asserts that add_room() re-registers a room that was deleted."""
+        manager = make_yroom_manager()
+        room_id = make_room_file()
+        room = manager.create_room(room_id)
+        await room.file_api.until_content_loaded
+        await manager.delete_room(room_id)
+        assert not manager.has_room(room_id)
+        manager.add_room(room)
+        assert manager.has_room(room_id)
+
+    @pytest.mark.asyncio
+    async def test_add_room_noop_if_already_registered(self, make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
+        """Asserts that add_room() is a no-op if the room is already in the manager."""
+        manager = make_yroom_manager()
+        room_id = make_room_file()
+        room = manager.create_room(room_id)
+        await room.file_api.until_content_loaded
+        manager.add_room(room)
+        assert manager.has_room(room_id)

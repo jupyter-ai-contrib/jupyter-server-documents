@@ -179,6 +179,18 @@ class YRoomManager(LoggingConfigurable):
         return yroom
     
 
+    def add_room(self, room: YRoom) -> None:
+        """
+        Re-adds a stopped room to the manager. Called by `YRoom.restart()`
+        when a reference to a stopped room held by a consumer is accessed again.
+        """
+        if room.room_id in self._rooms_by_id:
+            return
+        self.log.info(f"Re-adding room '{room.room_id}'.")
+        self._rooms_by_id[room.room_id] = room
+        self._freeing_rooms.discard(room.room_id)
+
+
     def has_room(self, room_id: str) -> bool:
         """
         Returns whether a `YRoom` instance with a matching `room_id` already
