@@ -210,6 +210,12 @@ class YRoom(LoggingConfigurable):
     stopping. See `self.until_saved` documentation for more info.
     """
 
+    show_gc_debug: bool
+    """
+    Whether to show garbage collection debug logs. Set to
+    `YRoomManager.show_gc_debug` trait.
+    """
+
 
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
@@ -226,6 +232,7 @@ class YRoom(LoggingConfigurable):
         self._updated = False
         self._save_task = None
         self._last_activity = time.monotonic()
+        self.show_gc_debug = self.parent.show_gc_debug
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         ClientGroupClass = self.client_group_class
@@ -363,9 +370,12 @@ class YRoom(LoggingConfigurable):
 
         return self._client_group
 
-    def _update_activity(self) -> None:
+    def _update_activity(self, method_name: str | None = None) -> None:
         """Updates the last activity timestamp to the current time."""
         self._last_activity = time.monotonic()
+        if self.show_gc_debug and self.empty:
+            source = f"'{method_name}()'" if method_name else "unknown source"
+            self.log.error(f"Activity in empty YRoom '{self.room_id}' from {source}.")
 
     @property
     def inactive(self) -> bool:
@@ -382,9 +392,14 @@ class YRoom(LoggingConfigurable):
         return (time.monotonic() - self._last_activity) > self.inactivity_timeout
     
     @property
+    def empty(self) -> bool:
+        """Returns whether this room has no connected clients."""
+        return self.clients.count == 0
+
+    @property
     def inactive_and_empty(self) -> bool:
         """Returns whether this room is inactive and has no connected clients."""
-        return self.inactive and self.clients.count == 0
+        return self.inactive and self.empty
 
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
@@ -406,7 +421,7 @@ class YRoom(LoggingConfigurable):
             raise RuntimeError("Jupyter YDoc is not available")
 
         # Otherwise, update activity and return the JupyterYDoc once loaded
-        self._update_activity()
+        self._update_activity("get_jupyter_ydoc")
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -424,7 +439,7 @@ class YRoom(LoggingConfigurable):
         YDoc as an argument. This callback is run with the new YDoc object
         whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
-        self._update_activity()
+        self._update_activity("get_ydoc")
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -441,7 +456,7 @@ class YRoom(LoggingConfigurable):
         Awareness object whenever the YDoc is reset, e.g. in response to an
         out-of-band change.
         """
-        self._update_activity()
+        self._update_activity("get_awareness")
         if on_reset:
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
@@ -460,7 +475,7 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell.
         This state persists across client disconnections.
         """
-        self._update_activity()
+        self._update_activity("set_cell_execution_state")
         if not hasattr(self, '_cell_execution_states'):
             self._cell_execution_states = {}
         self._cell_execution_states[cell_id] = execution_state
@@ -474,7 +489,7 @@ class YRoom(LoggingConfigurable):
         if awareness is None:
             return
 
-        self._update_activity()
+        self._update_activity("set_cell_awareness_state")
         local_state = awareness.get_local_state()
         if local_state is not None:
             cell_states = local_state.get("cell_execution_states", {})
@@ -701,7 +716,7 @@ class YRoom(LoggingConfigurable):
 
         The YDoc is saved in the `self._on_jupyter_ydoc_update()` observer.
         """
-        self._update_activity()
+        self._update_activity("_on_ydoc_update")
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
         self._broadcast_message(message, message_type="SyncUpdate")
@@ -782,7 +797,7 @@ class YRoom(LoggingConfigurable):
                 return
         
         # Otherwise, a change was made.
-        self._update_activity()
+        self._update_activity("_on_jupyter_ydoc_update")
         # Call all observers added by consumers first.
         for observer in self._jupyter_ydoc_observers.values():
             observer(updated_key, event)
@@ -845,7 +860,7 @@ class YRoom(LoggingConfigurable):
             type: The change type.
             changes: The awareness changes.
         """        
-        self._update_activity()
+        self._update_activity("_on_awareness_update")
         self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
         self.log.debug(f"awareness update, updated_clients={updated_clients}")
@@ -1046,7 +1061,7 @@ class YRoom(LoggingConfigurable):
         immediately)` with the given arguments. Otherwise, `close_code` and
         `immediately` are ignored.
         """
-        self._update_activity()
+        self._update_activity("restart")
 
         # Stop if not stopped already
         if not self._stopped:
