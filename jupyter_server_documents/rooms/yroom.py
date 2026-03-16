@@ -917,8 +917,16 @@ class YRoom(LoggingConfigurable):
         self.clients.stop(close_code=close_code)
 
         # Remove all observers
-        self._ydoc.unobserve(self._ydoc_subscription)
-        self._awareness.unobserve(self._awareness_subscription)
+        try:
+            self._ydoc.unobserve(self._ydoc_subscription)
+        except ValueError:
+            # Continue if YDoc was already unobserved
+            pass
+        try:
+            self._awareness.unobserve(self._awareness_subscription)
+        except KeyError:
+            # Continue if Awareness was already unobserved
+            pass
         if self._jupyter_ydoc:
             self._jupyter_ydoc.unobserve()
 
