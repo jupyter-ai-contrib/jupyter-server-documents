@@ -164,6 +164,13 @@ class YRoom(LoggingConfigurable):
     'awareness', 'ydoc' and 'jupyter_ydoc' keys respectively.
     """
 
+    _on_stop_callbacks: list[Callable[[], Any]]
+    """
+    List that stores all `on_stop` callbacks passed to `get_awareness()`,
+    `get_jupyter_ydoc()`, or `get_ydoc()`. These are called when the room is
+    stopped.
+    """
+
     _ydoc: pycrdt.Doc
     """
     The `YDoc` for this room's document. See `get_ydoc()` documentation for more
@@ -228,6 +235,7 @@ class YRoom(LoggingConfigurable):
             "jupyter_ydoc": [],
             "ydoc": [],
         }
+        self._on_stop_callbacks: list[Callable[[], Any]] = []
         self._stopped = False
         self._updated = False
         self._save_task = None
@@ -420,7 +428,7 @@ class YRoom(LoggingConfigurable):
         if self._jupyter_ydoc is None:
             raise RuntimeError("Jupyter YDoc is not available")
 
-        # Otherwise, return the JupyterYDoc once loaded
+        # Otherwise, update activity and return the JupyterYDoc once loaded
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -719,6 +727,13 @@ class YRoom(LoggingConfigurable):
         self._broadcast_message(message, message_type="SyncUpdate")
 
 
+    def add_stop_callback(self, callback: Callable[[], Any]) -> None:
+        """
+        Registers a callback to be called when the room is stopped (but not
+        when restarting). The callback takes no arguments.
+        """
+        self._on_stop_callbacks.append(callback)
+
     def observe_jupyter_ydoc(self, observer: Callable[[str, Any], Any]) -> str:
         """
         Adds an observer callback to the JupyterYDoc that fires on change.
@@ -899,7 +914,7 @@ class YRoom(LoggingConfigurable):
         self.stop(close_code=4002, immediately=True)
     
 
-    def stop(self, close_code: int = 1001, immediately: bool = False) -> None:
+    def stop(self, close_code: int = 1001, immediately: bool = False, restarting: bool = False) -> None:
         """
         Stops the YRoom. This method:
          
@@ -957,21 +972,27 @@ class YRoom(LoggingConfigurable):
         # Stop the `_process_message_queue` task by enqueueing `None`
         self._message_queue.put_nowait(None)
         
-        # Return early if the room is not a document room, as no more action is
-        # needed.
-        if not self.file_api or not self._jupyter_ydoc:
-            self._stopped = True
-            self.log.info(f"Stopped YRoom '{self.room_id}'.")
-            return
+        # If this room is a document room, stop the file API and save the
+        # previous content if `immediately=False`.
+        if self.file_api and self._jupyter_ydoc:
+            self.file_api.stop()
+            if not immediately:
+                prev_jupyter_ydoc = self._jupyter_ydoc
+                self._save_task = asyncio.create_task(
+                    self.file_api.save(prev_jupyter_ydoc)
+                )
 
-        # Otherwise, stop the file API and save the previous content if
-        # `immediately=False`.
-        self.file_api.stop()
-        if not immediately:
-            prev_jupyter_ydoc = self._jupyter_ydoc
-            self._save_task = asyncio.create_task(
-                self.file_api.save(prev_jupyter_ydoc)
-            )
+        # Fire `on_stop` callbacks (skip if restarting)
+        if not restarting:
+            for on_stop in self._on_stop_callbacks:
+                try:
+                    result = on_stop()
+                    if asyncio.iscoroutine(result):
+                        asyncio.create_task(result)
+                except Exception:
+                    self.log.exception("Exception raised by on_stop() callback:")
+                    continue
+
         self._stopped = True
         self.log.info(f"Stopped YRoom '{self.room_id}'.")
     
@@ -1062,7 +1083,7 @@ class YRoom(LoggingConfigurable):
 
         # Stop if not stopped already
         if not self._stopped:
-            self.stop(close_code=close_code, immediately=immediately)
+            self.stop(close_code=close_code, immediately=immediately, restarting=True)
 
         # Reset internal state
         self._stopped = False

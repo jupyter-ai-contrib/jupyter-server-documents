@@ -8,9 +8,9 @@ if TYPE_CHECKING:
     from ...conftest import MakeYRoom
 
 
-class TestDefaultYRoom():
+class TestYRoomCallbacks():
     """
-    Tests that assert against a default `YRoom` created via `make_yroom()`.
+    Tests for `YRoom` on_reset and on_stop callback behavior.
     """
 
     @pytest.mark.asyncio
@@ -48,6 +48,43 @@ class TestDefaultYRoom():
         awareness_reset_mock.assert_called_once_with(new_awareness)
         jupyter_ydoc_reset_mock.assert_called_once_with(new_jupyter_ydoc)
         ydoc_reset_mock.assert_called_once_with(new_ydoc)
+
+    @pytest.mark.asyncio
+    async def test_on_stop_callbacks(self, make_yroom: MakeYRoom):
+        """
+        Asserts that `on_stop` callbacks registered via `add_stop_callback()`
+        are called when the room is stopped.
+        """
+        yroom = await make_yroom()
+
+        stop_mock_1 = Mock()
+        stop_mock_2 = Mock()
+
+        yroom.add_stop_callback(stop_mock_1)
+        yroom.add_stop_callback(stop_mock_2)
+
+        stop_mock_1.assert_not_called()
+        stop_mock_2.assert_not_called()
+
+        yroom.stop()
+
+        stop_mock_1.assert_called_once()
+        stop_mock_2.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_restart_does_not_fire_on_stop(self, make_yroom: MakeYRoom):
+        """
+        Asserts that `on_stop` callbacks are not called when the room is
+        restarted (since restarting passes `restarting=True` to `stop()`).
+        """
+        yroom = await make_yroom()
+
+        stop_mock = Mock()
+        yroom.add_stop_callback(stop_mock)
+
+        yroom.restart()
+
+        stop_mock.assert_not_called()
 
 
 class TestYRoomTimeout():
