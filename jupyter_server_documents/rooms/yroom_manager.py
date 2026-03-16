@@ -264,9 +264,18 @@ class YRoomManager(LoggingConfigurable):
             rooms_to_free.clear()
             self.log.info("Garbage collection triggered.")
             gc_start = time.monotonic()
-            gc.collect()
+            uncollectable_before = len(gc.garbage)
+            # `gc.collect()` triggers garbage collection and returns a sum of
+            # collected objects + objects found to be uncollectable. The total
+            # collected count is obtained by subtracting the change in
+            # uncollectable objects.
+            collected_and_uncollectable = gc.collect()
+            uncollectable_after = len(gc.garbage)
+            collected_count = collected_and_uncollectable - (uncollectable_after - uncollectable_before)
             gc_ms = (time.monotonic() - gc_start) * 1000
-            self.log.info(f"Garbage collection complete. Time taken: {gc_ms:.1f}ms")
+            self.log.info(f"Garbage collection complete. Freed {collected_count} objects in {gc_ms:.1f}ms.")
+            if uncollectable_after:
+                self.log.warning(f"{uncollectable_after} uncollectable objects found.")
                 
 
     def _should_free_room(self, room: YRoom) -> bool:
