@@ -304,19 +304,20 @@ class YRoomManager(LoggingConfigurable):
         - See `YRoom.inactive` for details on how activity is measured.
         """
         if not room.room_id.startswith("json:notebook:"):
-            if self.show_gc_debug:
-                self.log.info(f"Should free room '{room.room_id}': {room.inactive_and_empty}")
+            if self.show_gc_debug and room.empty and not room.inactive:
+                self.log.info(f"Not freeing room '{room.room_id}' because it is not yet inactive.")
             return room.inactive_and_empty
         
         awareness = room.get_awareness().get_local_state() or {}
         execution_state = awareness.get("kernel", {}).get("execution_state", None)
         should_free = execution_state in { "idle", "dead" } and room.inactive_and_empty
-        if self.show_gc_debug:
-            self.log.info(f"Should free notebook room '{room.room_id}': {should_free}")
-            if not should_free:
-                self.log.info(f"- Execution state: {execution_state}")
-                self.log.info(f"- Client count: {room.clients.count}")
-                self.log.info(f"- Inactive: {room.inactive}")
+        if self.show_gc_debug and room.empty and not should_free:
+            reasons = []
+            if not room.inactive:
+                reasons.append("it is not yet inactive")
+            if execution_state not in { "idle", "dead" }:
+                reasons.append(f"it has execution state '{execution_state}'")
+            self.log.info(f"Not freeing notebook room '{room.room_id}' because {' and '.join(reasons)}.")
         return should_free
     
 
