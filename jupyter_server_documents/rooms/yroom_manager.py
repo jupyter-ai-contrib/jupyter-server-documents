@@ -5,6 +5,7 @@ from .gc_debug_logger import GcDebugLogger
 from typing import TYPE_CHECKING
 import asyncio
 import gc
+import time
 import weakref
 import traitlets
 from traitlets.config import LoggingConfigurable
@@ -229,30 +230,43 @@ class YRoomManager(LoggingConfigurable):
         """
         Background task that checks all `YRoom` instances on an interval,
         deleting any rooms that should be freed. See
-        `_should_cleanup_room()` for more info.
+        `_should_free_room()` for more info.
 
         """
         while True:
             await asyncio.sleep(self.auto_free_interval)
 
+            # Find all rooms to free and continue early if none found.
             rooms_to_free = [
                 room for room in self.list_document_rooms()
                 if self._should_free_room(room)
             ]
+            if not rooms_to_free:
+                continue
 
-            for i in range(len(rooms_to_free)):
-                await self._free_room(rooms_to_free[i])
+            # Free all rooms, including extra logs for debugging if
+            # `show_gc_debug=True`.
+            room = None
+            gc_logger = None
+            if self.show_gc_debug:
+                gc_logger = GcDebugLogger(self.log)
+            for room in rooms_to_free:
+                await self._free_room(room)
+                if self.show_gc_debug and gc_logger:
+                    # When showing GC debug, sleep 0.1s to allow async cleanup
+                    # to complete before logging referrers.
+                    await asyncio.sleep(0.1)
+                    self.log.error(f"Referrers of room '{room.room_id}':")
+                    gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
             
-            if rooms_to_free:
-                if self.show_gc_debug:
-                    gc_logger = GcDebugLogger(self.log)
-                    for room in rooms_to_free:
-                        self.log.error(f"Referrers of room '{room.room_id}':")
-                        gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
-                    del room
-                rooms_to_free.clear()
-                self.log.info("Triggering garbage collection.")
-                gc.collect()
+            # Cleanup local variables and trigger garbage collection.
+            del room
+            rooms_to_free.clear()
+            self.log.info("Garbage collection triggered.")
+            gc_start = time.monotonic()
+            gc.collect()
+            gc_ms = (time.monotonic() - gc_start) * 1000
+            self.log.info(f"Garbage collection complete. Time taken: {gc_ms:.1f}ms")
                 
 
     def _should_free_room(self, room: YRoom) -> bool:
