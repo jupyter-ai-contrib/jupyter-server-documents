@@ -948,11 +948,13 @@ class YRoom(LoggingConfigurable):
         """
         if self._stopped:
             return
-
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
+        
+        # Stop awareness heartbeat
+        asyncio.create_task(self._awareness.stop())
 
         # Remove all observers
         try:
