@@ -77,30 +77,6 @@ class TestYRoomTimeout():
         assert room.inactive is True
 
     @pytest.mark.asyncio
-    async def test_get_awareness_resets_activity(self, make_yroom: MakeYRoom):
-        room = await make_yroom(inactivity_timeout=1)
-        await asyncio.sleep(0.6)
-        room.get_awareness()
-        await asyncio.sleep(0.6)
-        assert room.inactive is False
-
-    @pytest.mark.asyncio
-    async def test_get_ydoc_resets_activity(self, make_yroom: MakeYRoom):
-        room = await make_yroom(inactivity_timeout=1)
-        await asyncio.sleep(0.6)
-        await room.get_ydoc()
-        await asyncio.sleep(0.6)
-        assert room.inactive is False
-
-    @pytest.mark.asyncio
-    async def test_get_jupyter_ydoc_resets_activity(self, make_yroom: MakeYRoom):
-        room = await make_yroom(inactivity_timeout=1)
-        await asyncio.sleep(0.6)
-        await room.get_jupyter_ydoc()
-        await asyncio.sleep(0.6)
-        assert room.inactive is False
-
-    @pytest.mark.asyncio
     async def test_set_cell_execution_state_resets_activity(self, make_yroom: MakeYRoom):
         room = await make_yroom(inactivity_timeout=1)
         await asyncio.sleep(0.6)

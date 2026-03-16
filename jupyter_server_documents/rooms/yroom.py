@@ -420,8 +420,7 @@ class YRoom(LoggingConfigurable):
         if self._jupyter_ydoc is None:
             raise RuntimeError("Jupyter YDoc is not available")
 
-        # Otherwise, update activity and return the JupyterYDoc once loaded
-        self._update_activity("get_jupyter_ydoc")
+        # Otherwise, return the JupyterYDoc once loaded
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -439,7 +438,6 @@ class YRoom(LoggingConfigurable):
         YDoc as an argument. This callback is run with the new YDoc object
         whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
-        self._update_activity("get_ydoc")
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -456,7 +454,6 @@ class YRoom(LoggingConfigurable):
         Awareness object whenever the YDoc is reset, e.g. in response to an
         out-of-band change.
         """
-        self._update_activity("get_awareness")
         if on_reset:
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
