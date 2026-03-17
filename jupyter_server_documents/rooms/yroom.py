@@ -874,17 +874,24 @@ class YRoom(LoggingConfigurable):
                 self.log.exception(e)
                 continue
                 
-    def _on_awareness_update(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
+    def _on_awareness_update(self, topic: str, changes: tuple[dict[str, Any], Any]) -> None:
         """
         Observer on `self.awareness` that broadcasts AwarenessUpdate messages to
         all clients on update.
 
         Arguments:
-            type: The change type.
-            changes: The awareness changes.
+            topic: The change topic ("change" or "update").
+                See: `pycrdt._awareness.Awareness._emit()`
+            changes: A tuple of (dict with "added", "updated", "removed" client
+                ID lists, origin).
         """        
-        self._update_activity("_on_awareness_update")
-        self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
+        # Only update activity on "change" events, which indicate actual state
+        # differences (added/removed/updated). "update" events fire on every
+        # mutation including clock-only renewals, which would keep the room
+        # alive indefinitely.
+        if topic == "change":
+            self._update_activity("_on_awareness_update")
+        self.log.debug(f"awareness update, topic={topic}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
         self.log.debug(f"awareness update, updated_clients={updated_clients}")
         state = self._awareness.encode_awareness_update(updated_clients)
