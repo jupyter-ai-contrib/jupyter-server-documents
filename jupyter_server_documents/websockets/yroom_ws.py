@@ -19,6 +19,13 @@ class YRoomWebsocket(WebSocketHandler):
     # `ExtensionApp` to log messages w/ "ServerDocsApp" prefix
     log = logging.Logger("TEMP")
 
+    @property
+    def ping_interval(self) -> float:
+        return 25
+
+    @property
+    def ping_timeout(self) -> float:
+        return 10
 
     @property
     def yroom_manager(self) -> YRoomManager:
