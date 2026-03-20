@@ -50,8 +50,15 @@ export class ResettableNotebook extends Notebook {
       return;
     }
 
-    // Refresh the UI by emitting to the `modelContentChanged` signal
-    this.onModelContentChanged(this.model);
+    // Force a complete rebuild by setting model to null and back.
+    // This works around a JupyterLab bug in v4.5.3+ (PR #18359) where
+    // _updateDataWindowedListIndex updates ALL cell indices from start
+    // without an upper bound, causing cell duplication during OOB changes.
+    // By setting model to null first, we ensure cellsArray is cleared
+    // before repopulating, preventing the duplicate index updates.
+    const savedModel = this.model;
+    super.model = null;
+    super.model = savedModel;
   }
 
   _resetSignalSlot: () => void;
