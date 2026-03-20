@@ -82,6 +82,8 @@ class ServerDocsApp(ExtensionApp):
     def _link_jupyter_server_extension(self, server_app):
         """Setup custom config needed by this extension."""
         c = Config()
+        c.ServerApp.websocket_ping_interval = 25
+        c.ServerApp.websocket_ping_timeout = 10
         c.ServerApp.kernel_websocket_connection_class = "jupyter_server_documents.kernels.websocket_connection.NextGenKernelWebsocketConnection"
         c.ServerApp.kernel_manager_class = "jupyter_server_documents.kernels.multi_kernel_manager.NextGenMappingKernelManager"
         c.MultiKernelManager.kernel_manager_class = "jupyter_server_documents.kernels.kernel_manager.NextGenKernelManager"
