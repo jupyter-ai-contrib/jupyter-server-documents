@@ -126,6 +126,14 @@ class YRoomFileAPI(LoggingConfigurable):
     save duration and bounded by min_poll_interval and max_poll_interval.
     """
 
+    _reloading_content: bool
+    """
+    Flag set to `True` during an in-place content reload to suppress
+    `schedule_save()` in `_on_jupyter_ydoc_update`. This prevents an infinite
+    reload loop caused by saving the just-reloaded content back to disk, which
+    would update `last_modified` and trigger another reload.
+    """
+
     def __init__(self, *args, **kwargs):
         """Initialize the YRoomFileAPI instance.
 
@@ -154,7 +162,10 @@ class YRoomFileAPI(LoggingConfigurable):
 
         # Initialize adaptive timing attributes
         self._adaptive_poll_interval = self.min_poll_interval
-    
+
+        # Flag set during in-place content reload to suppress auto-save
+        self._reloading_content = False
+
     @validate("min_poll_interval", "poll_interval_multiplier")
     def _validate_adaptive_timing_traits(self, proposal):
         trait_name = proposal['trait'].name
@@ -387,7 +398,7 @@ class YRoomFileAPI(LoggingConfigurable):
         while True:
             try:
                 await asyncio.sleep(self._adaptive_poll_interval)
-                await self._check_file()
+                await self._check_file(jupyter_ydoc)
                 if self._save_scheduled:
                     # `asyncio.shield()` prevents the save task from being
                     # cancelled halfway and corrupting the file. We need to
@@ -411,7 +422,7 @@ class YRoomFileAPI(LoggingConfigurable):
             f"for YRoom '{self.room_id}'."
         )
 
-    async def _check_file(self):
+    async def _check_file(self, jupyter_ydoc: YBaseDoc):
         """Check for file changes and handle in-band/out-of-band operations.
 
         This method is called before each save in the _watch_file() loop to detect
@@ -423,7 +434,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
         Out-of-band operations (external to Jupyter):
         - Move/deletion: Detected via 404 from ContentsManager, calls parent.handle_outofband_move()
-        - Modification: Detected via last_modified timestamp, calls parent.handle_outofband_change()
+        - Modification: Detected via last_modified timestamp, calls _reload_content_inplace()
 
         Raises:
             RuntimeError: If _last_path is not set (should never happen).
@@ -496,7 +507,61 @@ class YRoomFileAPI(LoggingConfigurable):
                 f"Last detected change: '{self._last_modified}', "
                 f"Most recent change: '{file_data['last_modified']}'."
             )
-            self.parent.handle_outofband_change()
+            await self._reload_content_inplace(jupyter_ydoc)
+
+
+    async def _reload_content_inplace(self, jupyter_ydoc: YBaseDoc) -> None:
+        """Apply updated file content to the existing ydoc without closing connections.
+
+        This method is called when an out-of-band file change is detected. Rather
+        than restarting the room (which disconnects clients), it loads the new content
+        from disk and applies it to the live ydoc. The pycrdt update observer
+        (`_on_ydoc_update`) will broadcast the diff to all connected clients so they
+        stay in sync without reconnecting.
+
+        A `_reloading_content` flag is held for the duration of the ydoc write so
+        that `_on_jupyter_ydoc_update` does not schedule a save-back to disk (which
+        would cause an infinite reload loop via the `last_modified` check).
+
+        Args:
+            jupyter_ydoc: The live YBaseDoc instance to update in-place.
+        """
+        path = self._last_path
+        if not path:
+            raise RuntimeError(f"No last known path for '{self.room_id}'. This should never happen.")
+
+        self.log.info(f"Reloading content in-place for room ID '{self.room_id}' at path: '{path}'.")
+
+        async with self._content_lock:
+            file_data = await ensure_async(self.contents_manager.get(
+                path,
+                type=self.file_type,
+                format=self.file_format,
+            ))
+
+        self._is_writable = file_data.get('writable', True)
+
+        if self.file_type == "notebook":
+            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
+
+        content = file_data.get('content')
+        if isinstance(content, str) and '\r\n' in content:
+            self.log.warning(f"Detected CRLF line terminators in '{path}'.")
+            content = content.replace('\r\n', '\n')
+            self.log.info("Replaced CRLF line terminators with LF line terminators.")
+
+        # Set the flag before writing so _on_jupyter_ydoc_update skips
+        # schedule_save() for this update.  The assignment is synchronous so
+        # no await points exist inside the try block — the finally is guaranteed.
+        self._reloading_content = True
+        try:
+            jupyter_ydoc.source = content
+            jupyter_ydoc.dirty = False
+        finally:
+            self._reloading_content = False
+
+        self._last_modified = file_data['last_modified']
+        self.log.info(f"Reloaded content in-place for room ID '{self.room_id}'.")
 
 
     async def save(self, jupyter_ydoc: YBaseDoc):
@@ -554,7 +619,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
             # Set most recent `last_modified` timestamp
             if file_data['last_modified']:
-                self.log.debug(f"Reseting last_modified to {file_data['last_modified']}")
+                self.log.debug(f"Resetting last_modified to {file_data['last_modified']}")
                 self._last_modified = file_data['last_modified']
 
             # Set `dirty` to `False` to hide the "unsaved changes" icon in the

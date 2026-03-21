@@ -707,6 +707,12 @@ class YRoom(LoggingConfigurable):
         if not self.file_api.content_loaded:
             return
 
+        # Do nothing if an in-place reload is in progress. The update was
+        # triggered by reading a new version of the file from disk, so saving
+        # it back would cause an infinite reload loop via last_modified checks.
+        if self.file_api._reloading_content:
+            return
+
         # Do nothing if the event updates the 'state' dictionary with no effect
         if updated_key == "state":
             # The 'state' key always refers to a `pycrdt.Map` shared type, so
