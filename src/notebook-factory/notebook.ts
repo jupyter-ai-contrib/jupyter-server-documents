@@ -39,8 +39,8 @@ export class ResettableNotebook extends Notebook {
   }
 
   /**
-   * Function called when the YDoc has been reset. This simply refreshes the UI
-   * to reflect the new YDoc state.
+   * Function called when the YDoc has been reset. Clear existing cells before
+   * the YDoc repopulation begins to prevent duplication.
    */
   _onReset() {
     if (!this.model) {
@@ -50,8 +50,21 @@ export class ResettableNotebook extends Notebook {
       return;
     }
 
-    // Refresh the UI by emitting to the `modelContentChanged` signal
-    this.onModelContentChanged(this.model);
+    // Clear all existing cell widgets to prevent duplication
+    while ((this as any).cellsArray.length > 0) {
+      (this as any)._removeCell(0);
+    }
+
+    // Wait for YDoc repopulation to complete (cells + metadata updates)
+    // Then clear the dirty flag since the document now matches disk
+    // Double requestAnimationFrame ensures both cell and metadata updates complete
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (this.model) {
+          this.model.dirty = false;
+        }
+      });
+    });
   }
 
   _resetSignalSlot: () => void;
