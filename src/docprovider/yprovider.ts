@@ -16,7 +16,6 @@ import { DocumentChange, YDocument } from '@jupyter/ydoc';
 import { Awareness } from 'y-protocols/awareness';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
-import { YFile, YNotebook } from './custom_ydocs';
 import { JupyterFrontEnd } from '@jupyterlab/application';
 import { DocumentWidget } from '@jupyterlab/docregistry';
 import { FileEditor } from '@jupyterlab/fileeditor';
@@ -224,12 +223,6 @@ export class WebSocketProvider implements IDocumentProvider {
     // Handle close events based on code
     const close_code = event.code;
 
-    // 4000 := indicates out-of-band change
-    if (close_code === 4000) {
-      this._handleOobChange();
-      return;
-    }
-
     // 4001 := indicates out-of-band move/deletion
     if (close_code === 4001) {
       this._handleOobMove();
@@ -255,21 +248,6 @@ export class WebSocketProvider implements IDocumentProvider {
     // This seems to be the only way to halt re-connection attempts.
     this._sharedModel.dispose();
   };
-
-  /**
-   * Handles an out-of-band change indicated by close code 4000. This requires
-   * resetting the YDoc and re-connecting. A notification is emitted to the user
-   * if the document widget containing the shared model is open & visible.
-   */
-  private _handleOobChange() {
-    // Reset YDoc
-    // TODO: is it safe to assume that we only need YFile & YNotebook?
-    const sharedModel = this._sharedModel as YFile | YNotebook;
-    sharedModel.reset();
-
-    // Re-connect
-    this.reconnect();
-  }
 
   /**
    * Handles an out-of-band move/deletion indicated by close code 4001.
