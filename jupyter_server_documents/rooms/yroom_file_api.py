@@ -128,10 +128,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
     _reloading_content: bool
     """
-    Flag set to `True` during an in-place content reload to suppress
-    `schedule_save()` in `_on_jupyter_ydoc_update`. This prevents an infinite
-    reload loop caused by saving the just-reloaded content back to disk, which
-    would update `last_modified` and trigger another reload.
+    Backing field for the `reloading_content` property.
     """
 
     def __init__(self, *args, **kwargs):
@@ -254,6 +251,20 @@ class YRoomFileAPI(LoggingConfigurable):
         """
         return self._content_load_event.is_set()
 
+    @property
+    def reloading_content(self) -> bool:
+        """Check if an in-place content reload is currently in progress.
+
+        `YRoom._on_jupyter_ydoc_update` reads this to skip `schedule_save()`
+        while the reload write is active, preventing a save-back to disk that
+        would update `last_modified` and re-trigger change detection.
+
+        Returns:
+            True while `_reload_content_inplace` is writing to the YDoc,
+            False otherwise.
+        """
+        return self._reloading_content
+
 
     @property
     def until_content_loaded(self) -> Coroutine[Any, Any, Literal[True]]:
@@ -294,6 +305,47 @@ class YRoomFileAPI(LoggingConfigurable):
         asyncio.create_task(self._load_content(jupyter_ydoc))
 
 
+    async def _get_content(self, path: str) -> tuple[Any, datetime]:
+        """Fetch file content from ContentsManager and return (content, last_modified).
+
+        Fetches the file at `path`, updates `_is_writable`, processes notebook
+        outputs if applicable, and normalises CRLF line endings.
+
+        This is the shared fetch logic used by both `_load_content` (initial
+        load) and `_reload_content_inplace` (out-of-band reload).
+
+        Args:
+            path: Filesystem path relative to ServerApp.root_dir.
+
+        Returns:
+            A tuple of (content, last_modified) where `content` is the
+            normalised file content and `last_modified` is the timestamp
+            returned by ContentsManager.
+        """
+        async with self._content_lock:
+            file_data = await ensure_async(self.contents_manager.get(
+                path,
+                type=self.file_type,
+                format=self.file_format
+            ))
+
+        # The content manager uses this to tell consumers of the API if the file is writable.
+        # We need to save this so we can use it during save.
+        self._is_writable = file_data.get('writable', True)
+
+        if self.file_type == "notebook":
+            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
+
+        # Replace CRLF line terminators with LF line terminators
+        # Fixes #176, see issue description for more context.
+        content = file_data.get('content')
+        if isinstance(content, str) and '\r\n' in content:
+            self.log.warning(f"Detected CRLF line terminators in '{path}'.")
+            content = content.replace('\r\n', '\n')
+            self.log.info("Replaced CRLF line terminators with LF line terminators.")
+
+        return content, file_data['last_modified']
+
     async def _load_content(self, jupyter_ydoc: YBaseDoc) -> None:
         """Internal method to load file content asynchronously.
 
@@ -313,30 +365,11 @@ class YRoomFileAPI(LoggingConfigurable):
             raise RuntimeError(f"Could not find path for room '{self.room_id}'.")
         self._last_path = path
 
-        # Load the content of the file from the path
         self.log.info(f"Loading content for room ID '{self.room_id}', found at path: '{path}'.")
-        async with self._content_lock:
-            file_data = await ensure_async(self.contents_manager.get(
-                path,
-                type=self.file_type,
-                format=self.file_format
-            ))
-
-        # The content manager uses this to tell consumers of the API if the file is writable.
-        # We need to save this so we can use it during save.
-        self._is_writable = file_data.get('writable', True)
-
         if self.file_type == "notebook":
             self.log.info(f"Processing outputs for loaded notebook: '{self.room_id}'.")
-            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
-        # Replace CRLF line terminators with LF line terminators
-        # Fixes #176, see issue description for more context.
-        content = file_data.get('content')
-        if isinstance(content, str) and '\r\n' in content:
-            self.log.warning(f"Detected CRLF line terminators in '{path}'.")
-            content = content.replace('\r\n', '\n')
-            self.log.info("Replaced CRLF line terminators with LF line terminators.")
+        content, last_modified = await self._get_content(path)
 
         # Set JupyterYDoc content and set `dirty = False` to hide the "unsaved
         # changes" icon in the UI
@@ -344,7 +377,7 @@ class YRoomFileAPI(LoggingConfigurable):
         jupyter_ydoc.dirty = False
 
         # Set `_last_modified` timestamp
-        self._last_modified = file_data['last_modified']
+        self._last_modified = last_modified
 
         # Set loaded event to inform consumers that the YDoc is ready
         # Also set loading to `False` for consistency and log success
@@ -532,23 +565,7 @@ class YRoomFileAPI(LoggingConfigurable):
 
         self.log.info(f"Reloading content in-place for room ID '{self.room_id}' at path: '{path}'.")
 
-        async with self._content_lock:
-            file_data = await ensure_async(self.contents_manager.get(
-                path,
-                type=self.file_type,
-                format=self.file_format,
-            ))
-
-        self._is_writable = file_data.get('writable', True)
-
-        if self.file_type == "notebook":
-            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
-
-        content = file_data.get('content')
-        if isinstance(content, str) and '\r\n' in content:
-            self.log.warning(f"Detected CRLF line terminators in '{path}'.")
-            content = content.replace('\r\n', '\n')
-            self.log.info("Replaced CRLF line terminators with LF line terminators.")
+        content, last_modified = await self._get_content(path)
 
         # Set the flag before writing so _on_jupyter_ydoc_update skips
         # schedule_save() for this update.  The assignment is synchronous so
@@ -560,7 +577,7 @@ class YRoomFileAPI(LoggingConfigurable):
         finally:
             self._reloading_content = False
 
-        self._last_modified = file_data['last_modified']
+        self._last_modified = last_modified
         self.log.info(f"Reloaded content in-place for room ID '{self.room_id}'.")
 
 

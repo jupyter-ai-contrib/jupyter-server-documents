@@ -710,7 +710,7 @@ class YRoom(LoggingConfigurable):
         # Do nothing if an in-place reload is in progress. The update was
         # triggered by reading a new version of the file from disk, so saving
         # it back would cause an infinite reload loop via last_modified checks.
-        if self.file_api._reloading_content:
+        if self.file_api.reloading_content:
             return
 
         # Do nothing if the event updates the 'state' dictionary with no effect
@@ -819,17 +819,6 @@ class YRoom(LoggingConfigurable):
         out-of-band changes.
         """
         self.restart(close_code=4000, immediately=True)
-
-        
-    def handle_outofband_change(self) -> None:
-        """
-        Handles an out-of-band change by restarting the YRoom immediately,
-        closing all Websockets with close code 4000.
-
-        See `restart()` for more info.
-        """
-        self.restart(close_code=4000, immediately=True)
-    
 
     def handle_outofband_move(self) -> None:
         """
