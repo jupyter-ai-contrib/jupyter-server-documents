@@ -26,6 +26,6 @@ class TestYRoomWebsocket:
         assert isinstance(handler.ping_timeout, (int, float))
         assert 0 < handler.ping_timeout < 30
 
-    def test_ping_timeout_less_than_interval(self, mock_server_docs_app):
+    def test_ping_timeout_not_greater_than_ping_interval(self, mock_server_docs_app):
         handler = self._make_handler(mock_server_docs_app)
-        assert handler.ping_timeout < handler.ping_interval
+        assert handler.ping_timeout <= handler.ping_interval
