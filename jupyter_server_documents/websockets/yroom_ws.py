@@ -21,11 +21,11 @@ class YRoomWebsocket(WebSocketHandler):
 
     @property
     def ping_interval(self) -> float:
-        return 25
+        return self.settings.get("ws_ping_interval", 25000) / 1000
 
     @property
     def ping_timeout(self) -> float:
-        return 10
+        return self.settings.get("ws_ping_timeout", 25000) / 1000
 
     @property
     def yroom_manager(self) -> YRoomManager:
