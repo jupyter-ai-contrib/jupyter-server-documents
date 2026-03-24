@@ -2,6 +2,26 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.1
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0...2c8a4de745d52d4eee13d2af18686d6ca1591f17))
+
+### Bugs fixed
+
+- Fix cell duplication on out-of-band file changes by reloading file content in-place [#202](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/202) ([@sathishlxg](https://github.com/sathishlxg), [@3coins](https://github.com/3coins), [@Zsailer](https://github.com/Zsailer), [@dlqqq](https://github.com/dlqqq))
+- Add ping/pong keepalive to YRoomWebsocket [#201](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/201) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-01-15&to=2026-03-24&type=c))
+
+@3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-01-15..2026-03-24&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-01-15..2026-03-24&type=Issues)) | @sathishlxg ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Asathishlxg+updated%3A2026-01-15..2026-03-24&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-01-15..2026-03-24&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.0
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0a9...a65fd2129eca2e844fa02590020af8a2f7159fd3))
@@ -30,8 +50,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2025-11-18&to=2026-01-15&type=c))
 
 @3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2025-11-18..2026-01-15&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2025-11-18..2026-01-15&type=Issues)) | @ellisonbg ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aellisonbg+updated%3A2025-11-18..2026-01-15&type=Issues)) | @ktaletsk ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aktaletsk+updated%3A2025-11-18..2026-01-15&type=Issues)) | @nakul-py ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Anakul-py+updated%3A2025-11-18..2026-01-15&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.0a9
 
