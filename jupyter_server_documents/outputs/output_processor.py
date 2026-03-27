@@ -56,9 +56,6 @@ class OutputProcessor(LoggingConfigurable):
             tuple: (file_id, path) if found, (None, None) otherwise
         """
         try:
-            # TODO: The session manager may have multiple notebooks connected to the kernel
-            # but currently get_session only returns the first. We need to fix this and
-            # find the notebook with the right cell_id.
             kernel_session = await self.session_manager.get_session(
                 kernel_id=self.parent.parent.kernel_id
             )
@@ -151,8 +148,8 @@ class OutputProcessor(LoggingConfigurable):
         # Get file_id and path from kernel session (handles renames)
         file_id, path = await self._get_file_info()
         if file_id is None:
-            self.log.error(
-                f"An exception occurred when processing output for cell {cell_id}"
+            self.log.warning(
+                f"No file ID found when processing output for cell: {cell_id}. Continuing."
             )
             return
 
