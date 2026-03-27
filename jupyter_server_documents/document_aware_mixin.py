@@ -112,6 +112,9 @@ class DocumentAwareMixin:
         # Dispatch to registered plugin handlers
         if cell_id:
             for yroom in self._yrooms:
+                notebook = yroom.jupyter_ydoc
+                if notebook is None:
+                    break
                 handlers = yroom.parent._cell_data_handlers
                 for handler_msg_types, handler in handlers:
                     if msg_type in handler_msg_types:
@@ -120,7 +123,7 @@ class DocumentAwareMixin:
                             self.log.debug(
                                 f"Dispatching {msg_type} for cell {cell_id} to {handler.__name__}"
                             )
-                            await handler(yroom, cell_id, msg_type, content, dmsg["header"])
+                            await handler(notebook, cell_id, msg_type, content, dmsg["header"])
                         except Exception as e:
                             self.log.warning(f"Cell data handler error: {e}", exc_info=True)
                 break
