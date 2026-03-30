@@ -2,6 +2,25 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.1.2
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.1...3ae9d06e5a829b36010be9239f184ff97d001fa9))
+
+### Bugs fixed
+
+- Clears outputs on each execute [#207](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/207) ([@3coins](https://github.com/3coins), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-03-24&to=2026-03-30&type=c))
+
+@3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-03-24..2026-03-30&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-03-24..2026-03-30&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.1.1
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.0...2c8a4de745d52d4eee13d2af18686d6ca1591f17))
@@ -19,8 +38,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-01-15&to=2026-03-24&type=c))
 
 @3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-01-15..2026-03-24&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-01-15..2026-03-24&type=Issues)) | @sathishlxg ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Asathishlxg+updated%3A2026-01-15..2026-03-24&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-01-15..2026-03-24&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.0
 
