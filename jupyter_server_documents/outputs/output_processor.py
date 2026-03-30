@@ -47,6 +47,28 @@ class OutputProcessor(LoggingConfigurable):
         """A shortcut for the jupyter server ydoc manager."""
         return self.settings["yroom_manager"]
 
+    async def _get_file_info(self):
+        """Get file_id and path by looking it up from the kernel session.
+
+        Always fetches fresh from the session manager to handle file renames.
+
+        Returns:
+            tuple: (file_id, path) if found, (None, None) otherwise
+        """
+        try:
+            kernel_session = await self.session_manager.get_session(
+                kernel_id=self.parent.parent.kernel_id
+            )
+            path = kernel_session["path"]
+            file_id = self.file_id_manager.get_id(path)
+            if file_id is None:
+                self.log.error(f"Could not find file_id for path: {path}")
+                return None, None
+            return file_id, path
+        except Exception as e:
+            self.log.warning(f"Failed to look up file_id: {e}")
+            return None, None
+
     async def get_jupyter_ydoc(self, file_id):
         room_id = f"json:notebook:{file_id}"
         room = self.yroom_manager.get_room(room_id)
@@ -54,7 +76,7 @@ class OutputProcessor(LoggingConfigurable):
             self.log.error(f"YRoom not found: {room_id}")
             return
         ydoc = await room.get_jupyter_ydoc()
-        
+
         return ydoc
 
     async def _clear_ydoc_outputs(self, cell_id):
@@ -72,12 +94,19 @@ class OutputProcessor(LoggingConfigurable):
     async def clear_cell_outputs(self, cell_id):
         """Clears all outputs for a cell on disk and in ydoc."""
 
-        if self._file_id is not None:
-            await self._clear_ydoc_outputs(cell_id)
-            self._pending_clear_output_cells.discard(cell_id)
-            
-            if self.use_outputs_service:
-                self.outputs_manager.clear(file_id=self._file_id, cell_id=cell_id)
+        # Get file_id and path from kernel session (handles renames)
+        file_id, path = await self._get_file_info()
+        if file_id is None:
+            return
+
+        # Cache the file_id for subsequent operations
+        self._file_id = file_id
+
+        await self._clear_ydoc_outputs(cell_id)
+        self._pending_clear_output_cells.discard(cell_id)
+
+        if self.use_outputs_service:
+            self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
             
 
     def process_output(self, msg_type: str, cell_id: str, content: dict):
@@ -116,26 +145,15 @@ class OutputProcessor(LoggingConfigurable):
         if cell_id in self._pending_clear_output_cells:
             await self.clear_cell_outputs(cell_id)
 
-        try:
-            # TODO: The session manager may have multiple notebooks connected to the kernel
-            # but currently get_session only returns the first. We need to fix this and
-            # find the notebook with the right cell_id.
-            kernel_session = await self.session_manager.get_session(
-                kernel_id=self.parent.parent.kernel_id
-            )
-        except Exception as e:
-            self.log.error(
-                f"An exception occurred when processing output for cell {cell_id}"
-            )
-            self.log.exception(e)
-            return
-        else:
-            path = kernel_session["path"]
-
-        file_id = self.file_id_manager.get_id(path)
+        # Get file_id and path from kernel session (handles renames)
+        file_id, path = await self._get_file_info()
         if file_id is None:
-            self.log.error(f"Could not find file_id for path: {path}")
+            self.log.warning(
+                f"No file ID found when processing output for cell: {cell_id}. Continuing."
+            )
             return
+
+        # Cache the file_id for subsequent operations
         self._file_id = file_id
 
         display_id = content.get("transient", {}).get("display_id")

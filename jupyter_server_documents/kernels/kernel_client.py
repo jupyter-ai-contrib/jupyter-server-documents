@@ -123,15 +123,12 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         metadata = self.session.unpack(msg[2])
         cell_id = metadata.get("cellId")
 
-        # Clear cell outputs if cell is re-executed
-        if cell_id:
-            existing = self.message_cache.get(cell_id=cell_id)
-            if existing and existing['msg_id'] != msg_id:
-                asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
-
         # IMPORTANT: Set cell to 'busy' immediately when execute_request is received
         # This ensures queued cells show '*' prompt even before kernel starts processing them
+        # Also clear outputs immediately for this cell execution
         if msg_type == "execute_request" and channel_name == "shell" and cell_id:
+            # Always clear outputs when executing a cell
+            asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
             for yroom in self._yrooms:
                 yroom.set_cell_awareness_state(cell_id, "busy")
 
