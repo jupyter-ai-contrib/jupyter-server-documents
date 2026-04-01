@@ -1,17 +1,24 @@
 from __future__ import annotations
+from tornado import web
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
+from jupyter_server.base.handlers import JupyterHandler
 from typing import TYPE_CHECKING
 import asyncio
-from ..rooms import YRoomManager
 import logging
+
+from ..rooms import YRoomManager
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
-    from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
+    from jupyter_server.services.contents.manager import (
+        AsyncContentsManager,
+        ContentsManager,
+    )
     from ..rooms import YRoom
 
-class YRoomWebsocket(WebSocketHandler):
+
+class YRoomWebsocket(JupyterHandler, WebSocketHandler):
     yroom: YRoom
     room_id: str
     client_id: str | None
@@ -31,18 +38,15 @@ class YRoomWebsocket(WebSocketHandler):
     def yroom_manager(self) -> YRoomManager:
         return self.settings["yroom_manager"]
 
-
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self.settings["file_id_manager"]
-    
 
     @property
     def contents_manager(self) -> AsyncContentsManager | ContentsManager:
         return self.settings["contents_manager"]
 
-
-    def prepare(self):
+    async def prepare(self):
         # Bind `room_id` attribute
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]
@@ -53,7 +57,19 @@ class YRoomWebsocket(WebSocketHandler):
             path = self.fileid_manager.get_path(fileid)
             if not path:
                 raise HTTPError(404, f"No file with ID '{fileid}'.")
-    
+
+        # Authenticate from token query param before the WebSocket upgrade.
+        token = self.get_argument("token", default="")
+
+        if token:
+            user = await self.identity_provider.user_from_jwt(token)
+            self.current_user = user
+
+        await super().prepare()
+
+    @web.authenticated
+    async def get(self, *args, **kwargs):
+        return await super().get(*args, **kwargs)
 
     def open(self, *_, **__):
         # Create the YRoom
@@ -70,7 +86,6 @@ class YRoomWebsocket(WebSocketHandler):
             self.close(code=1001)
             return
 
-
     def on_message(self, message: bytes):
         if not self.client_id:
             self.close(code=1001)
@@ -78,7 +93,6 @@ class YRoomWebsocket(WebSocketHandler):
 
         # Route all messages to the YRoom for processing
         self.yroom.add_message(self.client_id, message)
-
 
     def on_close(self):
         if self.client_id:
