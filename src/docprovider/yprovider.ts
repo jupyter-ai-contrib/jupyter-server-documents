@@ -5,6 +5,7 @@
 
 import { IDocumentProvider } from '@jupyter/collaborative-drive';
 import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
+import { PageConfig } from '@jupyterlab/coreutils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
 import { PromiseDelegate } from '@lumino/coreutils';
@@ -199,8 +200,11 @@ export class WebSocketProvider implements IDocumentProvider {
       this._sharedModel.ydoc,
       {
         disableBc: true,
-        // params: { sessionId: session.sessionId },
-        awareness: this.awareness
+        awareness: this.awareness,
+        params:
+          PageConfig.getOption('appendToken').toLowerCase() === 'true'
+            ? { token: PageConfig.getToken() }
+            : undefined
       }
     );
 

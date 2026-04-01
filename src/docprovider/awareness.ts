@@ -33,7 +33,8 @@ export class WebSocketAwarenessProvider
    */
   constructor(options: WebSocketAwarenessProvider.IOptions) {
     super(options.url, options.roomID, options.awareness.doc, {
-      awareness: options.awareness
+      awareness: options.awareness,
+      params: options.params
     });
 
     this._awareness = options.awareness;
@@ -95,5 +96,13 @@ export namespace WebSocketAwarenessProvider {
      * The user data
      */
     user: User.IManager;
+
+    /**
+     * The params to be sent to the server when connecting.
+     *
+     * For example, if params is {foo: 'bar'}, then the WebSocket URL will be ws://server_url?foo=bar
+     * The server can then parse the query parameters and interpret the message accordingly.
+     */
+    params?: { [key: string]: string };
   }
 }

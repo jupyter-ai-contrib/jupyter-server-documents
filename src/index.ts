@@ -42,7 +42,7 @@ import { IAwareness } from '@jupyter/ydoc';
 
 import { ServerConnection } from '@jupyterlab/services';
 import { WebSocketAwarenessProvider } from './docprovider/awareness';
-import { URLExt } from '@jupyterlab/coreutils';
+import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { AwarenessKernelStatus } from './kernelstatus';
 
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
@@ -106,7 +106,11 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
       url: url,
       roomID: 'JupyterLab:globalAwareness',
       awareness: awareness,
-      user: user
+      user: user,
+      params:
+        PageConfig.getOption('appendToken').toLowerCase() === 'true'
+          ? { token: PageConfig.getToken() }
+          : undefined
     });
 
     state.changed.connect(async () => {
@@ -126,9 +130,10 @@ export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
   }
 };
 
-class AwarenessExecutionIndicatorIcon
-  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel>
-{
+class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
+  NotebookPanel,
+  INotebookModel
+> {
   createNew(panel: NotebookPanel): IDisposable {
     const item = new AwarenessExecutionIndicator();
     const nb = panel.content;
