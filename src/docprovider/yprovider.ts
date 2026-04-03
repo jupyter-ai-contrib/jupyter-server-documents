@@ -31,6 +31,10 @@ import { ChatWidget } from '@jupyter/chat';
 
 export class WebSocketProvider implements IDocumentProvider {
   /**
+   * Maximum number of reconnect attempts before giving up.
+   */
+  static readonly MAX_RECONNECT_ATTEMPTS = 5;
+  /**
    * Construct a new WebSocketProvider
    *
    * @param options The instantiation options for a WebSocketProvider
@@ -134,8 +138,13 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
     this._isDisposed = true;
+    if (this._reconnectNotificationId) {
+      Notification.dismiss(this._reconnectNotificationId);
+      this._reconnectNotificationId = null;
+    }
     this._yWebsocketProvider?.off('connection-close', this._onConnectionClosed);
     this._yWebsocketProvider?.off('sync', this._onSync);
+    this._yWebsocketProvider?.off('status', this._onStatus);
     this._yWebsocketProvider?.destroy();
     this._disconnect();
     Signal.clearData(this);
@@ -198,6 +207,7 @@ export class WebSocketProvider implements IDocumentProvider {
 
     this._yWebsocketProvider.on('sync', this._onSync);
     this._yWebsocketProvider.on('connection-close', this._onConnectionClosed);
+    this._yWebsocketProvider.on('status', this._onStatus);
   }
 
   get wsProvider() {
@@ -206,6 +216,7 @@ export class WebSocketProvider implements IDocumentProvider {
   private _disconnect(): void {
     this._yWebsocketProvider?.off('connection-close', this._onConnectionClosed);
     this._yWebsocketProvider?.off('sync', this._onSync);
+    this._yWebsocketProvider?.off('status', this._onStatus);
     this._yWebsocketProvider?.destroy();
     this._yWebsocketProvider = null;
   }
@@ -217,10 +228,9 @@ export class WebSocketProvider implements IDocumentProvider {
   /**
    * Handles disconnections from the YRoom Websocket.
    *
-   * TODO: Issue #45.
+   * Resolves: https://github.com/jupyter-ai-contrib/jupyter-server-documents/issues/196
    */
   private _onConnectionClosed = (event: CloseEvent): void => {
-    // Handle close events based on code
     const close_code = event.code;
 
     // 4001 := indicates out-of-band move/deletion
@@ -235,18 +245,63 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
 
-    // If the close code is unhandled, log an error to the browser console and
-    // show a popup asking user to refresh the page.
-    console.error('WebSocket connection was closed. Close event: ', event);
-    showErrorMessage(
-      this._trans.__('Document session error'),
-      'Please refresh the browser tab.',
-      [Dialog.okButton()]
+    // For all other close codes (e.g. 1006 abnormal closure, 1001 going away,
+    // ping timeout), let y-websocket's built-in exponential backoff handle
+    // reconnection automatically. Only log a warning.
+    console.warn(
+      `WebSocket connection closed (code=${close_code}). ` +
+        'y-websocket will attempt to reconnect automatically.',
+      event
     );
+  };
 
-    // Stop `y-websocket` from re-connecting by disposing of the shared model.
-    // This seems to be the only way to halt re-connection attempts.
-    this._sharedModel.dispose();
+  /**
+   * Handles y-websocket status changes ('connected' / 'disconnected').
+   * Tracks reconnect attempts and provides user feedback.
+   */
+  private _onStatus = ({ status }: { status: string }): void => {
+    if (status === 'connected') {
+      if (this._reconnectAttempts > 0) {
+        console.info('WebSocket reconnected successfully.');
+      }
+      this._reconnectAttempts = 0;
+      if (this._reconnectNotificationId) {
+        Notification.dismiss(this._reconnectNotificationId);
+        this._reconnectNotificationId = null;
+      }
+      return;
+    }
+
+    // status === 'disconnected'
+    this._reconnectAttempts++;
+
+    if (this._reconnectAttempts >= WebSocketProvider.MAX_RECONNECT_ATTEMPTS) {
+      // Give up: stop reconnection and show fatal error.
+      if (this._reconnectNotificationId) {
+        Notification.dismiss(this._reconnectNotificationId);
+        this._reconnectNotificationId = null;
+      }
+      console.error(
+        `WebSocket failed to reconnect after ${this._reconnectAttempts} attempts.`
+      );
+      showErrorMessage(
+        this._trans.__('Document session error'),
+        this._trans.__(
+          'Unable to reconnect to the server after multiple attempts. Please refresh the browser tab.'
+        ),
+        [Dialog.okButton()]
+      );
+      this._sharedModel.dispose();
+      return;
+    }
+
+    // Show a transient notification on first disconnect.
+    if (this._reconnectAttempts === 1) {
+      this._reconnectNotificationId = Notification.info(
+        this._trans.__('Connection lost. Attempting to reconnect…'),
+        { autoClose: false }
+      );
+    }
   };
 
   /**
@@ -311,6 +366,8 @@ export class WebSocketProvider implements IDocumentProvider {
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
   private _fileId: string | null = null;
+  private _reconnectAttempts = 0;
+  private _reconnectNotificationId: string | null = null;
 }
 
 /**
