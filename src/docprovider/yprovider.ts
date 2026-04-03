@@ -4,7 +4,7 @@
 |----------------------------------------------------------------------------*/
 
 import { IDocumentProvider } from '@jupyter/collaborative-drive';
-import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
+import { showErrorMessage, showDialog, Dialog } from '@jupyterlab/apputils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
 import { PromiseDelegate } from '@lumino/coreutils';
@@ -276,7 +276,7 @@ export class WebSocketProvider implements IDocumentProvider {
     this._reconnectAttempts++;
 
     if (this._reconnectAttempts >= WebSocketProvider.MAX_RECONNECT_ATTEMPTS) {
-      // Give up: stop reconnection and show fatal error.
+      // Give up: stop reconnection and show reconnect dialog.
       if (this._reconnectNotificationId) {
         Notification.dismiss(this._reconnectNotificationId);
         this._reconnectNotificationId = null;
@@ -284,14 +284,7 @@ export class WebSocketProvider implements IDocumentProvider {
       console.error(
         `WebSocket failed to reconnect after ${this._reconnectAttempts} attempts.`
       );
-      showErrorMessage(
-        this._trans.__('Document session error'),
-        this._trans.__(
-          'Unable to reconnect to the server after multiple attempts. Please refresh the browser tab.'
-        ),
-        [Dialog.okButton()]
-      );
-      this._sharedModel.dispose();
+      this._showReconnectDialog();
       return;
     }
 
@@ -303,6 +296,25 @@ export class WebSocketProvider implements IDocumentProvider {
       );
     }
   };
+
+  /**
+   * Shows a dialog with a "Reconnect" button. If the user clicks "Reconnect",
+   * resets the attempt counter and triggers a single reconnect attempt. If that
+   * also fails, the dialog will re-appear after MAX_RECONNECT_ATTEMPTS.
+   */
+  private async _showReconnectDialog(): Promise<void> {
+    await showDialog({
+      title: this._trans.__('Document session error'),
+      body: this._trans.__(
+        'Unable to reconnect to the server. Would you like to try again?'
+      ),
+      buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })]
+    });
+
+    // Reset counter and let y-websocket try again.
+    this._reconnectAttempts = 0;
+    this.reconnect();
+  }
 
   /**
    * Handles an out-of-band move/deletion indicated by close code 4001.
