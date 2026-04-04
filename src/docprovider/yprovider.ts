@@ -4,7 +4,7 @@
 |----------------------------------------------------------------------------*/
 
 import { IDocumentProvider } from '@jupyter/collaborative-drive';
-import { showErrorMessage, showDialog, Dialog } from '@jupyterlab/apputils';
+import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
 import { PromiseDelegate } from '@lumino/coreutils';
@@ -21,6 +21,7 @@ import { DocumentWidget } from '@jupyterlab/docregistry';
 import { FileEditor } from '@jupyterlab/fileeditor';
 import { Notebook } from '@jupyterlab/notebook';
 import { ChatWidget } from '@jupyter/chat';
+import { Widget } from '@lumino/widgets';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -31,9 +32,10 @@ import { ChatWidget } from '@jupyter/chat';
 
 export class WebSocketProvider implements IDocumentProvider {
   /**
-   * Maximum number of reconnect attempts before giving up.
+   * Maximum number of reconnect attempts before showing the retry dialog.
    */
   static readonly MAX_RECONNECT_ATTEMPTS = 5;
+
   /**
    * Construct a new WebSocketProvider
    *
@@ -138,10 +140,7 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
     this._isDisposed = true;
-    if (this._reconnectNotificationId) {
-      Notification.dismiss(this._reconnectNotificationId);
-      this._reconnectNotificationId = null;
-    }
+    this._dismissReconnectDialog();
     this._yWebsocketProvider?.off('connection-close', this._onConnectionClosed);
     this._yWebsocketProvider?.off('sync', this._onSync);
     this._yWebsocketProvider?.off('status', this._onStatus);
@@ -257,63 +256,87 @@ export class WebSocketProvider implements IDocumentProvider {
 
   /**
    * Handles y-websocket status changes ('connected' / 'disconnected').
-   * Tracks reconnect attempts and provides user feedback.
+   * Tracks reconnect attempts and provides user feedback via a single
+   * overlay dialog that blocks notebook interaction during reconnection.
    */
   private _onStatus = ({ status }: { status: string }): void => {
     if (status === 'connected') {
-      if (this._reconnectAttempts > 0) {
+      if (this._reconnectDialog || this._awaitingReconnect) {
         console.info('WebSocket reconnected successfully.');
+        this._dismissReconnectDialog();
+        if (this._awaitingReconnect) {
+          Notification.success(this._trans.__('Connection restored.'), {
+            autoClose: 3000
+          });
+        }
+        this._awaitingReconnect = false;
       }
       this._reconnectAttempts = 0;
-      if (this._reconnectNotificationId) {
-        Notification.dismiss(this._reconnectNotificationId);
-        this._reconnectNotificationId = null;
-      }
       return;
     }
 
     // status === 'disconnected'
     this._reconnectAttempts++;
 
-    if (this._reconnectAttempts >= WebSocketProvider.MAX_RECONNECT_ATTEMPTS) {
-      // Give up: stop reconnection and show reconnect dialog.
-      if (this._reconnectNotificationId) {
-        Notification.dismiss(this._reconnectNotificationId);
-        this._reconnectNotificationId = null;
-      }
+    if (this._reconnectAttempts > WebSocketProvider.MAX_RECONNECT_ATTEMPTS) {
       console.error(
         `WebSocket failed to reconnect after ${this._reconnectAttempts} attempts.`
       );
-      this._showReconnectDialog();
+      // Stop y-websocket's auto-reconnect and show the retry dialog.
+      this._yWebsocketProvider?.disconnect();
+      this._showRetryDialog();
       return;
-    }
-
-    // Show a transient notification on first disconnect.
-    if (this._reconnectAttempts === 1) {
-      this._reconnectNotificationId = Notification.info(
-        this._trans.__('Connection lost. Attempting to reconnect…'),
-        { autoClose: false }
-      );
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // Reconnect overlay dialog
+  // ---------------------------------------------------------------------------
+
   /**
-   * Shows a dialog with a "Reconnect" button. If the user clicks "Reconnect",
-   * resets the attempt counter and triggers a single reconnect attempt. If that
-   * also fails, the dialog will re-appear after MAX_RECONNECT_ATTEMPTS.
+   * Replaces the spinner dialog with a retry dialog after MAX_RECONNECT_ATTEMPTS.
+   * The user can click "Retry" to reset the counter and try again.
    */
-  private async _showReconnectDialog(): Promise<void> {
-    await showDialog({
+  private async _showRetryDialog(): Promise<void> {
+    this._dismissReconnectDialog();
+
+    const body = new Widget();
+    body.node.innerHTML = `
+      <div style="padding:8px 0;">
+        ${this._trans.__('Unable to reconnect to the server. Would you like to try again?')}
+      </div>
+    `;
+
+    this._reconnectDialog = new Dialog({
       title: this._trans.__('Document session error'),
-      body: this._trans.__(
-        'Unable to reconnect to the server. Would you like to try again?'
-      ),
-      buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })]
+      body,
+      buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })],
+      hasClose: false
     });
 
-    // Reset counter and let y-websocket try again.
+    try {
+      await this._reconnectDialog.launch();
+    } catch {
+      // Dialog was dismissed externally (e.g. connection restored).
+      return;
+    }
+
+    // User clicked Retry — resume reconnection.
+    this._reconnectDialog = null;
     this._reconnectAttempts = 0;
-    this.reconnect();
+    this._awaitingReconnect = true;
+    this._yWebsocketProvider?.connect();
+  }
+
+  /**
+   * Dismisses the current reconnect dialog if one is showing.
+   */
+  private _dismissReconnectDialog(): void {
+    if (this._reconnectDialog) {
+      this._reconnectDialog.reject();
+      this._reconnectDialog.dispose();
+      this._reconnectDialog = null;
+    }
   }
 
   /**
@@ -379,7 +402,8 @@ export class WebSocketProvider implements IDocumentProvider {
   private _trans: TranslationBundle;
   private _fileId: string | null = null;
   private _reconnectAttempts = 0;
-  private _reconnectNotificationId: string | null = null;
+  private _reconnectDialog: Dialog<unknown> | null = null;
+  private _awaitingReconnect = false;
 }
 
 /**
