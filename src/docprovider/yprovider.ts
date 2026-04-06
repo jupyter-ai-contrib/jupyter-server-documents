@@ -311,7 +311,7 @@ export class WebSocketProvider implements IDocumentProvider {
       </div>
     `;
     const dialog = new Dialog({
-      title: this._trans.__('Document session error'),
+      title: this._trans.__('Connection Error'),
       body,
       buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })],
       hasClose: false
