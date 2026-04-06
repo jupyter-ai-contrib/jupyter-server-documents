@@ -261,15 +261,12 @@ export class WebSocketProvider implements IDocumentProvider {
    */
   private _onStatus = ({ status }: { status: string }): void => {
     if (status === 'connected') {
-      if (this._reconnectDialog || this._awaitingReconnect) {
+      if (WebSocketProvider._reconnectedManually) {
         console.info('WebSocket reconnected successfully.');
-        this._dismissReconnectDialog();
-        if (this._awaitingReconnect) {
-          Notification.success(this._trans.__('Connection restored.'), {
-            autoClose: 3000
-          });
-        }
-        this._awaitingReconnect = false;
+        WebSocketProvider._reconnectedManually = false;
+        Notification.success(this._trans.__('Connection restored.'), {
+          autoClose: 3000
+        });
       }
       this._reconnectAttempts = 0;
       return;
@@ -298,45 +295,59 @@ export class WebSocketProvider implements IDocumentProvider {
    * The user can click "Retry" to reset the counter and try again.
    */
   private async _showRetryDialog(): Promise<void> {
-    this._dismissReconnectDialog();
+    // If the global retry dialog is already open, just await it and reconnect.
+    if (WebSocketProvider._retryDialogPromise) {
+      await WebSocketProvider._retryDialogPromise;
+      this._reconnectAttempts = 0;
+      this._yWebsocketProvider?.connect();
+      return;
+    }
 
+    // Otherwise open the global retry dialog.
     const body = new Widget();
     body.node.innerHTML = `
       <div style="padding:8px 0;">
         ${this._trans.__('Unable to reconnect to the server. Would you like to try again?')}
       </div>
     `;
-
-    this._reconnectDialog = new Dialog({
+    const dialog = new Dialog({
       title: this._trans.__('Document session error'),
       body,
       buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })],
       hasClose: false
     });
+    WebSocketProvider._retryDialog = dialog;
 
-    try {
-      await this._reconnectDialog.launch();
-    } catch {
-      // Dialog was dismissed externally (e.g. connection restored).
-      return;
-    }
+    // Add a callback that clears the `_retryDialogPromise` global so future
+    // disconnects show a new dialog, and set `_reconnectedManually` to true to
+    // show a single notification on re-connection.
+    WebSocketProvider._retryDialogPromise = dialog.launch().then(
+      () => {
+        WebSocketProvider._retryDialog = null;
+        WebSocketProvider._retryDialogPromise = null;
+        WebSocketProvider._reconnectedManually = true;
+      },
+      () => {
+        // dialog.launch() rejects when dispose() is called while open.
+        // Catching here ensures _retryDialogPromise always resolves.
+        WebSocketProvider._retryDialog = null;
+        WebSocketProvider._retryDialogPromise = null;
+      }
+    );
 
-    // User clicked Retry — resume reconnection.
-    this._reconnectDialog = null;
+    // Wait until user clicks "Reconnect", then reconnect
+    await WebSocketProvider._retryDialogPromise;
     this._reconnectAttempts = 0;
-    this._awaitingReconnect = true;
     this._yWebsocketProvider?.connect();
   }
 
   /**
-   * Dismisses the current reconnect dialog if one is showing.
+   * Dismisses the shared reconnect dialog if one is showing.
    */
   private _dismissReconnectDialog(): void {
-    if (this._reconnectDialog) {
-      this._reconnectDialog.reject();
-      this._reconnectDialog.dispose();
-      this._reconnectDialog = null;
-    }
+    WebSocketProvider._retryDialog?.dispose();
+    WebSocketProvider._retryDialog = null;
+    WebSocketProvider._retryDialogPromise = null;
   }
 
   /**
@@ -402,8 +413,24 @@ export class WebSocketProvider implements IDocumentProvider {
   private _trans: TranslationBundle;
   private _fileId: string | null = null;
   private _reconnectAttempts = 0;
-  private _reconnectDialog: Dialog<unknown> | null = null;
-  private _awaitingReconnect = false;
+
+  /**
+   * Reference to the global retry dialog.
+   */
+  private static _retryDialog: Dialog<unknown> | null = null;
+
+  /**
+   * Promise that resolves when the user clicks "reconnect" in the global retry
+   * dialog.
+   */
+  private static _retryDialogPromise: Promise<void> | null = null;
+
+  /**
+   * Stores whether the user clicked "reconnect" in the global retry dialog.
+   * This is reset to false as soon as we show the "Connection restored"
+   * notification, ensuring only one notification is shown per reconnection.
+   */
+  private static _reconnectedManually = false;
 }
 
 /**
