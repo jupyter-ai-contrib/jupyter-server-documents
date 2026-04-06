@@ -231,7 +231,7 @@ describe('WebSocketProvider reconnection', () => {
 
       expect(wsProvider.connect).toHaveBeenCalled();
       expect((provider as any)._reconnectAttempts).toBe(0);
-      expect((provider as any)._awaitingReconnect).toBe(true);
+      expect((WebSocketProvider as any)._reconnectedManually).toBe(true);
       provider.dispose();
     });
 
