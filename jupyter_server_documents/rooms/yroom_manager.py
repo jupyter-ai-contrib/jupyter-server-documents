@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 from .yroom import YRoom
-from typing import cast, TYPE_CHECKING
+from .gc_debug_logger import GcDebugLogger
+from typing import TYPE_CHECKING
 import asyncio
+import gc
+import time
+import weakref
 import traitlets
 from traitlets.config import LoggingConfigurable
 from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
@@ -11,7 +15,6 @@ from ..outputs.manager import OutputsManager
 
 if TYPE_CHECKING:
     import logging
-    from typing import Set
     from jupyter_server.extension.application import ExtensionApp
     from jupyter_server.services.contents.manager import ContentsManager
     from jupyter_events import EventLogger
@@ -71,17 +74,31 @@ class YRoomManager(LoggingConfigurable):
     seconds.
     """
 
-    _watch_rooms_task: asyncio.Task | None
+    auto_free_interval = traitlets.Int(default_value=300, config=True)
+    """
+    Interval in seconds between checks for inactive and empty rooms to free from
+    memory.
+    """
+
+    show_gc_debug = traitlets.Bool(default_value=False, config=True)
+    """
+    If True, logs referrer debug info for rooms that are not garbage collected
+    after being freed.
+    """
+
+    _auto_free_rooms_task: asyncio.Task
+
+    _freeing_rooms: set[str]
+    """Set of room IDs that are in the process of being freed."""
 
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
         super().__init__(*args, **kwargs)
+        self._freeing_rooms = set()
 
-        # Start `self._watch_rooms()` background task to automatically stop
-        # empty rooms
-        # TODO: Do not enable this until #120 is addressed.
-        # self._watch_rooms_task = asyncio.create_task(self._watch_rooms())
-        self._watch_rooms_task = None
+        # Start `self._auto_free_rooms()` as a background task to automatically
+        # free rooms from memory
+        self._auto_free_rooms_task = asyncio.get_event_loop().create_task(self._auto_free_rooms())
 
 
     @property
@@ -133,14 +150,7 @@ class YRoomManager(LoggingConfigurable):
         
         # Otherwise, create a new room
         try:
-            self.log.info(f"Initializing room '{room_id}'.")
-            YRoomClass = self.yroom_class
-            yroom = YRoomClass(
-                parent=self,
-                room_id=room_id,
-            )
-            self._rooms_by_id[room_id] = yroom
-            return yroom
+            return self.create_room(room_id)
         except Exception as e:
             self.log.error(
                 f"Unable to initialize YRoom '{room_id}'.",
@@ -148,6 +158,38 @@ class YRoomManager(LoggingConfigurable):
             )
             return None
     
+
+    def create_room(self, room_id: str, **room_kwargs) -> YRoom:
+        """
+        Creates a `YRoom` instance. This method raises an exception if the room
+        already exists, so developers should prefer calling `get_room()`.
+        """
+        if self.has_room(room_id):
+            raise Exception(f"Room already exists: '{room_id}'.")
+
+        self.log.info(f"Initializing room '{room_id}'.")
+        YRoomClass = self.yroom_class
+        yroom = YRoomClass(
+            parent=self,
+            room_id=room_id,
+            **room_kwargs
+        )
+        self._rooms_by_id[room_id] = yroom
+        self._freeing_rooms.discard(room_id)
+        return yroom
+    
+
+    def add_room(self, room: YRoom) -> None:
+        """
+        Re-adds a stopped room to the manager. Called by `YRoom.restart()`
+        when a reference to a stopped room held by a consumer is accessed again.
+        """
+        if room.room_id in self._rooms_by_id:
+            return
+        self.log.info(f"Re-adding room '{room.room_id}'.")
+        self._rooms_by_id[room.room_id] = room
+        self._freeing_rooms.discard(room.room_id)
+
 
     def has_room(self, room_id: str) -> bool:
         """
@@ -157,7 +199,7 @@ class YRoomManager(LoggingConfigurable):
         return room_id in self._rooms_by_id
 
 
-    def delete_room(self, room_id: str) -> bool:
+    async def delete_room(self, room_id: str) -> bool:
         """
         Gracefully deletes a YRoom given a room ID. This stops the YRoom,
         closing all Websockets with close code 1001 (server shutting down),
@@ -167,96 +209,146 @@ class YRoomManager(LoggingConfigurable):
         Returns `True` if the room was deleted successfully. Returns `False` if
         an exception was raised.
         """
-        yroom = self._rooms_by_id.pop(room_id, None)
+        self.log.info(f"Deleting YRoom '{room_id}'.")
+        yroom = self._rooms_by_id.get(room_id, None)
         if not yroom:
+            self.log.info(f"YRoom '{room_id}' was already deleted.")
             return True
         
-        self.log.info(f"Stopping YRoom '{room_id}'.")
         try:
             yroom.stop()
+            await yroom.until_saved
+            self._rooms_by_id.pop(room_id, None)
+            self.log.info(f"Deleted YRoom '{room_id}'.")
             return True
         except Exception as e:
             self.log.exception(
-                f"Exception raised when stopping YRoom '{room_id}: "
+                f"Exception raised when deleting YRoom '{room_id}: "
             )
             return False
     
-
-    async def _watch_rooms(self) -> None:
+    
+    def list_document_rooms(self) -> list[YRoom]:
         """
-        Background task that checks all `YRoom` instances every 10 seconds,
-        restarting any updated rooms that have been inactive for >10 seconds.
-        This frees the memory occupied by the room's YDoc history, discarding it
-        in the process.
+        Lists all document rooms, excluding "JupyterLab:globalAwareness".
+        """
+        return [
+            room for room_id, room in self._rooms_by_id.items()
+            if room_id != "JupyterLab:globalAwareness"
+        ]
 
-        - For rooms providing notebooks: This task restarts the room if it has
-        been updated, has no connected clients, and its kernel execution status
-        is either 'idle' or 'dead'.
 
-        - For all other rooms: This task restarts the room if it has been
-        updated and has no connected clients.
+    async def _auto_free_rooms(self) -> None:
+        """
+        Background task that checks all `YRoom` instances on an interval,
+        deleting any rooms that should be freed. See
+        `_should_free_room()` for more info.
+
         """
         while True:
-            # Check every 10 seconds
-            await asyncio.sleep(10)
+            await asyncio.sleep(self.auto_free_interval)
 
-            # Get all room IDs, except for the global awareness room
-            room_ids = set(self._rooms_by_id.keys())
-            room_ids.discard("JupyterLab:globalAwareness")
+            # Find all rooms to free and continue early if none found.
+            rooms_to_free = [
+                room for room in self.list_document_rooms()
+                if self._should_free_room(room)
+            ]
+            if not rooms_to_free:
+                continue
 
-            # Check all rooms and restart it if inactive for >10 seconds.
-            for room_id in room_ids:
-                self._check_room(room_id)
+            # Free all rooms, including extra logs for debugging if
+            # `show_gc_debug=True`.
+            room = None
+            gc_logger = None
+            if self.show_gc_debug:
+                gc_logger = GcDebugLogger(self.log)
+            for room in rooms_to_free:
+                await self._free_room(room)
+                if self.show_gc_debug and gc_logger:
+                    # When showing GC debug, sleep 0.1s to allow async cleanup
+                    # to complete before logging referrers.
+                    await asyncio.sleep(0.1)
+                    self.log.error(f"Referrers of room '{room.room_id}':")
+                    gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
+            
+            # Cleanup local variables and trigger garbage collection.
+            del room
+            rooms_to_free.clear()
+            self.log.info("Garbage collection triggered.")
+            gc_start = time.monotonic()
+            uncollectable_before = len(gc.garbage)
+            # `gc.collect()` triggers garbage collection and returns a sum of
+            # collected objects + objects found to be uncollectable. The total
+            # collected count is obtained by subtracting the change in
+            # uncollectable objects.
+            collected_and_uncollectable = gc.collect()
+            uncollectable_after = len(gc.garbage)
+            collected_count = collected_and_uncollectable - (uncollectable_after - uncollectable_before)
+            gc_ms = (time.monotonic() - gc_start) * 1000
+            self.log.info(f"Garbage collection complete. Freed {collected_count} objects in {gc_ms:.1f}ms.")
+            if uncollectable_after:
+                self.log.warning(f"{uncollectable_after} uncollectable objects found.")
                 
 
-    def _check_room(self, room_id: str) -> None:
+    def _should_free_room(self, room: YRoom) -> bool:
         """
-        Checks a room for inactivity.
+        Returns whether a room should be deleted to free memory.
 
-        - Rooms that have not been updated are not restarted, as there is no
-        YDoc history to free.
+        - For rooms not providing notebooks: This task stops the room if it
+        is inactive and empty (no WebSocket clients connected / connecting).
 
-        - If a room is inactive and not in `_inactive_rooms`, this method adds
-        the room to `_inactive_rooms`. 
+        - For rooms providing notebooks: This task stops the room if it has is
+        inactive, has no connected clients, and its kernel execution status is
+        either 'idle' or 'dead'.
 
-        - If a room is inactive and is listed in `_inactive_rooms`, this method
-        restarts the room, as it has been inactive for 2 consecutive iterations
-        of `_watch_rooms()`.
+        - See `YRoom.inactive` for details on how activity is measured.
         """
-        # Do nothing if the room has any connected clients.
-        room = self._rooms_by_id[room_id]
-        if room.clients.count != 0:
-            self._inactive_rooms.discard(room_id)
-            return
+        if not room.room_id.startswith("json:notebook:"):
+            if self.show_gc_debug and room.empty and not room.inactive:
+                self.log.info(f"Not freeing room '{room.room_id}' because it is not yet inactive.")
+            return room.inactive_and_empty
         
-        # Do nothing if the room contains a notebook with kernel execution state
-        # neither 'idle' nor 'dead'.
-        # In this case, the notebook kernel may still be running code cells, so
-        # the room should not be closed.
         awareness = room.get_awareness().get_local_state() or {}
         execution_state = awareness.get("kernel", {}).get("execution_state", None)
-        if execution_state not in { "idle", "dead", None }:
-            self._inactive_rooms.discard(room_id)
-            return
-        
-        # Do nothing if the room has not been updated. This prevents empty rooms
-        # from being restarted every 10 seconds.
-        if not room.updated:
-            self._inactive_rooms.discard(room_id)
-            return
+        should_free = execution_state in { "idle", "dead" } and room.inactive_and_empty
+        if self.show_gc_debug and room.empty and not should_free:
+            reasons = []
+            if not room.inactive:
+                reasons.append("it is not yet inactive")
+            if execution_state not in { "idle", "dead" }:
+                reasons.append(f"it has execution state '{execution_state}'")
+            self.log.info(f"Not freeing notebook room '{room.room_id}' because {' and '.join(reasons)}.")
+        return should_free
+    
 
-        # The room is updated (with history) & inactive if this line is reached.
-        # Restart the room if was marked as inactive in the last iteration,
-        # otherwise mark it as inactive.
-        if room_id in self._inactive_rooms:
-            self.log.info(
-                f"Room '{room_id}' has been inactive for >10 seconds. "
-                "Restarting the room to free memory occupied by its history."
-            )
-            room.restart()
-            self._inactive_rooms.discard(room_id)
-        else:
-            self._inactive_rooms.add(room_id)
+    async def _free_room(self, room: YRoom) -> None:
+        """
+        Frees a room from memory by deleting it. This is the same as
+        `delete_room()`, but logs when the room is freed.
+        """
+        self.log.info(f"Freeing room '{room.room_id}'.")
+
+        # Capture room_id as a string so the finalizer callback doesn't
+        # hold a strong reference to `room`.
+        room_id = room.room_id
+        self._freeing_rooms.add(room_id)
+        weakref.finalize(
+            room,
+            self._on_room_freed,
+            room_id,
+        )
+        await self.delete_room(room.room_id)
+
+
+    def _on_room_freed(self, room_id: str) -> None:
+        """Callback fired by weakref.finalize when a room is garbage collected."""
+        self.log.info(f"Freed YRoom '{room_id}' from memory.")
+        self._freeing_rooms.discard(room_id)
+
+
+    def was_room_freed(self, room_id: str) -> bool:
+        """Returns whether a room has been freed from memory."""
+        return room_id not in self._freeing_rooms and room_id not in self._rooms_by_id
 
 
     async def stop(self) -> None:
@@ -271,8 +363,12 @@ class YRoomManager(LoggingConfigurable):
         """
         
         # First, stop all background tasks
-        if self._watch_rooms_task:
-            self._watch_rooms_task.cancel()
+        if self._auto_free_rooms_task:
+            self._auto_free_rooms_task.cancel()
+            try:
+                await self._auto_free_rooms_task
+            except asyncio.CancelledError:
+                pass
 
         # Return early if there are no rooms
         room_count = len(self._rooms_by_id)
@@ -285,16 +381,10 @@ class YRoomManager(LoggingConfigurable):
         )
         deletion_tasks = []
 
-        # Define task that deletes the room and waits until the content is saved
-        async def delete_then_save(room_id: str, room: YRoom) -> bool:
-            result = self.delete_room(room_id)
-            await room.until_saved
-            return result
-
         # Delete all rooms concurrently using `delete_then_save()`
-        for room_id, room in self._rooms_by_id.items():
+        for room_id in self._rooms_by_id:
             deletion_task = asyncio.create_task(
-                delete_then_save(room_id, room)
+                self.delete_room(room_id)
             )
             deletion_tasks.append(deletion_task)
         
@@ -320,3 +410,5 @@ class YRoomManager(LoggingConfigurable):
                 f"{room_count} YRooms."
             )
         
+
+

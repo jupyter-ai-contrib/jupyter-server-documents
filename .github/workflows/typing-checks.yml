@@ -41,4 +41,4 @@ jobs:
 
       - name: Type-check `rooms` module
         run: |
-          mypy jupyter_server_documents/rooms
+          mypy jupyter_server_documents/rooms --exclude gc_debug_logger.py

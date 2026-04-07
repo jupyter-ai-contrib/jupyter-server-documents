@@ -1,6 +1,7 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
 from typing import TYPE_CHECKING, cast, Any
 import asyncio
+import time
 import uuid
 import pycrdt
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
@@ -46,6 +47,17 @@ class YRoom(LoggingConfigurable):
     )
     """
     ID of the room to provide. This is a required argument.
+    """
+
+    inactivity_timeout = traitlets.Int(
+        default_value=60,
+        config=True,
+        help="Number of seconds of inactivity before a room is considered inactive."
+    )
+    """
+    Number of seconds of inactivity before a room is considered inactive.
+
+    See `YRoom.inactive` for more details on how activity is tracked.
     """
 
     file_api_class = traitlets.Type(
@@ -152,6 +164,13 @@ class YRoom(LoggingConfigurable):
     'awareness', 'ydoc' and 'jupyter_ydoc' keys respectively.
     """
 
+    _on_stop_callbacks: list[Callable[[], Any]]
+    """
+    List that stores all `on_stop` callbacks passed to `get_awareness()`,
+    `get_jupyter_ydoc()`, or `get_ydoc()`. These are called when the room is
+    stopped.
+    """
+
     _ydoc: pycrdt.Doc
     """
     The `YDoc` for this room's document. See `get_ydoc()` documentation for more
@@ -198,6 +217,12 @@ class YRoom(LoggingConfigurable):
     stopping. See `self.until_saved` documentation for more info.
     """
 
+    show_gc_debug: bool
+    """
+    Whether to show garbage collection debug logs. Set to
+    `YRoomManager.show_gc_debug` trait.
+    """
+
 
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
@@ -210,9 +235,12 @@ class YRoom(LoggingConfigurable):
             "jupyter_ydoc": [],
             "ydoc": [],
         }
+        self._on_stop_callbacks: list[Callable[[], Any]] = []
         self._stopped = False
         self._updated = False
         self._save_task = None
+        self._last_activity = time.monotonic()
+        self.show_gc_debug = self.parent.show_gc_debug
 
         # Initialize YjsClientGroup, YDoc, and Awareness
         ClientGroupClass = self.client_group_class
@@ -350,6 +378,36 @@ class YRoom(LoggingConfigurable):
 
         return self._client_group
 
+    def _update_activity(self, method_name: str | None = None) -> None:
+        """Updates the last activity timestamp to the current time."""
+        self._last_activity = time.monotonic()
+        if self.show_gc_debug and self.empty:
+            source = f"'{method_name}()'" if method_name else "unknown source"
+            self.log.error(f"Activity in empty YRoom '{self.room_id}' from {source}.")
+
+    @property
+    def inactive(self) -> bool:
+        """
+        Returns whether this room has been inactive for longer than
+        `self.inactivity_timeout`. Activity is recorded when either:
+
+        - A consumer accesses the room via `get_ydoc()`, `get_awareness()`, or
+        `get_jupyter_ydoc()`, or
+
+        - A meaningful update is made to the YDoc or Awareness objects (excludes
+        no-op state updates).
+        """
+        return (time.monotonic() - self._last_activity) > self.inactivity_timeout
+    
+    @property
+    def empty(self) -> bool:
+        """Returns whether this room has no connected clients."""
+        return self.clients.count == 0
+
+    @property
+    def inactive_and_empty(self) -> bool:
+        """Returns whether this room is inactive and has no connected clients."""
+        return self.inactive and self.empty
 
     async def get_jupyter_ydoc(self, on_reset: Callable[[YBaseDoc], Any] | None = None) -> YBaseDoc:
         """
@@ -362,12 +420,18 @@ class YRoom(LoggingConfigurable):
         YDoc whenever the YDoc is reset, e.g. in response to an out-of-band
         change.
         """
+        if self._stopped:
+            self.restart()
+
+        # Raise exception if room does not contain a JupyterYDoc
         if self.room_id == "JupyterLab:globalAwareness":
             message = "There is no Jupyter ydoc for global awareness scenario"
             self.log.error(message)
             raise Exception(message)
         if self._jupyter_ydoc is None:
             raise RuntimeError("Jupyter YDoc is not available")
+
+        # Otherwise, update activity and return the JupyterYDoc once loaded
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -385,6 +449,8 @@ class YRoom(LoggingConfigurable):
         YDoc as an argument. This callback is run with the new YDoc object
         whenever the YDoc is reset, e.g. in response to an out-of-band change.
         """
+        if self._stopped:
+            self.restart()
         if self.file_api:
             await self.file_api.until_content_loaded
         if on_reset:
@@ -401,6 +467,8 @@ class YRoom(LoggingConfigurable):
         Awareness object whenever the YDoc is reset, e.g. in response to an
         out-of-band change.
         """
+        if self._stopped:
+            self.restart()
         if on_reset:
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
@@ -419,6 +487,9 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell.
         This state persists across client disconnections.
         """
+        if self._stopped:
+            self.restart()
+        self._update_activity("set_cell_execution_state")
         if not hasattr(self, '_cell_execution_states'):
             self._cell_execution_states = {}
         self._cell_execution_states[cell_id] = execution_state
@@ -428,15 +499,20 @@ class YRoom(LoggingConfigurable):
         Sets the execution state for a specific cell in the awareness system.
         This provides real-time updates to all connected clients.
         """
+        if self._stopped:
+            self.restart()
         awareness = self.get_awareness()
-        if awareness is not None:
-            local_state = awareness.get_local_state()
-            if local_state is not None:
-                cell_states = local_state.get("cell_execution_states", {})
-            else:
-                cell_states = {}
-            cell_states[cell_id] = execution_state
-            awareness.set_local_state_field("cell_execution_states", cell_states)
+        if awareness is None:
+            return
+
+        self._update_activity("set_cell_awareness_state")
+        local_state = awareness.get_local_state()
+        if local_state is not None:
+            cell_states = local_state.get("cell_execution_states", {})
+        else:
+            cell_states = {}
+        cell_states[cell_id] = execution_state
+        awareness.set_local_state_field("cell_execution_states", cell_states)
 
     def add_message(self, client_id: str, message: bytes) -> None:
         """
@@ -635,6 +711,20 @@ class YRoom(LoggingConfigurable):
             return
         
 
+    def handle_awareness_update(self, client_id: str, message: bytes) -> None:
+        # Apply the AwarenessUpdate message
+        try:
+            message_payload = pycrdt.read_message(message[1:])
+            self._awareness.apply_awareness_update(message_payload, origin=self)
+        except Exception as e:
+            self.log.error(
+                "An exception occurred when applying an AwarenessUpdate "
+                f"message from client '{client_id}':"
+            )
+            self.log.exception(e)
+            return
+
+
     def _on_ydoc_update(self, event: TransactionEvent) -> None:
         """
         This method is an observer on `self._ydoc` which broadcasts a
@@ -642,10 +732,18 @@ class YRoom(LoggingConfigurable):
 
         The YDoc is saved in the `self._on_jupyter_ydoc_update()` observer.
         """
+        self._update_activity("_on_ydoc_update")
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
         self._broadcast_message(message, message_type="SyncUpdate")
 
+
+    def add_stop_callback(self, callback: Callable[[], Any]) -> None:
+        """
+        Registers a callback to be called when the room is stopped (but not
+        when restarting). The callback takes no arguments.
+        """
+        self._on_stop_callbacks.append(callback)
 
     def observe_jupyter_ydoc(self, observer: Callable[[str, Any], Any]) -> str:
         """
@@ -722,6 +820,7 @@ class YRoom(LoggingConfigurable):
                 return
         
         # Otherwise, a change was made.
+        self._update_activity("_on_jupyter_ydoc_update")
         # Call all observers added by consumers first.
         for observer in self._jupyter_ydoc_observers.values():
             observer(updated_key, event)
@@ -730,20 +829,6 @@ class YRoom(LoggingConfigurable):
         self._updated = True
         self.file_api.schedule_save()
     
-
-    def handle_awareness_update(self, client_id: str, message: bytes) -> None:
-        # Apply the AwarenessUpdate message
-        try:
-            message_payload = pycrdt.read_message(message[1:])
-            self._awareness.apply_awareness_update(message_payload, origin=self)
-        except Exception as e:
-            self.log.error(
-                "An exception occurred when applying an AwarenessUpdate "
-                f"message from client '{client_id}':"
-            )
-            self.log.exception(e)
-            return
-
 
     def _should_ignore_update(self, client_id: str, message_type: Literal['AwarenessUpdate', 'SyncUpdate']) -> bool:
         """
@@ -789,17 +874,24 @@ class YRoom(LoggingConfigurable):
                 self.log.exception(e)
                 continue
                 
-    def _on_awareness_update(self, type: str, changes: tuple[dict[str, Any], Any]) -> None:
+    def _on_awareness_update(self, topic: str, changes: tuple[dict[str, Any], Any]) -> None:
         """
         Observer on `self.awareness` that broadcasts AwarenessUpdate messages to
         all clients on update.
 
         Arguments:
-            type: The change type.
-            changes: The awareness changes.
+            topic: The change topic ("change" or "update").
+                See: `pycrdt._awareness.Awareness._emit()`
+            changes: A tuple of (dict with "added", "updated", "removed" client
+                ID lists, origin).
         """        
-        
-        self.log.debug(f"awareness update, type={type}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
+        # Only update activity on "change" events, which indicate actual state
+        # differences (added/removed/updated). "update" events fire on every
+        # mutation including clock-only renewals, which would keep the room
+        # alive indefinitely.
+        if topic == "change":
+            self._update_activity("_on_awareness_update")
+        self.log.debug(f"awareness update, topic={topic}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
         self.log.debug(f"awareness update, updated_clients={updated_clients}")
         state = self._awareness.encode_awareness_update(updated_clients)
@@ -840,7 +932,7 @@ class YRoom(LoggingConfigurable):
         self.stop(close_code=4002, immediately=True)
     
 
-    def stop(self, close_code: int = 1001, immediately: bool = False) -> None:
+    def stop(self, close_code: int = 1001, immediately: bool = False, restarting: bool = False) -> None:
         """
         Stops the YRoom. This method:
          
@@ -863,18 +955,28 @@ class YRoom(LoggingConfigurable):
         """
         if self._stopped:
             return
-
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
+        
+        # Stop awareness heartbeat
+        asyncio.create_task(self._awareness.stop())
 
         # Remove all observers
-        self._ydoc.unobserve(self._ydoc_subscription)
-        self._awareness.unobserve(self._awareness_subscription)
+        try:
+            self._ydoc.unobserve(self._ydoc_subscription)
+        except ValueError:
+            # Continue if YDoc was already unobserved
+            pass
+        try:
+            self._awareness.unobserve(self._awareness_subscription)
+        except KeyError:
+            # Continue if Awareness was already unobserved
+            pass
         if self._jupyter_ydoc:
             self._jupyter_ydoc.unobserve()
-        
+
         # Empty the message queue based on `immediately` argument
         while not self._message_queue.empty():
             if immediately:
@@ -890,22 +992,29 @@ class YRoom(LoggingConfigurable):
         # Stop the `_process_message_queue` task by enqueueing `None`
         self._message_queue.put_nowait(None)
         
-        # Return early if the room is not a document room, as no more action is
-        # needed.
-        if not self.file_api or not self._jupyter_ydoc:
-            return
+        # If this room is a document room, stop the file API and save the
+        # previous content if `immediately=False`.
+        if self.file_api and self._jupyter_ydoc:
+            self.file_api.stop()
+            if not immediately:
+                prev_jupyter_ydoc = self._jupyter_ydoc
+                self._save_task = asyncio.create_task(
+                    self.file_api.save(prev_jupyter_ydoc)
+                )
 
-        # Otherwise, stop the file API.
-        self.file_api.stop()
+        # Fire `on_stop` callbacks (skip if restarting)
+        if not restarting:
+            for on_stop in self._on_stop_callbacks:
+                try:
+                    result = on_stop()
+                    if asyncio.iscoroutine(result):
+                        asyncio.create_task(result)
+                except Exception:
+                    self.log.exception("Exception raised by on_stop() callback:")
+                    continue
 
-        # Clear the YDoc, saving the previous content unless `immediately=True`
-        if not immediately:
-            prev_jupyter_ydoc = self._jupyter_ydoc
-            self._save_task = asyncio.create_task(
-                self.file_api.save(prev_jupyter_ydoc)
-            )
-        self._reset_ydoc()
         self._stopped = True
+        self.log.info(f"Stopped YRoom '{self.room_id}'.")
     
 
     @property
@@ -965,7 +1074,6 @@ class YRoom(LoggingConfigurable):
         Returns whether the room is stopped.
         """
         return self._stopped
-    
 
     @property
     def updated(self) -> bool:
@@ -990,14 +1098,22 @@ class YRoom(LoggingConfigurable):
         immediately)` with the given arguments. Otherwise, `close_code` and
         `immediately` are ignored.
         """
+        self._update_activity("restart")
+
         # Stop if not stopped already
         if not self._stopped:
-            self.stop(close_code=close_code, immediately=immediately)
-        
+            self.stop(close_code=close_code, immediately=immediately, restarting=True)
+
+        # Re-add to YRoomManager if this room was freed
+        self.parent.add_room(self)
+
         # Reset internal state
         self._stopped = False
         self._updated = False
 
+        # Re-attach observers
+        self._reset_ydoc()
+        
         # Restart client group
         self.clients.restart()
 
