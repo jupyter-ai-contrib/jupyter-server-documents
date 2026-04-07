@@ -30,8 +30,9 @@ class TestYRoomManagerGC:
         await room.file_api.until_content_loaded
         del room
 
-        # Wait for inactivity timeout + auto_free_interval + margin
-        await asyncio.sleep(3)
+        # Wait for inactivity timeout (1) + auto_free_interval (1) + 3 seconds
+        # before GC run + margin (1)
+        await asyncio.sleep(6)
 
         assert manager.was_room_freed(room_id)
 
