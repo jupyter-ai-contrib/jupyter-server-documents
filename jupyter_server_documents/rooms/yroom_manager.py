@@ -265,15 +265,16 @@ class YRoomManager(LoggingConfigurable):
             for room in rooms_to_free:
                 await self._free_room(room)
                 if self.show_gc_debug and gc_logger:
-                    # When showing GC debug, sleep 0.1s to allow async cleanup
-                    # to complete before logging referrers.
-                    await asyncio.sleep(0.1)
                     self.log.error(f"Referrers of room '{room.room_id}':")
                     gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
             
-            # Cleanup local variables and trigger garbage collection.
+            # Cleanup local variables and wait a few seconds for async cleanup
+            # tasks to complete.
             del room
             rooms_to_free.clear()
+            await asyncio.sleep(3)
+
+            # Trigger garbage collection
             self.log.info("Garbage collection triggered.")
             gc_start = time.monotonic()
             uncollectable_before = len(gc.garbage)
