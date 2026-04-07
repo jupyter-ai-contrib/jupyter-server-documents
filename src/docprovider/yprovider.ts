@@ -21,6 +21,7 @@ import { DocumentWidget } from '@jupyterlab/docregistry';
 import { FileEditor } from '@jupyterlab/fileeditor';
 import { Notebook } from '@jupyterlab/notebook';
 import { ChatWidget } from '@jupyter/chat';
+import { Widget } from '@lumino/widgets';
 
 /**
  * A class to provide Yjs synchronization over WebSocket.
@@ -30,6 +31,11 @@ import { ChatWidget } from '@jupyter/chat';
  */
 
 export class WebSocketProvider implements IDocumentProvider {
+  /**
+   * Maximum number of reconnect attempts before showing the retry dialog.
+   */
+  static readonly MAX_RECONNECT_ATTEMPTS = 5;
+
   /**
    * Construct a new WebSocketProvider
    *
@@ -134,8 +140,10 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
     this._isDisposed = true;
+    this._dismissReconnectDialog();
     this._yWebsocketProvider?.off('connection-close', this._onConnectionClosed);
     this._yWebsocketProvider?.off('sync', this._onSync);
+    this._yWebsocketProvider?.off('status', this._onStatus);
     this._yWebsocketProvider?.destroy();
     this._disconnect();
     Signal.clearData(this);
@@ -198,6 +206,7 @@ export class WebSocketProvider implements IDocumentProvider {
 
     this._yWebsocketProvider.on('sync', this._onSync);
     this._yWebsocketProvider.on('connection-close', this._onConnectionClosed);
+    this._yWebsocketProvider.on('status', this._onStatus);
   }
 
   get wsProvider() {
@@ -206,6 +215,7 @@ export class WebSocketProvider implements IDocumentProvider {
   private _disconnect(): void {
     this._yWebsocketProvider?.off('connection-close', this._onConnectionClosed);
     this._yWebsocketProvider?.off('sync', this._onSync);
+    this._yWebsocketProvider?.off('status', this._onStatus);
     this._yWebsocketProvider?.destroy();
     this._yWebsocketProvider = null;
   }
@@ -217,10 +227,9 @@ export class WebSocketProvider implements IDocumentProvider {
   /**
    * Handles disconnections from the YRoom Websocket.
    *
-   * TODO: Issue #45.
+   * Resolves: https://github.com/jupyter-ai-contrib/jupyter-server-documents/issues/196
    */
   private _onConnectionClosed = (event: CloseEvent): void => {
-    // Handle close events based on code
     const close_code = event.code;
 
     // 4001 := indicates out-of-band move/deletion
@@ -235,19 +244,111 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
 
-    // If the close code is unhandled, log an error to the browser console and
-    // show a popup asking user to refresh the page.
-    console.error('WebSocket connection was closed. Close event: ', event);
-    showErrorMessage(
-      this._trans.__('Document session error'),
-      'Please refresh the browser tab.',
-      [Dialog.okButton()]
+    // For all other close codes (e.g. 1006 abnormal closure, 1001 going away,
+    // ping timeout), let y-websocket's built-in exponential backoff handle
+    // reconnection automatically. Only log a warning.
+    console.warn(
+      `WebSocket connection closed (code=${close_code}). ` +
+        'y-websocket will attempt to reconnect automatically.',
+      event
+    );
+  };
+
+  /**
+   * Handles y-websocket status changes ('connected' / 'disconnected').
+   * Tracks reconnect attempts and provides user feedback via a single
+   * overlay dialog that blocks notebook interaction during reconnection.
+   */
+  private _onStatus = ({ status }: { status: string }): void => {
+    if (status === 'connected') {
+      if (WebSocketProvider._reconnectedManually) {
+        console.info('WebSocket reconnected successfully.');
+        WebSocketProvider._reconnectedManually = false;
+        Notification.success(this._trans.__('Connection restored.'), {
+          autoClose: 3000
+        });
+      }
+      this._reconnectAttempts = 0;
+      return;
+    }
+
+    // status === 'disconnected'
+    this._reconnectAttempts++;
+
+    if (this._reconnectAttempts > WebSocketProvider.MAX_RECONNECT_ATTEMPTS) {
+      console.error(
+        `WebSocket failed to reconnect after ${this._reconnectAttempts} attempts.`
+      );
+      // Stop y-websocket's auto-reconnect and show the retry dialog.
+      this._yWebsocketProvider?.disconnect();
+      this._showRetryDialog();
+      return;
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Reconnect overlay dialog
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Replaces the spinner dialog with a retry dialog after MAX_RECONNECT_ATTEMPTS.
+   * The user can click "Retry" to reset the counter and try again.
+   */
+  private async _showRetryDialog(): Promise<void> {
+    // If the global retry dialog is already open, just await it and reconnect.
+    if (WebSocketProvider._retryDialogPromise) {
+      await WebSocketProvider._retryDialogPromise;
+      this._reconnectAttempts = 0;
+      this._yWebsocketProvider?.connect();
+      return;
+    }
+
+    // Otherwise open the global retry dialog.
+    const body = new Widget();
+    body.node.innerHTML = `
+      <div style="padding:8px 0;">
+        ${this._trans.__('Unable to reconnect to the server. Would you like to try again?')}
+      </div>
+    `;
+    const dialog = new Dialog({
+      title: this._trans.__('Connection Error'),
+      body,
+      buttons: [Dialog.okButton({ label: this._trans.__('Reconnect') })],
+      hasClose: false
+    });
+    WebSocketProvider._retryDialog = dialog;
+
+    // Add a callback that clears the `_retryDialogPromise` global so future
+    // disconnects show a new dialog, and set `_reconnectedManually` to true to
+    // show a single notification on re-connection.
+    WebSocketProvider._retryDialogPromise = dialog.launch().then(
+      () => {
+        WebSocketProvider._retryDialog = null;
+        WebSocketProvider._retryDialogPromise = null;
+        WebSocketProvider._reconnectedManually = true;
+      },
+      () => {
+        // dialog.launch() rejects when dispose() is called while open.
+        // Catching here ensures _retryDialogPromise always resolves.
+        WebSocketProvider._retryDialog = null;
+        WebSocketProvider._retryDialogPromise = null;
+      }
     );
 
-    // Stop `y-websocket` from re-connecting by disposing of the shared model.
-    // This seems to be the only way to halt re-connection attempts.
-    this._sharedModel.dispose();
-  };
+    // Wait until user clicks "Reconnect", then reconnect
+    await WebSocketProvider._retryDialogPromise;
+    this._reconnectAttempts = 0;
+    this._yWebsocketProvider?.connect();
+  }
+
+  /**
+   * Dismisses the shared reconnect dialog if one is showing.
+   */
+  private _dismissReconnectDialog(): void {
+    WebSocketProvider._retryDialog?.dispose();
+    WebSocketProvider._retryDialog = null;
+    WebSocketProvider._retryDialogPromise = null;
+  }
 
   /**
    * Handles an out-of-band move/deletion indicated by close code 4001.
@@ -311,6 +412,25 @@ export class WebSocketProvider implements IDocumentProvider {
   private _yWebsocketProvider: YWebsocketProvider | null;
   private _trans: TranslationBundle;
   private _fileId: string | null = null;
+  private _reconnectAttempts = 0;
+
+  /**
+   * Reference to the global retry dialog.
+   */
+  private static _retryDialog: Dialog<unknown> | null = null;
+
+  /**
+   * Promise that resolves when the user clicks "reconnect" in the global retry
+   * dialog.
+   */
+  private static _retryDialogPromise: Promise<void> | null = null;
+
+  /**
+   * Stores whether the user clicked "reconnect" in the global retry dialog.
+   * This is reset to false as soon as we show the "Connection restored"
+   * notification, ensuring only one notification is shown per reconnection.
+   */
+  private static _reconnectedManually = false;
 }
 
 /**
