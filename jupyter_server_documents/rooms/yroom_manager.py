@@ -260,20 +260,28 @@ class YRoomManager(LoggingConfigurable):
             # `show_gc_debug=True`.
             room = None
             gc_logger = None
+            any_room_freed = False
             if self.show_gc_debug:
                 gc_logger = GcDebugLogger(self.log)
             for room in rooms_to_free:
-                await self._free_room(room)
+                room_freed = await self._free_room(room)
+                if room_freed:
+                    any_room_freed = True
                 if self.show_gc_debug and gc_logger:
-                    # When showing GC debug, sleep 0.1s to allow async cleanup
-                    # to complete before logging referrers.
-                    await asyncio.sleep(0.1)
                     self.log.error(f"Referrers of room '{room.room_id}':")
                     gc_logger.log_referrers(room, stop_at={id(rooms_to_free): "rooms_to_free"})
             
-            # Cleanup local variables and trigger garbage collection.
+            # Skip manual GC if no rooms were stopped successfully
+            if not any_room_freed:
+                continue
+
+            # Cleanup local variables and wait a few seconds for async cleanup
+            # tasks to complete.
             del room
             rooms_to_free.clear()
+            await asyncio.sleep(3)
+
+            # Trigger garbage collection
             self.log.info("Garbage collection triggered.")
             gc_start = time.monotonic()
             uncollectable_before = len(gc.garbage)
@@ -321,7 +329,7 @@ class YRoomManager(LoggingConfigurable):
         return should_free
     
 
-    async def _free_room(self, room: YRoom) -> None:
+    async def _free_room(self, room: YRoom) -> bool:
         """
         Frees a room from memory by deleting it. This is the same as
         `delete_room()`, but logs when the room is freed.
@@ -337,7 +345,7 @@ class YRoomManager(LoggingConfigurable):
             self._on_room_freed,
             room_id,
         )
-        await self.delete_room(room.room_id)
+        return await self.delete_room(room.room_id)
 
 
     def _on_room_freed(self, room_id: str) -> None:
