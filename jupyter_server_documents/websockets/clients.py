@@ -134,6 +134,7 @@ class YjsClientGroup:
         """
         Gets a client from its ID.
         """
+        client = None
         if client_id in self.desynced: 
             client = self.desynced[client_id]
         if client_id in self.synced:
