@@ -81,7 +81,6 @@ export const plugin: JupyterFrontEndPlugin<void> = {
           );
         });
     }
-
   }
 };
 
