@@ -238,6 +238,7 @@ class YRoom(LoggingConfigurable):
         self._on_stop_callbacks: list[Callable[[], Any]] = []
         self._stopped = False
         self._updated = False
+        self._pending_source_restore: dict[str, str] = {}
         self._save_task = None
         self._last_activity = time.monotonic()
         self.show_gc_debug = self.parent.show_gc_debug
@@ -609,6 +610,23 @@ class YRoom(LoggingConfigurable):
             self.handle_sync_update(client_id, message)
 
 
+    @staticmethod
+    def _decode_state_vector(sv: bytes) -> dict[int, int]:
+        d = pycrdt.Decoder(sv)
+        return {d.read_var_uint(): d.read_var_uint() for _ in range(d.read_var_uint())}
+
+    def _has_divergent_history(self, message_payload: bytes) -> bool:
+        """Returns True if the client's state vector contains client IDs
+        unknown to the server, indicating a stale client from a previous
+        session."""
+        d = pycrdt.Decoder(message_payload)
+        d.read_var_uint()  # skip subtype
+        client_sv = self._decode_state_vector(d.read_message())
+        if not client_sv:
+            return False
+        server_sv = self._decode_state_vector(self._ydoc.get_state())
+        return bool(set(client_sv) - set(server_sv))
+
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
         """
         Handles SyncStep1 messages from new clients by:
@@ -616,14 +634,31 @@ class YRoom(LoggingConfigurable):
         - Computing a SyncStep2 reply,
         - Sending the reply to the client over WS, and
         - Sending a new SyncStep1 message immediately after.
+
+        If the client has divergent history (stale client from a previous
+        session), the server clears its source before the handshake and
+        restores it afterwards. This prevents content duplication caused by
+        merging two YDocs with the same content but different CRDT histories.
         """
         # Mark client as desynced
         new_client = self.clients.get(client_id)
         self.clients.mark_desynced(client_id)
 
+        message_payload = message[1:]
+        divergent = self._has_divergent_history(message_payload)
+
+        if divergent and self._jupyter_ydoc is not None:
+            self.log.warning(
+                "Client '%s' has divergent history. Clearing source before handshake.",
+                client_id,
+            )
+            self._pending_source_restore[client_id] = self._jupyter_ydoc.source
+            if self.file_api is not None:
+                self.file_api._reloading_content = True
+            self._jupyter_ydoc.source = ""
+
         # Compute SyncStep2 reply
         try:
-            message_payload = message[1:]
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self._ydoc)
             assert isinstance(sync_step2_message, bytes)
         except Exception as e:
@@ -682,6 +717,18 @@ class YRoom(LoggingConfigurable):
             )
             self.log.exception(e)
             return
+
+        # If this client had divergent history, restore the source now that
+        # the bidirectional handshake is complete. Both YDocs share the same
+        # history, so setting source will cleanly delete all stale items and
+        # broadcast the correct content to all clients.
+        saved_source = self._pending_source_restore.pop(client_id, None)
+        if saved_source is not None and self._jupyter_ydoc is not None:
+            try:
+                self._jupyter_ydoc.source = saved_source
+            finally:
+                if self.file_api is not None:
+                    self.file_api._reloading_content = False
 
 
     def handle_sync_update(self, client_id: str, message: bytes) -> None:
