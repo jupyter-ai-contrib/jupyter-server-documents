@@ -273,7 +273,7 @@ class YRoomManager(LoggingConfigurable):
             
             # Skip manual GC if no rooms were stopped successfully
             if not any_room_freed:
-                return
+                continue
 
             # Cleanup local variables and wait a few seconds for async cleanup
             # tasks to complete.
