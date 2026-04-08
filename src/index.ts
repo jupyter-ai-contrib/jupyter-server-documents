@@ -26,8 +26,6 @@ import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { AwarenessExecutionIndicator } from './executionindicator';
 
-import { requestAPI } from './handler';
-
 import {
   rtcContentProvider,
   yfile,
@@ -83,16 +81,6 @@ export const plugin: JupyterFrontEndPlugin<void> = {
           );
         });
     }
-
-    requestAPI<any>('get-example')
-      .then(data => {
-        console.log(data);
-      })
-      .catch(reason => {
-        console.error(
-          `The jupyter_server_documents server extension appears to be missing.\n${reason}`
-        );
-      });
   }
 };
 
