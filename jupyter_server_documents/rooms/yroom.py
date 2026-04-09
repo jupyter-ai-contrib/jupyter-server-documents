@@ -8,7 +8,6 @@ from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_events import EventLogger
-from tornado.websocket import WebSocketHandler
 from traitlets.config import LoggingConfigurable
 import traitlets
 
@@ -772,7 +771,6 @@ class YRoom(LoggingConfigurable):
 
         # Send SyncStep1 message to client
         try:
-            assert isinstance(new_client.websocket, WebSocketHandler)
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
             new_client.websocket.write_message(sync_step1_message, binary=True)
         except Exception as e:
