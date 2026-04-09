@@ -682,8 +682,15 @@ class YRoom(LoggingConfigurable):
             saved_source = self._jupyter_ydoc.source
             if self.file_api is not None:
                 self.file_api._reloading_content = True
-            self._suppress_broadcasts = True
-            self._jupyter_ydoc.source = ""
+            # reset JupyterYDoc source
+            saved_source = self._jupyter_ydoc.source
+            _, file_type, _ = self.room_id.split(":")
+            JupyterYDocClass = cast(
+                type[YBaseDoc],
+                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
+            )
+            empty_jupyter_ydoc = JupyterYDocClass()
+            self._jupyter_ydoc.source = empty_jupyter_ydoc.source
 
         # Initialize future that resolves when an SS2 reply is received.
         loop = asyncio.get_running_loop()
