@@ -713,7 +713,6 @@ class YRoom(LoggingConfigurable):
             self.handle_sync_step1(client_id, ss1_message)
             ss2_message = await asyncio.wait_for(self._pending_ss2_future, timeout=5.0)
             self.handle_sync_step2(client_id, ss2_message)
-            self.clients.mark_synced(client_id)
             self.log.info("Completed handshake with client '%s' in room '%s'.", client_id, self.room_id)
         except asyncio.TimeoutError:
             self.log.warning(
@@ -750,6 +749,7 @@ class YRoom(LoggingConfigurable):
         Handles SyncStep1 messages from new clients by:
 
         - Computing and sending a SyncStep2 reply,
+        - Marking the client as synced (ready to receive server updates),
         - Sending a new SyncStep1 message immediately after.
 
         Should re-raise all exceptions so they are caught by `handle_sync()`.
@@ -762,6 +762,10 @@ class YRoom(LoggingConfigurable):
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self._ydoc)
             assert isinstance(sync_step2_message, bytes)
             new_client.websocket.write_message(sync_step2_message, binary=True)
+            # Mark client as synced immediately after sending SS2. This means
+            # that client has latest copy of server's state and is ready to
+            # receive updates to the server.
+            self.clients.mark_synced(client_id)
         except Exception as e:
             self.log.exception(
                 "An exception occurred when computing/sending the SyncStep2 reply "
