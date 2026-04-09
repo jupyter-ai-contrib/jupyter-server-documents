@@ -15,6 +15,7 @@ import traitlets
 from ..websockets import YjsClientGroup
 from .yroom_file_api import YRoomFileAPI
 from .yroom_events_api import YRoomEventsAPI
+from .yroom_update_buffer import YRoomUpdateBuffer
 
 if TYPE_CHECKING:
     import logging
@@ -223,6 +224,11 @@ class YRoom(LoggingConfigurable):
     `YRoomManager.show_gc_debug` trait.
     """
 
+    update_buffer: YRoomUpdateBuffer
+    """
+    Buffer for all SyncUpdate messages. See class docstring for more details.
+    """
+
 
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
@@ -240,7 +246,6 @@ class YRoom(LoggingConfigurable):
         self._updated = False
         self._pending_ss2_future: asyncio.Future[bytes] | None = None
         self._pending_ss2_client_id: str | None = None
-        self._suppress_broadcasts = False
         self._save_task = None
         self._last_activity = time.monotonic()
         self.show_gc_debug = self.parent.show_gc_debug
@@ -250,6 +255,9 @@ class YRoom(LoggingConfigurable):
         self._client_group = ClientGroupClass(room_id=self.room_id, log=self.log)
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
+
+        # Initialize YRoomUpdateBuffer
+        self.update_buffer = YRoomUpdateBuffer(parent=self)
 
         # If this room is providing global awareness, set unused optional
         # attributes to `None`.
@@ -671,15 +679,16 @@ class YRoom(LoggingConfigurable):
         ss1_payload = ss1_message[1:]
         divergent = self._has_divergent_history(ss1_payload)
 
-        # If divergent, clear the YDoc source and suppress broadcasts and file
-        # saves until the sync handshake completes.
+        # If divergent, pause update broadcasts and file saves then clear the
+        # YDoc source to prevent content duplication.
         saved_source = None
         if divergent and self._jupyter_ydoc is not None:
             self.log.warning(
-                "Client '%s' has divergent history. Clearing YDoc source before handshake.",
+                "Client '%s' has divergent history in room '%s'. Clearing YDoc source before handshake.",
                 client_id,
+                self.room_id
             )
-            saved_source = self._jupyter_ydoc.source
+            self.update_buffer.pause()
             if self.file_api is not None:
                 self.file_api._reloading_content = True
             # reset JupyterYDoc source
@@ -699,40 +708,42 @@ class YRoom(LoggingConfigurable):
 
         # Core handshake logic.
         # If handshake fails at any point, cut the WebSocket connection.
-        self.log.info("Initiating handshake with client '%s'.")
-        handshake_success = False
+        self.log.info("Initiating handshake with client '%s' in room '%s'.", client_id, self.room_id)
+        handshake_failed = False
         try:
             self.handle_sync_step1(client_id, ss1_message)
             ss2_message = await asyncio.wait_for(self._pending_ss2_future, timeout=5.0)
             self.handle_sync_step2(client_id, ss2_message)
-            handshake_success = True
-            self.log.info("Completed handshake with client '%s'.")
+            self.clients.mark_synced(client_id)
+            self.log.info("Completed handshake with client '%s' in room '%s'.", client_id, self.room_id)
         except asyncio.TimeoutError:
             self.log.warning(
-                "Timed out waiting for SyncStep2 reply from client '%s'.",
+                "Timed out waiting for SyncStep2 reply from client '%s' in room '%s'.",
                 client_id,
+                self.room_id
             )
+            handshake_failed = True
         except Exception:
-            self.log.exception("Exception occurred during sync handshake with new client:")
+            self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
+            handshake_failed = True
 
-        # Re-enable broadcasts and file saves and restore the YDoc source
-        # regardless of whether the handshake succeeded.
-        self._suppress_broadcasts = False
-        if self.file_api is not None:
-            self.file_api._reloading_content = False
-        if (divergent or saved_source) and self._jupyter_ydoc is not None:
+        # Restore the YDoc source, flush all document updates queued in the
+        # update_buffer, and resume saving, regardless of whether the handshake
+        # succeeded.
+        if saved_source is not None and self._jupyter_ydoc is not None:
             self._jupyter_ydoc.source = saved_source
             self.log.info("Restored YDoc source.")
+        self.update_buffer.resume()
+        if self.file_api is not None:
+            self.file_api._reloading_content = False
         
         # Clear instance state
         self._pending_ss2_future = None
         self._pending_ss2_client_id = None
 
-        # Mark client as synced if successful, otherwise cut the connection.
-        if handshake_success:
-            self.clients.mark_synced(client_id)
-        else:
-            self.log.error("Disconnecting client '%s' due to failed handshake.", client_id)
+        # Cut the connection.
+        if handshake_failed:
+            self.log.error("Disconnecting client '%s' due to failed sync handshake in room '%s'.", client_id, self.room_id)
             self.clients.remove(client_id)
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
@@ -836,12 +847,9 @@ class YRoom(LoggingConfigurable):
         The YDoc is saved in the `self._on_jupyter_ydoc_update()` observer.
         """
         self._update_activity("_on_ydoc_update")
-        if self._suppress_broadcasts:
-            # TODO: don't just drop pending updates, queue them!
-            return
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
-        self._broadcast_message(message, message_type="SyncUpdate")
+        self.update_buffer.send_update(message)
 
 
     def add_stop_callback(self, callback: Callable[[], Any]) -> None:
