@@ -649,7 +649,10 @@ class YRoom(LoggingConfigurable):
         session."""
         d = pycrdt.Decoder(message_payload)
         d.read_var_uint()  # skip subtype
-        client_sv = self._decode_state_vector(d.read_message())
+        sv_bytes = d.read_message()
+        if sv_bytes is None:
+            return False
+        client_sv = self._decode_state_vector(sv_bytes)
         if not client_sv:
             return False
         server_sv = self._decode_state_vector(self._ydoc.get_state())
@@ -1100,7 +1103,14 @@ class YRoom(LoggingConfigurable):
                 queue_item = self._message_queue.get_nowait()
                 if queue_item is not None:
                     client_id, message = queue_item
-                    self.handle_message(client_id, message)
+                    # Call sync handlers directly instead of async
+                    # handle_message(). SyncStep1 is skipped because clients
+                    # are already disconnected and a handshake cannot complete.
+                    msg_type = message[0]
+                    if msg_type == YMessageType.SYNC and len(message) >= 2 and message[1] == YSyncMessageSubtype.SYNC_UPDATE:
+                        self.handle_sync_update(client_id, message)
+                    elif msg_type == YMessageType.AWARENESS:
+                        self.handle_awareness_update(client_id, message)
                 self._message_queue.task_done()
         
         # Stop the `_process_message_queue` task by enqueueing `None`

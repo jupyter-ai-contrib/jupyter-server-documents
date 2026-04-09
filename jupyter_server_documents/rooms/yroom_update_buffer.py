@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 from traitlets.config import LoggingConfigurable
 
 if TYPE_CHECKING:
+    from .yroom import YRoom
     from ..websockets import YjsClientGroup
 
 
@@ -16,6 +17,8 @@ class YRoomUpdateBuffer(LoggingConfigurable):
     handshake and restore it after. Pausing the buffer prevents other clients
     from seeing a flash of empty content.
     """
+
+    parent: YRoom
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
