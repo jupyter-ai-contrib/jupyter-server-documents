@@ -2,6 +2,30 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.2.0a1
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.0a0...740eac764b7f0545bbb273b6dc61301c6fa2012d))
+
+### Bugs fixed
+
+- Fix content duplication on reconnection [#215](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/215) ([@dlqqq](https://github.com/dlqqq), [@3coins](https://github.com/3coins))
+- Wait few seconds before GC run [#212](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/212) ([@dlqqq](https://github.com/dlqqq), [@3coins](https://github.com/3coins))
+
+### Maintenance and upkeep improvements
+
+- fix: remove leftover example endpoint logging [#213](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/213) ([@ObservedObserver](https://github.com/ObservedObserver), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-04-07&to=2026-04-11&type=c))
+
+@3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-04-07..2026-04-11&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-04-07..2026-04-11&type=Issues)) | @ObservedObserver ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AObservedObserver+updated%3A2026-04-07..2026-04-11&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.0a0
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.1.2...7df9c4d5e0b90628859fa1aded663b5dbed2ae2c))
@@ -22,8 +46,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-03-30&to=2026-04-07&type=c))
 
 @3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-03-30..2026-04-07&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-03-30..2026-04-07&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-03-30..2026-04-07&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.1.2
 
