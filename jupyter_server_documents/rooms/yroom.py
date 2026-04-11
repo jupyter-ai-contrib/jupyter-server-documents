@@ -8,13 +8,13 @@ from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_ydoc.ybasedoc import YBaseDoc
 from jupyter_events import EventLogger
-from tornado.websocket import WebSocketHandler
 from traitlets.config import LoggingConfigurable
 import traitlets
 
 from ..websockets import YjsClientGroup
 from .yroom_file_api import YRoomFileAPI
 from .yroom_events_api import YRoomEventsAPI
+from .yroom_update_buffer import YRoomUpdateBuffer
 
 if TYPE_CHECKING:
     import logging
@@ -223,6 +223,11 @@ class YRoom(LoggingConfigurable):
     `YRoomManager.show_gc_debug` trait.
     """
 
+    update_buffer: YRoomUpdateBuffer
+    """
+    Buffer for all SyncUpdate messages. See class docstring for more details.
+    """
+
 
     def __init__(self, *args, **kwargs):
         # Forward all arguments to parent class
@@ -238,6 +243,8 @@ class YRoom(LoggingConfigurable):
         self._on_stop_callbacks: list[Callable[[], Any]] = []
         self._stopped = False
         self._updated = False
+        self._pending_ss2_future: asyncio.Future[bytes] | None = None
+        self._pending_ss2_client_id: str | None = None
         self._save_task = None
         self._last_activity = time.monotonic()
         self.show_gc_debug = self.parent.show_gc_debug
@@ -247,6 +254,9 @@ class YRoom(LoggingConfigurable):
         self._client_group = ClientGroupClass(room_id=self.room_id, log=self.log)
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
+
+        # Initialize YRoomUpdateBuffer
+        self.update_buffer = YRoomUpdateBuffer(parent=self)
 
         # If this room is providing global awareness, set unused optional
         # attributes to `None`.
@@ -518,7 +528,21 @@ class YRoom(LoggingConfigurable):
         """
         Adds new message to the message queue. Items placed in the message queue
         are handled one-at-a-time.
+
+        If handle_sync_step1 is awaiting an SS2 reply from a client, the reply
+        bypasses the queue and resolves the pending future directly.
         """
+        if (
+            self._pending_ss2_future is not None
+            and not self._pending_ss2_future.done()
+            and client_id == self._pending_ss2_client_id
+            and len(message) >= 2
+            and message[0] == YMessageType.SYNC
+            and message[1] == YSyncMessageSubtype.SYNC_STEP2
+        ):
+            self._pending_ss2_future.set_result(message)
+            return
+
         self._message_queue.put_nowait((client_id, message))
     
 
@@ -548,7 +572,7 @@ class YRoom(LoggingConfigurable):
 
             # Otherwise, process & handle the new message
             client_id, message = queue_item
-            self.handle_message(client_id, message)
+            await self.handle_message(client_id, message)
             
             # Finally, inform the asyncio Queue that the task was complete
             # This is required for `self._message_queue.join()` to unblock once
@@ -560,16 +584,21 @@ class YRoom(LoggingConfigurable):
             f"for YRoom '{self.room_id}'."
         )
     
-    def handle_message(self, client_id: str, message: bytes) -> None:
+    async def handle_message(self, client_id: str, message: bytes) -> None:
         """
         Handles all messages from every client received in the message queue by
         calling the appropriate handler based on the message type. This method
         routes the message to one of the following methods:
 
-        - `handle_sync_step1()`
-        - `handle_sync_step2()`
-        - `handle_sync_update()`
-        - `handle_awareness_update()`
+        - `await handle_sync()`: performs a sync handshake initiated by a
+        client's SS1 message and returns once the handshake is complete. This
+        blocks handling of other messages until the sync handshake is complete.
+
+        - `handle_sync_update()`: immediately applies a document update from a
+        synced client.
+
+        - `handle_awareness_update()`: immediately applies an awareness update
+        from a synced client.
         """
 
         # Determine message type & subtype from header
@@ -602,87 +631,177 @@ class YRoom(LoggingConfigurable):
             self.log.debug(f"Handled AwarenessUpdate from '{client_id}' for room '{self.room_id}'.")
         # Handle Sync messages
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
-            self.handle_sync_step1(client_id, message)
+            await self.handle_sync(client_id, message)
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-            self.handle_sync_step2(client_id, message)
+            self.log.warning("Received SS2 message in message loop, this should never happen.")
+            return
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
             self.handle_sync_update(client_id, message)
 
+    @staticmethod
+    def _decode_state_vector(sv: bytes) -> dict[int, int]:
+        d = pycrdt.Decoder(sv)
+        return {d.read_var_uint(): d.read_var_uint() for _ in range(d.read_var_uint())}
+
+    def _has_divergent_history(self, message_payload: bytes) -> bool:
+        """Returns True if the client's state vector contains client IDs
+        unknown to the server, indicating a stale client from a previous
+        session."""
+        d = pycrdt.Decoder(message_payload)
+        d.read_var_uint()  # skip subtype
+        sv_bytes = d.read_message()
+        if sv_bytes is None:
+            return False
+        client_sv = self._decode_state_vector(sv_bytes)
+        if not client_sv:
+            return False
+        server_sv = self._decode_state_vector(self._ydoc.get_state())
+        return bool(set(client_sv) - set(server_sv))
+
+    async def handle_sync(self, client_id: str, ss1_message: bytes) -> None:
+        """
+        Handles the bidirectional sync handshake initiated upon receiving a
+        SyncStep1 message from a new client. Specifically, this method:
+
+        1. Sends a SyncStep2 reply providing server side updates,
+        2. Sends a SyncStep1 message requesting client side updates,
+        3. Awaits the client's SyncStep2 reply (up to 5s timeout),
+        4. Applies the client's SyncStep2 reply.
+
+        If the client has divergent history (stale client from a previous
+        session), the server clears the YDoc source before the handshake,
+        suppresses broadcasts and saves, then restores the source after the
+        handshake completes. This prevents content duplication caused by merging
+        two YDocs with the same content but different CRDT histories.
+        """
+        # Mark client as desynced
+        self.clients.mark_desynced(client_id)
+
+        # Check if client has divergent history
+        ss1_payload = ss1_message[1:]
+        divergent = self._has_divergent_history(ss1_payload)
+
+        # If divergent, pause update broadcasts and file saves then clear the
+        # YDoc source to prevent content duplication.
+        saved_source = None
+        if divergent and self._jupyter_ydoc is not None:
+            self.log.warning(
+                "Client '%s' has divergent history in room '%s'. Clearing YDoc source before handshake.",
+                client_id,
+                self.room_id
+            )
+            self.update_buffer.pause()
+            if self.file_api is not None:
+                self.file_api._reloading_content = True
+            # reset JupyterYDoc source
+            saved_source = self._jupyter_ydoc.source
+            _, file_type, _ = self.room_id.split(":")
+            JupyterYDocClass = cast(
+                type[YBaseDoc],
+                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
+            )
+            empty_jupyter_ydoc = JupyterYDocClass()
+            self._jupyter_ydoc.source = empty_jupyter_ydoc.source
+
+        # Initialize future that resolves when an SS2 reply is received.
+        loop = asyncio.get_running_loop()
+        self._pending_ss2_future = loop.create_future()
+        self._pending_ss2_client_id = client_id
+
+        # Core handshake logic.
+        # If handshake fails at any point, cut the WebSocket connection.
+        self.log.info("Initiating handshake with client '%s' in room '%s'.", client_id, self.room_id)
+        handshake_failed = False
+        try:
+            self.handle_sync_step1(client_id, ss1_message)
+            ss2_message = await asyncio.wait_for(self._pending_ss2_future, timeout=5.0)
+            self.handle_sync_step2(client_id, ss2_message)
+            self.log.info("Completed handshake with client '%s' in room '%s'.", client_id, self.room_id)
+        except asyncio.TimeoutError:
+            self.log.warning(
+                "Timed out waiting for SyncStep2 reply from client '%s' in room '%s'.",
+                client_id,
+                self.room_id
+            )
+            handshake_failed = True
+        except Exception:
+            self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
+            handshake_failed = True
+
+        # Restore the YDoc source, flush all document updates queued in the
+        # update_buffer, and resume saving, regardless of whether the handshake
+        # succeeded.
+        if saved_source is not None and self._jupyter_ydoc is not None:
+            self._jupyter_ydoc.source = saved_source
+            self.log.info("Restored YDoc source.")
+        self.update_buffer.resume()
+        if self.file_api is not None:
+            self.file_api._reloading_content = False
+        
+        # Clear instance state
+        self._pending_ss2_future = None
+        self._pending_ss2_client_id = None
+
+        # Cut the connection.
+        if handshake_failed:
+            self.log.error("Disconnecting client '%s' due to failed sync handshake in room '%s'.", client_id, self.room_id)
+            self.clients.remove(client_id)
 
     def handle_sync_step1(self, client_id: str, message: bytes) -> None:
         """
         Handles SyncStep1 messages from new clients by:
 
-        - Computing a SyncStep2 reply,
-        - Sending the reply to the client over WS, and
+        - Computing and sending a SyncStep2 reply,
+        - Marking the client as synced (ready to receive server updates),
         - Sending a new SyncStep1 message immediately after.
-        """
-        # Mark client as desynced
-        new_client = self.clients.get(client_id)
-        self.clients.mark_desynced(client_id)
 
-        # Compute SyncStep2 reply
+        Should re-raise all exceptions so they are caught by `handle_sync()`.
+        """
+        new_client = self.clients.get(client_id)
+        message_payload = message[1:]
+
+        # Compute and send SyncStep2 reply
         try:
-            message_payload = message[1:]
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self._ydoc)
             assert isinstance(sync_step2_message, bytes)
-        except Exception as e:
-            self.log.error(
-                "An exception occurred when computing the SyncStep2 reply "
-                f"to new client '{new_client.id}':"
-            )
-            self.log.exception(e)
-            return
-
-        # Write SyncStep2 reply to the client's WebSocket
-        # Marks client as synced.
-        try:
-            # TODO: remove the assert once websocket is made required
-            assert isinstance(new_client.websocket, WebSocketHandler)
             new_client.websocket.write_message(sync_step2_message, binary=True)
+            # Mark client as synced immediately after sending SS2. This means
+            # that client has latest copy of server's state and is ready to
+            # receive updates to the server.
+            self.clients.mark_synced(client_id)
         except Exception as e:
-            self.log.error(
-                "An exception occurred when writing the SyncStep2 reply "
+            self.log.exception(
+                "An exception occurred when computing/sending the SyncStep2 reply "
                 f"to new client '{new_client.id}':"
             )
-            self.log.exception(e)
-            return
+            raise
 
-        self.clients.mark_synced(client_id)
-
-        # Send SyncStep1 message
+        # Send SyncStep1 message to client
         try:
-            assert isinstance(new_client.websocket, WebSocketHandler)
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
             new_client.websocket.write_message(sync_step1_message, binary=True)
         except Exception as e:
-            self.log.error(
+            self.log.exception(
                 "An exception occurred when writing a SyncStep1 message "
                 f"to newly-synced client '{new_client.id}':"
             )
-            self.log.exception(e)
-
+            raise
 
     def handle_sync_step2(self, client_id: str, message: bytes) -> None:
         """
-        Handles SyncStep2 messages from newly-synced clients by applying the
-        SyncStep2 message to YDoc.
+        Applies a SyncStep2 message from a client to the YDoc.
 
-        A SyncUpdate message will automatically be broadcast to all synced
-        clients after this method is called via the `self.write_sync_update()`
-        observer.
+        Should re-raise all exceptions so they are caught by `handle_sync()`.
         """
         try:
             message_payload = message[1:]
             pycrdt.handle_sync_message(message_payload, self._ydoc)
         except Exception as e:
-            self.log.error(
+            self.log.exception(
                 "An exception occurred when applying a SyncStep2 message "
                 f"from client '{client_id}':"
             )
-            self.log.exception(e)
-            return
-
+            raise
 
     def handle_sync_update(self, client_id: str, message: bytes) -> None:
         """
@@ -735,7 +854,7 @@ class YRoom(LoggingConfigurable):
         self._update_activity("_on_ydoc_update")
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
-        self._broadcast_message(message, message_type="SyncUpdate")
+        self.update_buffer.send_update(message)
 
 
     def add_stop_callback(self, callback: Callable[[], Any]) -> None:
@@ -862,8 +981,6 @@ class YRoom(LoggingConfigurable):
 
         for client in clients:
             try:
-                # TODO: remove this assertion once websocket is made required
-                assert isinstance(client.websocket, WebSocketHandler)
                 client.websocket.write_message(message, binary=True)
             except Exception as e:
                 self.log.warning(
@@ -986,7 +1103,14 @@ class YRoom(LoggingConfigurable):
                 queue_item = self._message_queue.get_nowait()
                 if queue_item is not None:
                     client_id, message = queue_item
-                    self.handle_message(client_id, message)
+                    # Call sync handlers directly instead of async
+                    # handle_message(). SyncStep1 is skipped because clients
+                    # are already disconnected and a handshake cannot complete.
+                    msg_type = message[0]
+                    if msg_type == YMessageType.SYNC and len(message) >= 2 and message[1] == YSyncMessageSubtype.SYNC_UPDATE:
+                        self.handle_sync_update(client_id, message)
+                    elif msg_type == YMessageType.AWARENESS:
+                        self.handle_awareness_update(client_id, message)
                 self._message_queue.task_done()
         
         # Stop the `_process_message_queue` task by enqueueing `None`
