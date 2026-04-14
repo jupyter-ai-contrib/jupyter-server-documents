@@ -677,6 +677,14 @@ class YRoom(LoggingConfigurable):
         # Mark client as desynced
         self.clients.mark_desynced(client_id)
 
+        # Save the server's state vector before the handshake. After the
+        # handshake completes, get_update(pre_sync_sv) produces a single
+        # batched diff covering any mutations that occurred during the
+        # handshake gap. This replaces replaying individual queued messages,
+        # which triggers a pycrdt offset encoding bug (#197) where
+        # incremental Text updates after multi-byte characters crash JS yjs.
+        pre_sync_sv = self._ydoc.get_state()
+
         # Check if client has divergent history
         ss1_payload = ss1_message[1:]
         divergent = self._has_divergent_history(ss1_payload)
@@ -728,13 +736,18 @@ class YRoom(LoggingConfigurable):
             self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
             handshake_failed = True
 
-        # Restore the YDoc source, flush all document updates queued in the
-        # update_buffer, and resume saving, regardless of whether the handshake
+        # Restore the YDoc source, flush the update_buffer with a batched
+        # catchup diff, and resume saving, regardless of whether the handshake
         # succeeded.
         if saved_source is not None and self._jupyter_ydoc is not None:
             self._jupyter_ydoc.source = saved_source
             self.log.info("Restored YDoc source.")
-        self.update_buffer.resume()
+        catchup = self._ydoc.get_update(pre_sync_sv)
+        # An empty yjs update is 2 bytes (b"\x00\x00").
+        catchup_message = None
+        if catchup and len(catchup) > 2:
+            catchup_message = pycrdt.create_update_message(catchup)
+        self.update_buffer.resume(catchup_message=catchup_message)
         if self.file_api is not None:
             self.file_api._reloading_content = False
         
