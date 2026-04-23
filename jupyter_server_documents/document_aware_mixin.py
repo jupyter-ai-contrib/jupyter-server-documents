@@ -139,7 +139,11 @@ class DocumentAwareMixin:
                     try:
                         notebook = await yroom.get_jupyter_ydoc()
                         metadata = notebook.ymeta
-                        metadata["metadata"]["language_info"] = language_info
+                        # Only update if language_info actually changed to avoid
+                        # triggering unnecessary YDoc saves via the observer chain.
+                        existing = metadata.get("metadata", {}).get("language_info")
+                        if existing != language_info:
+                            metadata["metadata"]["language_info"] = language_info
                     except Exception as e:
                         self.log.warning(f"Failed to update language info for yroom: {e}")
         except Exception as e:
