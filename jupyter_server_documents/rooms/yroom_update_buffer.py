@@ -41,13 +41,20 @@ class YRoomUpdateBuffer(LoggingConfigurable):
         """Start queuing updates instead of broadcasting them."""
         self._paused = True
 
-    def resume(self) -> None:
-        """Broadcast all queued updates and unpause."""
-        queued = self._queue
+    def resume(self, catchup_message: bytes | None = None) -> None:
+        """Discard queued updates and unpause. If catchup_message is provided,
+        broadcast it as a single batched update instead of replaying individual
+        queued messages.
+
+        Batching avoids a pycrdt offset encoding bug
+        (jupyter-ai-contrib/jupyter-server-documents#197) where individual
+        incremental Text updates after multi-byte characters crash JS yjs
+        clients with findIndexSS "Unexpected case".
+        """
         self._queue = []
         self._paused = False
-        for message in queued:
-            self._broadcast(message)
+        if catchup_message is not None:
+            self._broadcast(catchup_message)
 
     def _broadcast(self, message: bytes) -> None:
         """Send a message to all synced clients."""
