@@ -177,9 +177,14 @@ class OutputProcessor(LoggingConfigurable):
         _, target_cell = notebook.find_cell(cell_id)
         if target_cell is not None and output is not None:
             output_index = self.outputs_manager.get_output_index(display_id) if display_id else None
-            if output_index is not None:
+            if output_index is not None and output_index < len(target_cell["outputs"]):
                 target_cell["outputs"][output_index] = output
             else:
+                if output_index is not None:
+                    self.log.warning(
+                        f"Stale output index {output_index} for display_id '{display_id}' "
+                        f"(outputs length: {len(target_cell['outputs'])}), appending instead."
+                    )
                 target_cell["outputs"].append(output)
             self.log.debug(f"Wrote output to ydoc: {path} {cell_id} {output}")
 
