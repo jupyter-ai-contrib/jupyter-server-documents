@@ -243,9 +243,12 @@ class DocumentAwareMixin:
             cell_id = metadata.get("cellId")
 
             if cell_id:
-                # Clear outputs if this is a re-execution
+                # Clear outputs on every new execute_request for this cell.
+                # After a server restart _cell_msg_ids is empty, so we cannot
+                # require a previous msg_id to exist; comparing against None
+                # still correctly skips duplicate messages.
                 last_msg_id = self._cell_msg_ids.get(cell_id)
-                if last_msg_id and last_msg_id != msg_id and self.output_processor:
+                if last_msg_id != msg_id and self.output_processor:
                     task = asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
                     self._pending_tasks.add(task)
                     task.add_done_callback(self._pending_tasks.discard)
