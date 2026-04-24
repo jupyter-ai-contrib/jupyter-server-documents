@@ -53,7 +53,9 @@ class YRoomUpdateBuffer(LoggingConfigurable):
         """Send a message to all synced clients."""
         for client in self.clients.get_all():
             try:
-                client.websocket.write_message(message, binary=True)
+                future = client.websocket.write_message(message, binary=True)
+                if future is not None:
+                    future.add_done_callback(lambda f: f.exception())
             except Exception as e:
                 self.log.warning(
                     f"Failed to broadcast SyncUpdate to client '{client.id}': {e}"

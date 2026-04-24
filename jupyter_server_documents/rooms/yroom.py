@@ -742,7 +742,9 @@ class YRoom(LoggingConfigurable):
         try:
             sync_step2_message = pycrdt.handle_sync_message(message_payload, self._ydoc)
             assert isinstance(sync_step2_message, bytes)
-            new_client.websocket.write_message(sync_step2_message, binary=True)
+            future = new_client.websocket.write_message(sync_step2_message, binary=True)
+            if future is not None:
+                future.add_done_callback(lambda f: f.exception())
             # Mark client as synced immediately after sending SS2. This means
             # that client has latest copy of server's state and is ready to
             # receive updates to the server.
@@ -757,7 +759,9 @@ class YRoom(LoggingConfigurable):
         # Send SyncStep1 message to client
         try:
             sync_step1_message = pycrdt.create_sync_message(self._ydoc)
-            new_client.websocket.write_message(sync_step1_message, binary=True)
+            future = new_client.websocket.write_message(sync_step1_message, binary=True)
+            if future is not None:
+                future.add_done_callback(lambda f: f.exception())
         except Exception as e:
             self.log.exception(
                 "An exception occurred when writing a SyncStep1 message "
@@ -772,7 +776,9 @@ class YRoom(LoggingConfigurable):
             if all_client_ids:
                 awareness_update = self._awareness.encode_awareness_update(all_client_ids)
                 awareness_message = pycrdt.create_awareness_message(awareness_update)
-                new_client.websocket.write_message(awareness_message, binary=True)
+                future = new_client.websocket.write_message(awareness_message, binary=True)
+                if future is not None:
+                    future.add_done_callback(lambda f: f.exception())
         except Exception as e:
             self.log.error(
                 f"An exception occurred when sending awareness to "
@@ -974,7 +980,9 @@ class YRoom(LoggingConfigurable):
 
         for client in clients:
             try:
-                client.websocket.write_message(message, binary=True)
+                future = client.websocket.write_message(message, binary=True)
+                if future is not None:
+                    future.add_done_callback(lambda f: f.exception())
             except Exception as e:
                 self.log.warning(
                     f"An exception occurred when broadcasting a "
