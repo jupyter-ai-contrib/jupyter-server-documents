@@ -201,6 +201,20 @@ class DocumentAwareMixin:
                     notebook = yroom.jupyter_ydoc
                     if notebook and hasattr(notebook, 'set_cell_awareness'):
                         notebook.set_cell_awareness(cell_id, "execution_state", {"state": execution_state})
+
+                        # When the cell goes idle, correct the execution timer
+                        # end time. execute_reply arrives earlier (when Python
+                        # code returns), but status:idle arrives after all IOPub
+                        # activity (including sparkmonitor drain). This gives
+                        # the timer the true end time.
+                        if execution_state == "idle" and parent_channel == "shell":
+                            from datetime import datetime, timezone
+                            end_time = datetime.now(timezone.utc).isoformat()
+                            if hasattr(notebook, 'update_cell_awareness'):
+                                notebook.update_cell_awareness(
+                                    cell_id, "execution_timing",
+                                    status="completed", end=end_time
+                                )
                     break
         except Exception as e:
             self.log.error(f"Error in _handle_status_message: {e}", exc_info=True)
