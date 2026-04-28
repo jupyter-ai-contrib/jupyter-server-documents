@@ -65,17 +65,55 @@ class DocumentAwareMixin:
         self.add_listener(self._handle_document_messages)
 
     async def _handle_document_messages(self, channel_name: str, msg: list[bytes]):
-        """Route kernel messages to document state and output handlers."""
+        """Route kernel messages to document state and output handlers.
+
+        Protocol messages (status, execute_input, stream, execute_result, etc.)
+        are processed inline. comm_msg is dispatched as a fire-and-forget task
+        so it never blocks protocol message processing.
+        """
         if channel_name not in ("iopub", "shell"):
             return
 
-        # Deserialize message components
         try:
             if len(msg) < 4:
-                self.log.debug(f"Message too short: {len(msg)} parts")
                 return
 
             header = self.session.unpack(msg[0])
+            msg_type = header.get("msg_type", "unknown")
+
+            # comm_msg: fire-and-forget so protocol messages are never blocked.
+            if msg_type == "comm_msg":
+                parent_header = self.session.unpack(msg[1])
+                parent_msg_id = parent_header.get("msg_id")
+                cell_id = extract_src_id(parent_msg_id) if parent_msg_id else None
+                if cell_id:
+                    raw_content = msg[3]
+                    session = self.session
+
+                    async def _dispatch_comm(nb, cid, rc, rh, h, s):
+                        content = s.unpack(rc)
+                        await h(nb, cid, "comm_msg", content, rh)
+
+                    def _on_task_done(task):
+                        if task.cancelled():
+                            return
+                        exc = task.exception()
+                        if exc:
+                            self.log.debug(f"comm_msg handler error: {exc}")
+
+                    for yroom in self._yrooms:
+                        notebook = yroom.jupyter_ydoc
+                        if notebook is None:
+                            break
+                        for handler_msg_types, handler in yroom.parent._cell_data_handlers:
+                            if "comm_msg" in handler_msg_types:
+                                task = asyncio.ensure_future(
+                                    _dispatch_comm(notebook, cell_id, raw_content, header, handler, session)
+                                )
+                                task.add_done_callback(_on_task_done)
+                        break
+                return
+
             parent_header = self.session.unpack(msg[1])
             metadata = self.session.unpack(msg[2])
 
@@ -83,10 +121,10 @@ class DocumentAwareMixin:
                 "header": header,
                 "parent_header": parent_header,
                 "metadata": metadata,
-                "content": msg[3],  # Keep as bytes, unpack in handlers
+                "content": msg[3],
                 "buffers": msg[4:] if len(msg) > 4 else [],
                 "msg_id": header["msg_id"],
-                "msg_type": header["msg_type"],
+                "msg_type": msg_type,
             }
         except Exception as e:
             self.log.error(f"Error deserializing document message: {e}", exc_info=True)
@@ -98,7 +136,6 @@ class DocumentAwareMixin:
         parent_channel = extract_channel(parent_msg_id) if parent_msg_id else None
 
         # Dispatch to core handlers
-        msg_type = dmsg.get("msg_type")
         match msg_type:
             case "kernel_info_reply":
                 await self._handle_kernel_info_reply(dmsg)
@@ -109,7 +146,7 @@ class DocumentAwareMixin:
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 await self._handle_output_message(dmsg, msg_type, cell_id)
 
-        # Dispatch to registered plugin handlers
+        # Dispatch non-comm_msg to registered plugin handlers
         if cell_id:
             for yroom in self._yrooms:
                 notebook = yroom.jupyter_ydoc
@@ -120,9 +157,6 @@ class DocumentAwareMixin:
                     if msg_type in handler_msg_types:
                         try:
                             content = self.session.unpack(dmsg["content"])
-                            self.log.debug(
-                                f"Dispatching {msg_type} for cell {cell_id} to {handler.__name__}"
-                            )
                             await handler(notebook, cell_id, msg_type, content, dmsg["header"])
                         except Exception as e:
                             self.log.warning(f"Cell data handler error: {e}", exc_info=True)
