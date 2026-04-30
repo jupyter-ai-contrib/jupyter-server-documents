@@ -4,11 +4,14 @@ This mixin provides YRoom integration, output processing, and document message
 handling that can be applied to both ZMQ and Gateway kernel clients.
 """
 import asyncio
+import logging
 import typing as t
 
 from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server_documents.rooms.yroom import YRoom
 from nextgen_kernels_api.services.kernels.message_utils import extract_src_id, extract_channel
+
+diag = logging.getLogger("output_processor.diag")
 
 
 class DocumentAwareMixin:
@@ -297,7 +300,13 @@ class DocumentAwareMixin:
                 # still correctly skips duplicate messages.
                 last_msg_id = self._cell_msg_ids.get(cell_id)
                 if last_msg_id != msg_id and self.output_processor:
-                    task = asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+                    diag.info(
+                        "[EXEC-REQUEST-CLEAR] cell_id=%s msg_type=%s — scheduling clear_cell_outputs",
+                        cell_id, msg_type,
+                    )
+                    task = asyncio.create_task(
+                        self.output_processor.clear_cell_outputs(cell_id, trigger="execute_request")
+                    )
                     self._pending_tasks.add(task)
                     task.add_done_callback(self._pending_tasks.discard)
 
