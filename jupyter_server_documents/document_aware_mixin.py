@@ -297,10 +297,6 @@ class DocumentAwareMixin:
                 # still correctly skips duplicate messages.
                 last_msg_id = self._cell_msg_ids.get(cell_id)
                 if last_msg_id != msg_id and self.output_processor:
-                    self.log.info(
-                        "[EXEC-REQUEST-CLEAR] cell_id=%s msg_type=%s — scheduling clear_cell_outputs",
-                        cell_id, msg_type,
-                    )
                     task = asyncio.create_task(
                         self.output_processor.clear_cell_outputs(cell_id, trigger="execute_request")
                     )
