@@ -49,8 +49,8 @@ class OutputProcessor(LoggingConfigurable):
         """Get file_id and path, using cached value when available.
 
         The file_id is looked up from the kernel session on first call
-        and cached for subsequent calls. The cache is invalidated on
-        execute_request (see clear_cell_outputs with trigger='execute_request').
+        and cached for subsequent calls. The cache is invalidated in
+        clear_cell_outputs (called on execute_request) to handle renames.
         """
         if self._file_id:
             return self._file_id, None
@@ -92,13 +92,13 @@ class OutputProcessor(LoggingConfigurable):
             target_cell["outputs"].clear()
             self.log.info(f"Cleared outputs for {self._file_id=}, {cell_index=}")
 
-    async def clear_cell_outputs(self, cell_id, *, trigger="unknown"):
-        """Clears all outputs for a cell in ydoc and optionally on disk.
+    async def clear_cell_outputs(self, cell_id):
+        """Clears all outputs for a cell on disk and in ydoc.
 
-        Disk clearing only happens on execute_request (cell re-execution).
-        clear_output messages from the kernel only clear the YDoc array
-        since the next output_task will overwrite on disk naturally.
+        Called on execute_request (cell re-execution). Invalidates the
+        cached file_id to handle notebook renames.
         """
+        self._file_id = None
         file_id, path = await self._get_file_info()
         if file_id is None:
             return
@@ -106,11 +106,8 @@ class OutputProcessor(LoggingConfigurable):
         await self._clear_ydoc_outputs(cell_id)
         self._pending_clear_output_cells.discard(cell_id)
 
-        if trigger == "execute_request":
-            self._file_id = None
-            file_id, path = await self._get_file_info()
-            if file_id and self.use_outputs_service:
-                self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
+        if self.use_outputs_service:
+            self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
 
     def process_output(self, msg_type: str, cell_id: str, content: dict):
         """Process outgoing messages from the kernel.
@@ -148,14 +145,17 @@ class OutputProcessor(LoggingConfigurable):
         if wait:
             self._pending_clear_output_cells.add(cell_id)
         else:
-            await self.clear_cell_outputs(cell_id, trigger="clear_output")
+            if not self._file_id:
+                await self._get_file_info()
+            await self._clear_ydoc_outputs(cell_id)
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
 
         # Check for pending clear_output before processing output
         if cell_id in self._pending_clear_output_cells:
-            await self.clear_cell_outputs(cell_id, trigger="pending_clear_output")
+            await self._clear_ydoc_outputs(cell_id)
+            self._pending_clear_output_cells.discard(cell_id)
 
         # Get file_id and path from kernel session (handles renames)
         file_id, path = await self._get_file_info()

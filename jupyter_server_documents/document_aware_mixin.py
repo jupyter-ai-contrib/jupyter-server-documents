@@ -298,7 +298,7 @@ class DocumentAwareMixin:
                 last_msg_id = self._cell_msg_ids.get(cell_id)
                 if last_msg_id != msg_id and self.output_processor:
                     task = asyncio.create_task(
-                        self.output_processor.clear_cell_outputs(cell_id, trigger="execute_request")
+                        self.output_processor.clear_cell_outputs(cell_id)
                     )
                     self._pending_tasks.add(task)
                     task.add_done_callback(self._pending_tasks.discard)
