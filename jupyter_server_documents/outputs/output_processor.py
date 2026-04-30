@@ -1,5 +1,4 @@
 import asyncio
-import logging
 import time
 
 from pycrdt import Map
@@ -7,8 +6,6 @@ from pycrdt import Map
 from traitlets import Unicode, Bool, Set
 from traitlets.config import LoggingConfigurable
 from jupyter_server.serverapp import ServerApp
-
-diag = logging.getLogger("output_processor.diag")
 
 class OutputProcessor(LoggingConfigurable):
     
@@ -50,13 +47,15 @@ class OutputProcessor(LoggingConfigurable):
         return self.settings["yroom_manager"]
 
     async def _get_file_info(self):
-        """Get file_id and path by looking it up from the kernel session.
+        """Get file_id and path, using cached value when available.
 
-        Always fetches fresh from the session manager to handle file renames.
-
-        Returns:
-            tuple: (file_id, path) if found, (None, None) otherwise
+        The file_id is looked up from the kernel session on first call
+        and cached for subsequent calls. The cache is invalidated on
+        execute_request (see clear_cell_outputs with trigger='execute_request').
         """
+        if self._file_id:
+            return self._file_id, None
+
         try:
             kernel_session = await self.session_manager.get_session(
                 kernel_id=self.parent.parent.kernel_id
@@ -66,6 +65,7 @@ class OutputProcessor(LoggingConfigurable):
             if file_id is None:
                 self.log.error(f"Could not find file_id for path: {path}")
                 return None, None
+            self._file_id = file_id
             return file_id, path
         except Exception as e:
             self.log.warning(f"Failed to look up file_id: {e}")
@@ -92,25 +92,28 @@ class OutputProcessor(LoggingConfigurable):
         if target_cell is not None:
             num_outputs = len(target_cell["outputs"])
             target_cell["outputs"].clear()
-            diag.info(
+            self.log.info(
                 "[CLEAR-YDOC] cell_id=%s cell_index=%s wiped=%d outputs",
                 cell_id, cell_index, num_outputs,
             )
 
     async def clear_cell_outputs(self, cell_id, *, trigger="unknown"):
-        """Clears all outputs for a cell on disk and in ydoc."""
+        """Clears all outputs for a cell in ydoc and optionally on disk.
 
+        Disk clearing only happens on execute_request (cell re-execution).
+        clear_output messages from the kernel only clear the YDoc array
+        since the next output_task will overwrite on disk naturally.
+        """
         t0 = time.monotonic()
-        diag.info(
-            "[CLEAR-START] cell_id=%s trigger=%s — calling _get_file_info",
+        self.log.info(
+            "[CLEAR-START] cell_id=%s trigger=%s",
             cell_id, trigger,
         )
 
-        # Get file_id and path from kernel session (handles renames)
         file_id, path = await self._get_file_info()
 
         elapsed_ms = (time.monotonic() - t0) * 1000
-        diag.info(
+        self.log.info(
             "[CLEAR-FILE-INFO] cell_id=%s trigger=%s file_id=%s elapsed=%.0fms",
             cell_id, trigger, file_id, elapsed_ms,
         )
@@ -118,21 +121,21 @@ class OutputProcessor(LoggingConfigurable):
         if file_id is None:
             return
 
-        # Cache the file_id for subsequent operations
-        self._file_id = file_id
-
         await self._clear_ydoc_outputs(cell_id)
         self._pending_clear_output_cells.discard(cell_id)
 
-        if self.use_outputs_service:
-            self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
-            diag.info(
-                "[CLEAR-DISK] cell_id=%s trigger=%s file_id=%s",
-                cell_id, trigger, file_id,
-            )
+        if trigger == "execute_request":
+            self._file_id = None
+            file_id, path = await self._get_file_info()
+            if file_id and self.use_outputs_service:
+                self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
+                self.log.info(
+                    "[CLEAR-DISK] cell_id=%s trigger=%s file_id=%s",
+                    cell_id, trigger, file_id,
+                )
 
         total_ms = (time.monotonic() - t0) * 1000
-        diag.info(
+        self.log.info(
             "[CLEAR-DONE] cell_id=%s trigger=%s total=%.0fms",
             cell_id, trigger, total_ms,
         )
@@ -148,14 +151,14 @@ class OutputProcessor(LoggingConfigurable):
                 self.log.error(f"Error in output task: {e}", exc_info=True)
 
         if msg_type == "clear_output":
-            diag.info(
+            self.log.info(
                 "[PROCESS] msg_type=clear_output cell_id=%s wait=%s",
                 cell_id, content.get("wait", False),
             )
             task = asyncio.create_task(self.clear_output_task(cell_id, content))
             task.add_done_callback(task_done_callback)
         else:
-            diag.info(
+            self.log.info(
                 "[PROCESS] msg_type=%s cell_id=%s — creating output_task",
                 msg_type, cell_id,
             )
@@ -169,7 +172,7 @@ class OutputProcessor(LoggingConfigurable):
 
         wait = content.get("wait", False)
         if wait:
-            diag.info(
+            self.log.info(
                 "[CLEAR-OUTPUT-WAIT] cell_id=%s — deferring clear to next output",
                 cell_id,
             )
@@ -184,7 +187,7 @@ class OutputProcessor(LoggingConfigurable):
 
         # Check for pending clear_output before processing output
         if cell_id in self._pending_clear_output_cells:
-            diag.info(
+            self.log.info(
                 "[OUTPUT-PENDING-CLEAR] cell_id=%s — clearing before write",
                 cell_id,
             )
@@ -193,14 +196,11 @@ class OutputProcessor(LoggingConfigurable):
         # Get file_id and path from kernel session (handles renames)
         file_id, path = await self._get_file_info()
         if file_id is None:
-            diag.warning(
+            self.log.warning(
                 "[OUTPUT-NO-FILE-ID] cell_id=%s msg_type=%s — output DROPPED",
                 cell_id, msg_type,
             )
             return
-
-        # Cache the file_id for subsequent operations
-        self._file_id = file_id
 
         display_id = content.get("transient", {}).get("display_id")
         # Convert from the message spec to the nbformat output structure
@@ -234,7 +234,7 @@ class OutputProcessor(LoggingConfigurable):
                 target_cell["outputs"].append(output)
 
             elapsed_ms = (time.monotonic() - t0) * 1000
-            diag.info(
+            self.log.info(
                 "[OUTPUT-WRITTEN] cell_id=%s msg_type=%s num_outputs=%d elapsed=%.0fms",
                 cell_id, msg_type, len(target_cell["outputs"]), elapsed_ms,
             )
