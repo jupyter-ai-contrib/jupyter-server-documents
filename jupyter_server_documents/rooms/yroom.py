@@ -488,19 +488,6 @@ class YRoom(LoggingConfigurable):
             self._on_reset_callbacks['awareness'].append(on_reset)
         return self._awareness
     
-    def set_kernel_execution_state(self, execution_state: str) -> None:
-        """
-        Sets the kernel execution state in awareness.
-        This provides real-time updates to all connected clients.
-        """
-        if self._stopped:
-            self.restart()
-        awareness = self.get_awareness()
-        if awareness is not None:
-            awareness.set_local_state_field(
-                "kernel", {"execution_state": execution_state}
-            )
-
     def add_message(self, client_id: str, message: bytes) -> None:
         """
         Adds new message to the message queue. Items placed in the message queue

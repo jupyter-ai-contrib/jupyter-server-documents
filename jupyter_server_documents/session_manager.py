@@ -239,12 +239,10 @@ class YDocSessionManager(SessionManager):
             yroom = self.yroom_manager.get_room(room_id)
 
             # Set initial kernel status to "starting" in awareness
-            awareness = yroom.get_awareness()
-            if awareness is not None:
+            notebook = yroom.jupyter_ydoc
+            if notebook and hasattr(notebook, 'set_kernel_execution_state'):
                 self.log.info("Setting kernel execution_state to 'starting' before kernel launch")
-                awareness.set_local_state_field(
-                    "kernel", {"execution_state": "starting"}
-                )
+                notebook.set_kernel_execution_state("starting")
         
         # Now create the session and start the kernel
         session_model = await super().create_session(
@@ -337,7 +335,9 @@ class YDocSessionManager(SessionManager):
 
         # Update awareness to "dead" before disconnecting so the frontend
         # execution indicator reflects the kernel is gone (not stale "idle").
-        yroom.set_kernel_execution_state("dead")
+        notebook = yroom.jupyter_ydoc
+        if notebook and hasattr(notebook, 'set_kernel_execution_state'):
+            notebook.set_kernel_execution_state("dead")
 
         kernel_manager = self.serverapp.kernel_manager.get_kernel(kernel_id)
         kernel_client = kernel_manager.kernel_client

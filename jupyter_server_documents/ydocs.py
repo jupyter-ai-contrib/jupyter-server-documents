@@ -96,6 +96,16 @@ class YNotebook(UpstreamYNotebook):
         """
         return self._ymeta.to_py()
 
+    # --- Kernel execution state (awareness) ---
+
+    def set_kernel_execution_state(self, execution_state: str) -> None:
+        """Set the kernel execution state in awareness."""
+        awareness = self.awareness
+        if awareness is not None:
+            awareness.set_local_state_field(
+                "kernel", {"execution_state": execution_state}
+            )
+
     # --- Generic cell data API (awareness) ---
 
     def _update_cell_data(self, namespace: str, cell_id: str, value: dict | None) -> None:

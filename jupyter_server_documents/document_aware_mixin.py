@@ -192,14 +192,17 @@ class DocumentAwareMixin:
             execution_state = content.get("execution_state")
 
             for yroom in self._yrooms:
+                notebook = yroom.jupyter_ydoc
+                if not notebook:
+                    break
+
                 # Update document-level kernel status if from shell channel
-                if parent_channel == "shell":
-                    yroom.set_kernel_execution_state(execution_state)
+                if parent_channel == "shell" and hasattr(notebook, 'set_kernel_execution_state'):
+                    notebook.set_kernel_execution_state(execution_state)
 
                 # Update cell execution state
                 if cell_id:
-                    notebook = yroom.jupyter_ydoc
-                    if notebook and hasattr(notebook, 'set_cell_awareness'):
+                    if hasattr(notebook, 'set_cell_awareness'):
                         notebook.set_cell_awareness(cell_id, "execution_state", {"state": execution_state})
 
                         # When the cell goes idle, correct the execution timer
