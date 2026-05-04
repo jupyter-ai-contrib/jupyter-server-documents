@@ -10,13 +10,12 @@ if TYPE_CHECKING:
 
 
 class YRoomUpdateChannel(LoggingConfigurable):
-    """
-    Broadcasts SyncUpdate messages to connected clients normally, queues them
-    when paused, and flushes queued messages when resumed.
+    """Broadcast channel for SyncUpdate messages that can be paused and resumed.
 
-    When a client with divergent history syncs, we clear the YDoc before the
-    handshake and restore it after. Pausing the channel prevents other clients
-    from seeing a flash of empty content.
+    When a client with divergent history syncs, the channel is paused to
+    suppress broadcasts while the YDoc source is temporarily cleared. On
+    resume, a single batched catchup diff is computed and broadcast to bring
+    other clients up to date.
     """
 
     parent: YRoom
@@ -24,34 +23,30 @@ class YRoomUpdateChannel(LoggingConfigurable):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._paused = False
-        self._queue: list[bytes] = []
 
     @property
     def clients(self) -> YjsClientGroup:
         return self.parent.clients
 
     def send_update(self, message: bytes) -> None:
-        """Broadcast a SyncUpdate message to all synced clients, or queue it
+        """Broadcast a SyncUpdate message to all synced clients, or discard it
         if paused."""
         if self._paused:
-            self._queue.append(message)
             return
         self._broadcast(message)
 
     def pause(self) -> None:
-        """Start queuing updates instead of broadcasting them."""
+        """Suppress broadcasts until resume() is called."""
         self._paused = True
 
     def resume(self, pre_sync_sv: bytes) -> None:
-        """Discard queued updates and unpause. Computes a single batched
-        catchup diff from pre_sync_sv and broadcasts it if non-empty.
+        """Unpause and broadcast a single batched catchup diff covering all
+        mutations since pre_sync_sv.
 
-        Batching avoids a pycrdt offset encoding bug
-        (jupyter-ai-contrib/jupyter-server-documents#197) where individual
+        Batching avoids a pycrdt offset-encoding bug (#197) where individual
         incremental Text updates after multi-byte characters crash JS yjs
         clients with findIndexSS "Unexpected case".
         """
-        self._queue = []
         self._paused = False
         catchup = self.parent._ydoc.get_update(pre_sync_sv)
         # An empty yjs update is 2 bytes (b"\x00\x00").
