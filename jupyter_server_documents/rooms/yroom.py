@@ -14,7 +14,7 @@ import traitlets
 from ..websockets import YjsClientGroup
 from .yroom_file_api import YRoomFileAPI
 from .yroom_events_api import YRoomEventsAPI
-from .yroom_update_buffer import YRoomUpdateBuffer
+from .yroom_update_channel import YRoomUpdateChannel
 
 if TYPE_CHECKING:
     import logging
@@ -223,7 +223,7 @@ class YRoom(LoggingConfigurable):
     `YRoomManager.show_gc_debug` trait.
     """
 
-    update_buffer: YRoomUpdateBuffer
+    update_channel: YRoomUpdateChannel
     """
     Buffer for all SyncUpdate messages. See class docstring for more details.
     """
@@ -255,8 +255,8 @@ class YRoom(LoggingConfigurable):
         self._ydoc = self._init_ydoc()
         self._awareness = self._init_awareness(ydoc=self._ydoc)
 
-        # Initialize YRoomUpdateBuffer
-        self.update_buffer = YRoomUpdateBuffer(parent=self)
+        # Initialize YRoomUpdateChannel
+        self.update_channel = YRoomUpdateChannel(parent=self)
 
         # If this room is providing global awareness, set unused optional
         # attributes to `None`.
@@ -643,7 +643,7 @@ class YRoom(LoggingConfigurable):
         d = pycrdt.Decoder(sv)
         return {d.read_var_uint(): d.read_var_uint() for _ in range(d.read_var_uint())}
 
-    def _has_divergent_history(self, message_payload: bytes) -> bool:
+    def _has_divergent_history(self, message_payload: bytes, server_sv_bytes: bytes) -> bool:
         """Returns True if the client's state vector contains client IDs
         unknown to the server, indicating a stale client from a previous
         session."""
@@ -655,7 +655,7 @@ class YRoom(LoggingConfigurable):
         client_sv = self._decode_state_vector(sv_bytes)
         if not client_sv:
             return False
-        server_sv = self._decode_state_vector(self._ydoc.get_state())
+        server_sv = self._decode_state_vector(server_sv_bytes)
         return bool(set(client_sv) - set(server_sv))
 
     async def handle_sync(self, client_id: str, ss1_message: bytes) -> None:
@@ -687,7 +687,7 @@ class YRoom(LoggingConfigurable):
 
         # Check if client has divergent history
         ss1_payload = ss1_message[1:]
-        divergent = self._has_divergent_history(ss1_payload)
+        divergent = self._has_divergent_history(ss1_payload, pre_sync_sv)
 
         # If divergent, pause update broadcasts and file saves then clear the
         # YDoc source to prevent content duplication.
@@ -698,7 +698,7 @@ class YRoom(LoggingConfigurable):
                 client_id,
                 self.room_id
             )
-            self.update_buffer.pause()
+            self.update_channel.pause()
             if self.file_api is not None:
                 self.file_api._reloading_content = True
             # reset JupyterYDoc source
@@ -736,18 +736,13 @@ class YRoom(LoggingConfigurable):
             self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
             handshake_failed = True
 
-        # Restore the YDoc source, flush the update_buffer with a batched
+        # Restore the YDoc source, flush the update_channel with a batched
         # catchup diff, and resume saving, regardless of whether the handshake
         # succeeded.
         if saved_source is not None and self._jupyter_ydoc is not None:
             self._jupyter_ydoc.source = saved_source
             self.log.info("Restored YDoc source.")
-        catchup = self._ydoc.get_update(pre_sync_sv)
-        # An empty yjs update is 2 bytes (b"\x00\x00").
-        catchup_message = None
-        if catchup and len(catchup) > 2:
-            catchup_message = pycrdt.create_update_message(catchup)
-        self.update_buffer.resume(catchup_message=catchup_message)
+        self.update_channel.resume(pre_sync_sv=pre_sync_sv)
         if self.file_api is not None:
             self.file_api._reloading_content = False
         
@@ -867,7 +862,7 @@ class YRoom(LoggingConfigurable):
         self._update_activity("_on_ydoc_update")
         update: bytes = event.update
         message = pycrdt.create_update_message(update)
-        self.update_buffer.send_update(message)
+        self.update_channel.send_update(message)
 
 
     def add_stop_callback(self, callback: Callable[[], Any]) -> None:

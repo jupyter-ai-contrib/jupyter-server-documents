@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pycrdt
 from typing import TYPE_CHECKING
 from traitlets.config import LoggingConfigurable
 
@@ -8,13 +9,13 @@ if TYPE_CHECKING:
     from ..websockets import YjsClientGroup
 
 
-class YRoomUpdateBuffer(LoggingConfigurable):
+class YRoomUpdateChannel(LoggingConfigurable):
     """
     Broadcasts SyncUpdate messages to connected clients normally, queues them
     when paused, and flushes queued messages when resumed.
 
     When a client with divergent history syncs, we clear the YDoc before the
-    handshake and restore it after. Pausing the buffer prevents other clients
+    handshake and restore it after. Pausing the channel prevents other clients
     from seeing a flash of empty content.
     """
 
@@ -41,10 +42,9 @@ class YRoomUpdateBuffer(LoggingConfigurable):
         """Start queuing updates instead of broadcasting them."""
         self._paused = True
 
-    def resume(self, catchup_message: bytes | None = None) -> None:
-        """Discard queued updates and unpause. If catchup_message is provided,
-        broadcast it as a single batched update instead of replaying individual
-        queued messages.
+    def resume(self, pre_sync_sv: bytes) -> None:
+        """Discard queued updates and unpause. Computes a single batched
+        catchup diff from pre_sync_sv and broadcasts it if non-empty.
 
         Batching avoids a pycrdt offset encoding bug
         (jupyter-ai-contrib/jupyter-server-documents#197) where individual
@@ -53,8 +53,10 @@ class YRoomUpdateBuffer(LoggingConfigurable):
         """
         self._queue = []
         self._paused = False
-        if catchup_message is not None:
-            self._broadcast(catchup_message)
+        catchup = self.parent._ydoc.get_update(pre_sync_sv)
+        # An empty yjs update is 2 bytes (b"\x00\x00").
+        if catchup and len(catchup) > 2:
+            self._broadcast(pycrdt.create_update_message(catchup))
 
     def _broadcast(self, message: bytes) -> None:
         """Send a message to all synced clients."""
