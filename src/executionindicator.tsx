@@ -73,9 +73,23 @@ export namespace AwarenessExecutionIndicator {
         return;
       }
       (this as any)._currentNotebook = nb;
+
+      // Read current kernel status from awareness instead of assuming 'idle'.
+      // If no client has published kernel state, the kernel isn't connected.
+      let initialKernelStatus = 'unknown';
+      const awarenessStates = nb?.model?.sharedModel.awareness.getStates();
+      if (awarenessStates) {
+        for (const [, clientState] of awarenessStates) {
+          if ('kernel' in clientState) {
+            initialKernelStatus = clientState['kernel']['execution_state'];
+            break;
+          }
+        }
+      }
+
       (this as any)._notebookExecutionProgress.set(nb, {
         executionStatus: 'idle',
-        kernelStatus: 'idle',
+        kernelStatus: initialKernelStatus,
         totalTime: 0,
         interval: 0,
         timeout: 0,
