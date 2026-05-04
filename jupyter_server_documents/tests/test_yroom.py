@@ -163,6 +163,44 @@ class TestCellAwarenessAPI():
         assert local_state["cell_data"]["execution_state"]["cell-1"] == {"status": "idle"}
 
 
+class TestKernelExecutionStateAPI():
+    """
+    Tests for YNotebook.set_kernel_execution_state (awareness-based kernel status).
+    """
+
+    @pytest.mark.asyncio
+    async def test_set_kernel_execution_state(self, make_yroom: MakeYRoom):
+        """Setting kernel execution state writes to awareness."""
+        room = await make_yroom()
+        notebook = room.jupyter_ydoc
+        notebook.set_kernel_execution_state("idle")
+        awareness = room.get_awareness()
+        local_state = awareness.get_local_state()
+        assert local_state["kernel"] == {"execution_state": "idle"}
+
+    @pytest.mark.asyncio
+    async def test_kernel_state_transitions(self, make_yroom: MakeYRoom):
+        """Kernel state can transition through idle -> busy -> dead."""
+        room = await make_yroom()
+        notebook = room.jupyter_ydoc
+        awareness = room.get_awareness()
+
+        for state in ("idle", "busy", "idle", "dead"):
+            notebook.set_kernel_execution_state(state)
+            local_state = awareness.get_local_state()
+            assert local_state["kernel"]["execution_state"] == state
+
+    @pytest.mark.asyncio
+    async def test_kernel_state_dead_persists(self, make_yroom: MakeYRoom):
+        """Once set to dead, the awareness reflects dead until changed."""
+        room = await make_yroom()
+        notebook = room.jupyter_ydoc
+        notebook.set_kernel_execution_state("dead")
+        awareness = room.get_awareness()
+        local_state = awareness.get_local_state()
+        assert local_state["kernel"]["execution_state"] == "dead"
+
+
 class TestYRoomInactivity():
     """
     Tests for `YRoom` inactivity timeout behavior.

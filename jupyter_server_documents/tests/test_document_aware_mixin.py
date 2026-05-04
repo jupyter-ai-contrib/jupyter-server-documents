@@ -147,3 +147,47 @@ class TestHandleKernelInfoReply:
         asyncio.run(client._handle_kernel_info_reply(msg))
 
         assert notebook.ymeta["metadata"]["language_info"] == PYTHON_LANGUAGE_INFO
+
+
+class TestHandleStatusMessage:
+    """Tests for _handle_status_message kernel execution state updates."""
+
+    def _make_status_msg(self, session, execution_state):
+        content = {"execution_state": execution_state}
+        return {"content": session.pack(content)}
+
+    def test_updates_notebook_kernel_state_on_shell_channel(self):
+        """Status message with shell parent should update notebook kernel state."""
+        client = _StubClient()
+        yroom, notebook = _make_mock_yroom()
+        notebook.set_kernel_execution_state = Mock()
+        yroom.jupyter_ydoc = notebook
+        client._yrooms = {yroom}
+
+        msg = self._make_status_msg(client.session, "busy")
+        asyncio.run(client._handle_status_message(msg, "shell", None))
+
+        notebook.set_kernel_execution_state.assert_called_once_with("busy")
+
+    def test_does_not_update_kernel_state_on_non_shell_channel(self):
+        """Status message with control parent should not update kernel state."""
+        client = _StubClient()
+        yroom, notebook = _make_mock_yroom()
+        notebook.set_kernel_execution_state = Mock()
+        yroom.jupyter_ydoc = notebook
+        client._yrooms = {yroom}
+
+        msg = self._make_status_msg(client.session, "busy")
+        asyncio.run(client._handle_status_message(msg, "control", None))
+
+        notebook.set_kernel_execution_state.assert_not_called()
+
+    def test_skips_when_notebook_is_none(self):
+        """Should not crash when yroom has no notebook."""
+        client = _StubClient()
+        yroom = Mock()
+        yroom.jupyter_ydoc = None
+        client._yrooms = {yroom}
+
+        msg = self._make_status_msg(client.session, "idle")
+        asyncio.run(client._handle_status_message(msg, "shell", None))

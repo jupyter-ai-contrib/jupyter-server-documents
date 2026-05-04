@@ -346,3 +346,110 @@ class TestGetSession:
                 result = await session_manager.get_session(session_id="session-123")
                 mock_ensure.assert_not_called()
                 assert result == mock_session
+
+
+class TestDeleteSession:
+    """Tests for delete_session kernel awareness behavior."""
+
+    @pytest.mark.asyncio
+    async def test_sets_awareness_to_dead(self, session_manager, mock_yroom, mock_kernel_client):
+        """delete_session should write 'dead' to notebook awareness before disconnecting."""
+        session_id = "session-123"
+        kernel_id = "kernel-456"
+        room_id = "json:notebook:test-file-id"
+
+        # Set up cached room_id
+        session_manager._room_ids[session_id] = room_id
+
+        # Mock notebook with set_kernel_execution_state
+        mock_notebook = Mock()
+        mock_notebook.set_kernel_execution_state = Mock()
+        mock_yroom.jupyter_ydoc = mock_notebook
+        mock_yroom.room_id = room_id
+
+        # Mock yroom manager
+        session_manager.yroom_manager.get_room.return_value = mock_yroom
+
+        # Mock kernel client
+        mock_kernel_client.remove_yroom = AsyncMock()
+        mock_kernel_manager = Mock()
+        mock_kernel_manager.kernel_client = mock_kernel_client
+        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_manager
+
+        # Mock get_session to return a valid session
+        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session', new_callable=AsyncMock):
+                with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock):
+                    await session_manager.delete_session(session_id)
+
+        # Verify awareness was set to "dead"
+        mock_notebook.set_kernel_execution_state.assert_called_once_with("dead")
+
+    @pytest.mark.asyncio
+    async def test_sets_dead_before_removing_yroom(self, session_manager, mock_yroom, mock_kernel_client):
+        """Awareness must be set to 'dead' BEFORE the yroom is disconnected."""
+        session_id = "session-123"
+        kernel_id = "kernel-456"
+        room_id = "json:notebook:test-file-id"
+
+        session_manager._room_ids[session_id] = room_id
+
+        # Track call order
+        call_order = []
+
+        mock_notebook = Mock()
+        mock_notebook.set_kernel_execution_state = Mock(
+            side_effect=lambda s: call_order.append(("set_dead", s))
+        )
+        mock_yroom.jupyter_ydoc = mock_notebook
+        mock_yroom.room_id = room_id
+
+        session_manager.yroom_manager.get_room.return_value = mock_yroom
+
+        mock_kernel_client.remove_yroom = AsyncMock(
+            side_effect=lambda yroom: call_order.append("remove_yroom")
+        )
+        mock_kernel_manager = Mock()
+        mock_kernel_manager.kernel_client = mock_kernel_client
+        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_manager
+
+        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session', new_callable=AsyncMock):
+                with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock):
+                    await session_manager.delete_session(session_id)
+
+        assert call_order == [("set_dead", "dead"), "remove_yroom"]
+
+    @pytest.mark.asyncio
+    async def test_handles_missing_notebook_gracefully(self, session_manager, mock_yroom, mock_kernel_client):
+        """delete_session should not crash if notebook is None."""
+        session_id = "session-123"
+        kernel_id = "kernel-456"
+        room_id = "json:notebook:test-file-id"
+
+        session_manager._room_ids[session_id] = room_id
+
+        # No notebook on yroom
+        mock_yroom.jupyter_ydoc = None
+        mock_yroom.room_id = room_id
+
+        session_manager.yroom_manager.get_room.return_value = mock_yroom
+
+        mock_kernel_client.remove_yroom = AsyncMock()
+        mock_kernel_manager = Mock()
+        mock_kernel_manager.kernel_client = mock_kernel_client
+        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_manager
+
+        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.get_session', new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_session
+            with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session', new_callable=AsyncMock):
+                with patch.object(session_manager, '_ensure_yroom_connected', new_callable=AsyncMock):
+                    await session_manager.delete_session(session_id)
+
+        # Should complete without error
+        mock_kernel_client.remove_yroom.assert_called_once_with(mock_yroom)
