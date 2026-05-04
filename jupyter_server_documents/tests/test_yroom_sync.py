@@ -149,7 +149,7 @@ class TestDivergentSync:
         ws.doc["source"] += "hello world"
 
         ss1 = ws.build_ss1()
-        assert yroom._has_divergent_history(ss1[1:])
+        assert yroom._has_divergent_history(ss1[1:], yroom._ydoc.get_state())
 
     @pytest.mark.asyncio
     async def test_divergent_client_no_duplication(self, make_yroom: MakeYRoom):
@@ -202,7 +202,7 @@ class TestDivergentSync:
         assert yroom.file_api._reloading_content is False
 
     @pytest.mark.asyncio
-    async def test_update_buffer_paused_during_divergent_handshake(self, make_yroom: MakeYRoom):
+    async def test_update_channel_paused_during_divergent_handshake(self, make_yroom: MakeYRoom):
         """The update buffer should be paused during a divergent handshake."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
@@ -217,14 +217,14 @@ class TestDivergentSync:
         await asyncio.sleep(0.1)
 
         # Buffer should be paused during handshake
-        assert yroom.update_buffer._paused is True
+        assert yroom.update_channel._paused is True
 
         ss2_reply = ws.process_server_messages()
         yroom.add_message(client_id, ss2_reply)
         await asyncio.sleep(0.1)
 
         # Buffer should be unpaused after handshake
-        assert yroom.update_buffer._paused is False
+        assert yroom.update_channel._paused is False
 
 
 class TestSyncTimeout:
@@ -253,7 +253,7 @@ class TestSyncTimeout:
         # Saves should be re-enabled
         assert yroom.file_api._reloading_content is False
         # Buffer should be unpaused
-        assert yroom.update_buffer._paused is False
+        assert yroom.update_channel._paused is False
 
 
 class TestMultipleClients:
