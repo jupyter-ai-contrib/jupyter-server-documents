@@ -307,9 +307,9 @@ class YRoomManager(LoggingConfigurable):
 
         - For rooms providing notebooks: This task stops the room if it has is
         inactive, has no connected clients, and its kernel execution status is
-        'idle', 'dead', or unknown (None). An unknown state means no kernel
-        has reported status for this notebook — e.g. it was opened without a
-        connected kernel, or the kernel was shut down externally.
+        'idle', 'dead', 'unknown', or None. An unknown/None state means no
+        kernel has reported status for this notebook — e.g. it was opened
+        without a connected kernel, or the kernel was shut down externally.
 
         - See `YRoom.inactive` for details on how activity is measured.
         """
@@ -320,7 +320,7 @@ class YRoomManager(LoggingConfigurable):
 
         awareness = room.get_awareness().get_local_state() or {}
         execution_state = awareness.get("kernel", {}).get("execution_state", None)
-        can_free_execution_state = execution_state in { "idle", "dead", None }
+        can_free_execution_state = execution_state in { "idle", "dead", "unknown", None }
         should_free = can_free_execution_state and room.inactive_and_empty
         if self.show_gc_debug and room.empty and not should_free:
             reasons = []

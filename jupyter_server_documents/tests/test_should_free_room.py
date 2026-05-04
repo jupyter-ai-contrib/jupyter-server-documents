@@ -5,7 +5,7 @@ The GC periodically checks each room and frees it if _should_free_room()
 returns True. For notebook rooms, the decision depends on:
 
   1. The room must be inactive (no recent activity) AND empty (no WebSocket clients).
-  2. The kernel execution_state must be safe to free: "idle", "dead", or None.
+  2. The kernel execution_state must be safe to free: "idle", "dead", "unknown", or None.
 
 A None execution_state occurs when no kernel has ever reported status for
 the notebook — e.g. the notebook was opened without starting a kernel, or
@@ -99,6 +99,13 @@ class TestShouldFreeNotebookRoom:
         # (e.g. culled for inactivity) and no final status was written to
         # awareness. The room is orphaned — safe to free.
         room = FakeRoom("json:notebook:abc123", inactive_and_empty=True, execution_state=None)
+        assert manager._should_free_room(room) is True
+
+    def test_unknown_string_allows_free(self, manager):
+        # "unknown" is an explicit execution state that may be set when the
+        # kernel status cannot be determined. Same semantics as None — no
+        # active computation to protect.
+        room = FakeRoom("json:notebook:abc123", inactive_and_empty=True, execution_state="unknown")
         assert manager._should_free_room(room) is True
 
     def test_missing_kernel_key_allows_free(self, manager):
