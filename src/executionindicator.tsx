@@ -44,10 +44,17 @@ export class AwarenessExecutionIndicator extends VDomRenderer<AwarenessExecution
         );
       }
 
+      let state = this.model.executionState(nb);
+      // Normalize 'dead' to 'disconnected' so the upstream component renders
+      // the offline bolt icon instead of falling through to the idle circle.
+      if (state && state.kernelStatus === 'dead') {
+        state = { ...state, kernelStatus: 'disconnected' };
+      }
+
       return (
         <ExecutionIndicatorComponent
           displayOption={this.model.displayOption}
-          state={this.model.executionState(nb)}
+          state={state}
           translator={this.translator}
         />
       );
