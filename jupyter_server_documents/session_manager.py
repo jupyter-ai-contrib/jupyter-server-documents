@@ -334,6 +334,11 @@ class YDocSessionManager(SessionManager):
 
         # Remove YRoom from session's kernel client
         yroom = self.get_yroom(session_id)
+
+        # Update awareness to "dead" before disconnecting so the frontend
+        # execution indicator reflects the kernel is gone (not stale "idle").
+        yroom.set_kernel_execution_state("dead")
+
         kernel_manager = self.serverapp.kernel_manager.get_kernel(kernel_id)
         kernel_client = kernel_manager.kernel_client
         await kernel_client.remove_yroom(yroom)
