@@ -307,8 +307,9 @@ class YRoomManager(LoggingConfigurable):
 
         - For rooms providing notebooks: This task stops the room if it has is
         inactive, has no connected clients, and its kernel execution status is
-        'idle', 'dead', or unknown (None). An unknown state typically means
-        the kernel was already culled by the kernel monitor.
+        'idle', 'dead', or unknown (None). An unknown state means no kernel
+        has reported status for this notebook — e.g. it was opened without a
+        connected kernel, or the kernel was shut down externally.
 
         - See `YRoom.inactive` for details on how activity is measured.
         """
