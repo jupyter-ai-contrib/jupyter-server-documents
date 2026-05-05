@@ -2,6 +2,37 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.2.1
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.0...3bf3e8a820624e09e7cc4884d6dc07deb715f0d5))
+
+### Enhancements made
+
+- ci: add dedicated unit tests workflow [#228](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/228) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+- fix: batched catchup in YRoomUpdateChannel.resume() [#227](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/227) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+
+### Bugs fixed
+
+- Decouple room GC from kernel shutdown [#229](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/229) ([@Zsailer](https://github.com/Zsailer), [@dlqqq](https://github.com/dlqqq))
+- Allow GC to free notebook rooms with unknown execution state [#224](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/224) ([@Zsailer](https://github.com/Zsailer), [@dlqqq](https://github.com/dlqqq))
+- fix: batched catchup in YRoomUpdateBuffer.resume() [#218](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/218) ([@xrl](https://github.com/xrl), [@claude](https://github.com/claude), [@dlqqq](https://github.com/dlqqq))
+- fix: bounds-check output index before array assignment (#216) [#217](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/217) ([@j1wonpark](https://github.com/j1wonpark), [@3coins](https://github.com/3coins), [@dlqqq](https://github.com/dlqqq))
+
+### Maintenance and upkeep improvements
+
+- test: stress tests for sync handshake under concurrent mutations [#219](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/219) ([@xrl](https://github.com/xrl), [@claude](https://github.com/claude), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-04-21&to=2026-05-05&type=c))
+
+@3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-04-21..2026-05-05&type=Issues)) | @claude ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aclaude+updated%3A2026-04-21..2026-05-05&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-04-21..2026-05-05&type=Issues)) | @j1wonpark ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aj1wonpark+updated%3A2026-04-21..2026-05-05&type=Issues)) | @xrl ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Axrl+updated%3A2026-04-21..2026-05-05&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-04-21..2026-05-05&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.0
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.0a1))
@@ -12,8 +43,6 @@ The following people contributed discussions, new ideas, code and documentation 
 See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
 
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-04-11&to=2026-04-21&type=c))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.2.0a1
 
