@@ -68,8 +68,10 @@ class DocumentAwareMixin:
         """Route kernel messages to document state and output handlers.
 
         Protocol messages (status, execute_input, stream, execute_result, etc.)
-        are processed inline. comm_msg is dispatched as a fire-and-forget task
-        so it never blocks protocol message processing.
+        are processed inline. comm_msg handlers are also called inline — they
+        are expected to be fast (pure state mutation, no I/O). This avoids the
+        overhead of creating one asyncio Task per message during high-volume
+        bursts (10K+ Spark task events would otherwise allocate 10K Task objects).
         """
         if channel_name not in ("iopub", "shell"):
             return
@@ -81,36 +83,22 @@ class DocumentAwareMixin:
             header = self.session.unpack(msg[0])
             msg_type = header.get("msg_type", "unknown")
 
-            # comm_msg: fire-and-forget so protocol messages are never blocked.
             if msg_type == "comm_msg":
                 parent_header = self.session.unpack(msg[1])
                 parent_msg_id = parent_header.get("msg_id")
                 cell_id = extract_src_id(parent_msg_id) if parent_msg_id else None
                 if cell_id:
-                    raw_content = msg[3]
-                    session = self.session
-
-                    async def _dispatch_comm(nb, cid, rc, rh, h, s):
-                        content = s.unpack(rc)
-                        await h(nb, cid, "comm_msg", content, rh)
-
-                    def _on_task_done(task):
-                        if task.cancelled():
-                            return
-                        exc = task.exception()
-                        if exc:
-                            self.log.debug(f"comm_msg handler error: {exc}")
-
+                    content = self.session.unpack(msg[3])
                     for yroom in self._yrooms:
                         notebook = yroom.jupyter_ydoc
                         if notebook is None:
                             break
                         for handler_msg_types, handler in yroom.parent._cell_data_handlers:
                             if "comm_msg" in handler_msg_types:
-                                task = asyncio.ensure_future(
-                                    _dispatch_comm(notebook, cell_id, raw_content, header, handler, session)
-                                )
-                                task.add_done_callback(_on_task_done)
+                                try:
+                                    await handler(notebook, cell_id, "comm_msg", content, header)
+                                except Exception as e:
+                                    self.log.debug(f"comm_msg handler error: {e}")
                         break
                 return
 
