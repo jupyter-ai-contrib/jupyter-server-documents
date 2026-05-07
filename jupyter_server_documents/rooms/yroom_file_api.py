@@ -431,14 +431,17 @@ class YRoomFileAPI(LoggingConfigurable):
         while True:
             try:
                 await asyncio.sleep(self._adaptive_poll_interval)
-                await self._check_file(jupyter_ydoc)
                 if self._save_scheduled:
-                    # `asyncio.shield()` prevents the save task from being
-                    # cancelled halfway and corrupting the file. We need to
-                    # store a reference to the shielded task to prevent it from
-                    # being garbage collected (see `asyncio.shield()` docs).
+                    # Save pending changes before checking for out-of-band
+                    # modifications. Checking first would detect a mismatch
+                    # between _last_modified and the file mtime (caused by a
+                    # concurrent save task from restart or filesystem timing)
+                    # and trigger a reload that overwrites the pending YDoc
+                    # mutation — creating an infinite reload cascade.
                     save_task = self.save(jupyter_ydoc)
                     await asyncio.shield(save_task)
+                else:
+                    await self._check_file(jupyter_ydoc)
             except asyncio.CancelledError:
                 break
             except Exception:

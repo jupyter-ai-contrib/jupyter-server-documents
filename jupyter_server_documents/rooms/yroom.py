@@ -1125,10 +1125,13 @@ class YRoom(LoggingConfigurable):
         self._message_queue.put_nowait(None)
         
         # If this room is a document room, stop the file API and save the
-        # previous content if `immediately=False`.
+        # previous content if `immediately=False` and not restarting. When
+        # restarting, the content will be reloaded from disk, so saving the
+        # old state is unnecessary and can cause timestamp mismatches that
+        # trigger the out-of-band reload cascade.
         if self.file_api and self._jupyter_ydoc:
             self.file_api.stop()
-            if not immediately:
+            if not immediately and not restarting:
                 prev_jupyter_ydoc = self._jupyter_ydoc
                 self._save_task = asyncio.create_task(
                     self.file_api.save(prev_jupyter_ydoc)
