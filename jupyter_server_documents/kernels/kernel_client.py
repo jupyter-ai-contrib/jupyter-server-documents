@@ -302,9 +302,13 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             break
 
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
-                if cell_id: 
+                if cell_id:
+                    # If no YRooms are registered (e.g. kernel consoles), let
+                    # the message pass through to listeners unmodified.
+                    if not self._yrooms:
+                        pass
                     # Process specific output messages through an optional processor
-                    if self.output_processor:
+                    elif self.output_processor:
                         content = self.session.unpack(dmsg["content"])
                         self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
                         
