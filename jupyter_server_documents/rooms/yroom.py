@@ -1060,10 +1060,10 @@ class YRoom(LoggingConfigurable):
     def stop(self, close_code: int = 1001, immediately: bool = False, restarting: bool = False) -> None:
         """
         Stops the YRoom. This method:
-         
+
         - Disconnects all clients with the given `close_code`,
         defaulting to `1001` (server shutting down) if not given.
-        
+
         - Removes all observers and stops the `_process_message_queue()`
         background task.
 
@@ -1071,6 +1071,9 @@ class YRoom(LoggingConfigurable):
         pending updates in the message queue and save the YDoc before returning.
         Otherwise, if `immediately=True`, this method will drop all pending
         updates and not save the YDoc before returning.
+
+        - If `restarting=True`, the final save is also skipped regardless of
+        `immediately`, since content will be reloaded from disk.
 
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
