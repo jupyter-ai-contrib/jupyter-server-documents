@@ -226,3 +226,74 @@ class TestCreateSessionStopCallback:
         # the user to their kernel when they return.
         assert session_id in session_manager._room_ids
         assert session_manager._room_ids[session_id] == room_id
+
+
+class TestConsoleSessionHandling:
+    """Tests for kernel console session support (#225).
+
+    Console sessions have no backing YDoc or YRoom. The session manager
+    must skip all YRoom operations for consoles and delegate directly to
+    the parent SessionManager.
+    """
+
+    @pytest.mark.asyncio
+    async def test_create_session_console_skips_yroom_setup(self, session_manager):
+        """Console sessions must not set up a YRoom or touch file_id_manager."""
+        session_id = "console-session-1"
+        kernel_id = "kernel-789"
+
+        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.create_session', new_callable=AsyncMock) as mock_parent:
+            mock_parent.return_value = mock_session
+            result = await session_manager.create_session(
+                path="console-1-abc123",
+                name="console-1-abc123",
+                type="console",
+                kernel_name="python3"
+            )
+
+        # Session model returned normally
+        assert result == mock_session
+
+        # Console tracked in _console_session_ids
+        assert session_id in session_manager._console_session_ids
+
+        # No YRoom setup attempted
+        session_manager.file_id_manager.index.assert_not_called()
+        session_manager.yroom_manager.get_room.assert_not_called()
+
+        # No room_id stored
+        assert session_id not in session_manager._room_ids
+
+    @pytest.mark.asyncio
+    async def test_update_session_console_delegates_to_parent(self, session_manager):
+        """update_session on a console must not attempt YRoom operations."""
+        session_id = "console-session-1"
+        session_manager._console_session_ids.add(session_id)
+
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.update_session', new_callable=AsyncMock) as mock_parent:
+            await session_manager.update_session(session_id, kernel_id="new-kernel")
+
+        mock_parent.assert_called_once_with(session_id, kernel_id="new-kernel")
+        # No kernel client lookup attempted
+        session_manager.serverapp.kernel_manager.get_kernel.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_session_console_delegates_to_parent(self, session_manager):
+        """delete_session on a console must not attempt YRoom operations."""
+        session_id = "console-session-1"
+        session_manager._console_session_ids.add(session_id)
+
+        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session', new_callable=AsyncMock) as mock_parent:
+            await session_manager.delete_session(session_id)
+
+        mock_parent.assert_called_once_with(session_id)
+        # Console ID cleaned up
+        assert session_id not in session_manager._console_session_ids
+
+    def test_is_console_session(self, session_manager):
+        """_is_console_session returns True only for tracked console sessions."""
+        assert not session_manager._is_console_session("some-session")
+        session_manager._console_session_ids.add("console-1")
+        assert session_manager._is_console_session("console-1")
+        assert not session_manager._is_console_session("notebook-1")
