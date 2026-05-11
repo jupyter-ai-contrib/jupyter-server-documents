@@ -35,15 +35,25 @@ class YDocSessionManager(SessionManager):
     Dictionary of room IDs, keyed by session ID.
     """
 
+    _console_session_ids: set[str]
+    """
+    Set of session IDs that belong to kernel consoles (no backing YDoc).
+    """
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._room_ids = {}
+        self._console_session_ids = set()
 
     def get_kernel_client(self, kernel_id: str) -> DocumentAwareKernelClient:
         """Get the kernel client for a running kernel."""
         kernel_manager = self.kernel_manager.get_kernel(kernel_id)
         kernel_client = kernel_manager.main_client
         return kernel_client
+
+    def _is_console_session(self, session_id: str) -> bool:
+        """Returns True if the session is a kernel console (no backing YDoc)."""
+        return session_id in self._console_session_ids
 
     def get_yroom(self, session_id: str) -> YRoom:
         """
@@ -95,7 +105,14 @@ class YDocSessionManager(SessionManager):
         if kernel_id is None:
             kernel_id = session_model["kernel"]["id"]
 
-        # If the type is not 'notebook', return the session model immediately
+        # If this is a kernel console, return the session model early, as there
+        # is no YRoom or shared model backing the console.
+        if type == "console":
+            self._console_session_ids.add(session_id)
+            return session_model
+
+        # If the type is not 'notebook', return the session model early and log
+        # a warning.
         if type != "notebook":
             self.log.warning(
                 f"Document type '{type}' is not recognized by YDocSessionManager."
@@ -147,6 +164,10 @@ class YDocSessionManager(SessionManager):
         # Apply update and return early if `kernel_id` was not updated
         if "kernel_id" not in update:
             return await super().update_session(session_id, **update)
+
+        # Skip YRoom operations for non-notebook sessions (e.g. consoles)
+        if self._is_console_session(session_id):
+            return await super().update_session(session_id, **update)
         
         # Otherwise, first remove the YRoom from the old kernel client and add
         # the YRoom to the new kernel client, before applying the update.
@@ -173,6 +194,11 @@ class YDocSessionManager(SessionManager):
         """
         Deletes the session and disconnects the yroom from the kernel client.
         """
+        # Skip YRoom operations for non-notebook sessions (e.g. consoles)
+        if self._is_console_session(session_id):
+            self._console_session_ids.discard(session_id)
+            return await super().delete_session(session_id)
+
         session = await self.get_session(session_id=session_id)
         kernel_id = session["kernel"]["id"]
 
