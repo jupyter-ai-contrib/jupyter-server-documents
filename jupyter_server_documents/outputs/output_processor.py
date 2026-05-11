@@ -136,14 +136,15 @@ class OutputProcessor(LoggingConfigurable):
         if wait:
             self._pending_clear_output_cells.add(cell_id)
         else:
-            await self.clear_cell_outputs(cell_id)
+            await self._clear_ydoc_outputs(cell_id)
 
     async def output_task(self, msg_type, cell_id, content):
         """A coroutine to handle output messages."""
 
         # Check for pending clear_output before processing output
         if cell_id in self._pending_clear_output_cells:
-            await self.clear_cell_outputs(cell_id)
+            await self._clear_ydoc_outputs(cell_id)
+            self._pending_clear_output_cells.discard(cell_id)
 
         # Get file_id and path from kernel session (handles renames)
         file_id, path = await self._get_file_info()
