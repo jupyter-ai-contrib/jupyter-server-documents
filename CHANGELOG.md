@@ -2,6 +2,27 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.2.2
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.1...e75961d30c314752555950d5161e56b2bebce156))
+
+### Bugs fixed
+
+- Require `jupyter-collaboration-ui<2.4.0` [#236](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/236) ([@snoopuppy582](https://github.com/snoopuppy582), [@dlqqq](https://github.com/dlqqq))
+- Fix kernel consoles [#230](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/230) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+- Fix output loss from clear_output race condition [#222](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/222) ([@Zsailer](https://github.com/Zsailer), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-05-05&to=2026-05-12&type=c))
+
+@dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-05-05..2026-05-12&type=Issues)) | @snoopuppy582 ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Asnoopuppy582+updated%3A2026-05-05..2026-05-12&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-05-05..2026-05-12&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.1
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.0...3bf3e8a820624e09e7cc4884d6dc07deb715f0d5))
@@ -30,8 +51,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-04-21&to=2026-05-05&type=c))
 
 @3coins ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3A3coins+updated%3A2026-04-21..2026-05-05&type=Issues)) | @claude ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aclaude+updated%3A2026-04-21..2026-05-05&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-04-21..2026-05-05&type=Issues)) | @j1wonpark ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Aj1wonpark+updated%3A2026-04-21..2026-05-05&type=Issues)) | @xrl ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Axrl+updated%3A2026-04-21..2026-05-05&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-04-21..2026-05-05&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.2.0
 
