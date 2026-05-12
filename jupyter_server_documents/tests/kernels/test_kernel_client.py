@@ -151,10 +151,11 @@ class TestConsoleOutputPassthrough:
         # No yrooms registered (console scenario)
         assert len(client._yrooms) == 0
 
-        result = await client.handle_document_related_message(msg_list)
+        with patch.object(client, 'send_message_to_listeners') as mock_send:
+            await client.handle_outgoing_message("iopub", msg_list)
 
-        # Message should pass through (not None)
-        assert result is not None
+        # Message should be forwarded to listeners (not suppressed)
+        mock_send.assert_called_once_with("iopub", msg_list)
 
     @pytest.mark.asyncio
     async def test_output_suppressed_with_yrooms(self):

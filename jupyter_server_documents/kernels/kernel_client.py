@@ -214,7 +214,11 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         when appropriate. Then, it routes the message
         to all listeners.
         """
-        if channel_name in ('iopub', 'shell'):
+        # Only intercept shell & iopub messages if the kernel has YRooms
+        # (i.e. YNotebooks) attached.
+        # Otherwise, if there are no YRooms (e.g. kernel consoles or Voila
+        # dashboards), skip this branch and forward the message to listeners.
+        if channel_name in ('iopub', 'shell') and self._yrooms:
             msg = await self.handle_document_related_message(msg)
             # If msg has been cleared by the handler, escape this method.
             if msg is None:
@@ -303,12 +307,8 @@ class DocumentAwareKernelClient(AsyncKernelClient):
 
             case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
                 if cell_id:
-                    # If no YRooms are registered (e.g. kernel consoles), let
-                    # the message pass through to listeners unmodified.
-                    if not self._yrooms:
-                        pass
                     # Process specific output messages through an optional processor
-                    elif self.output_processor:
+                    if self.output_processor:
                         content = self.session.unpack(dmsg["content"])
                         self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
                         
