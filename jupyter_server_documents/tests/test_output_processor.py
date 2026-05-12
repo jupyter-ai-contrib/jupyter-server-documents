@@ -196,7 +196,7 @@ async def test_output_task_update_display_after_clear_no_index_error():
         assert len(cell["outputs"]) == 1
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_clear_output_task_does_not_clear_disk():
     """clear_output from kernel should only clear YDoc, not disk."""
     fake_nb = FakeNotebook("cell-1")
@@ -210,7 +210,7 @@ async def test_clear_output_task_does_not_clear_disk():
     mock_outputs_mgr.clear.assert_not_called()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_clear_cell_outputs_does_clear_disk():
     """clear_cell_outputs (execute_request) should clear both YDoc and disk."""
     fake_nb = FakeNotebook("cell-1")
@@ -225,7 +225,7 @@ async def test_clear_cell_outputs_does_clear_disk():
     mock_outputs_mgr.clear.assert_called_once_with(file_id="file-1", cell_id="cell-1")
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_clear_output_does_not_wipe_subsequent_output():
     """Simulate one progress bar iteration: output → clear → new output."""
     fake_nb = FakeNotebook("cell-1")
@@ -247,7 +247,7 @@ async def test_clear_output_does_not_wipe_subsequent_output():
     mock_outputs_mgr.clear.assert_not_called()
 
 
-@pytest.mark.anyio
+@pytest.mark.asyncio
 async def test_clear_output_wait_defers_to_next_output():
     """clear_output(wait=True) should defer clearing until next output."""
     fake_nb = FakeNotebook("cell-1")

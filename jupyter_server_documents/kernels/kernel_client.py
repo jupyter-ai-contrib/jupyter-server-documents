@@ -1,7 +1,6 @@
 """
 A new Kernel client that is aware of ydocuments.
 """
-import anyio
 import asyncio
 import json
 import typing as t
@@ -60,19 +59,12 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         return self.output_process_class(parent=self, config=self.config)
 
     async def start_listening(self):
-        """Start listening to messages coming from the kernel.
-        
-        Use anyio to setup a task group for listening.
-        """
-        # Wrap a taskgroup so that it can be backgrounded.
+        """Start listening to messages coming from the kernel."""
         async def _listening():
-            async with anyio.create_task_group() as tg:
+            async with asyncio.TaskGroup() as tg:
                 for channel_name in ["shell", "control", "stdin", "iopub"]:
-                    tg.start_soon(
-                        self._listen_for_messages, channel_name
-                    )
+                    tg.create_task(self._listen_for_messages(channel_name))
 
-        # Background this task.
         self._listening_task = asyncio.create_task(_listening())
 
     async def stop_listening(self):
@@ -191,20 +183,14 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         """
         Sends message to all registered listeners.
         """
-        async with anyio.create_task_group() as tg:
-            # Broadcast the message to all listeners.
-            for listener in self._listeners:
-                async def _wrap_listener(listener_to_wrap, channel_name, msg):
-                    """
-                    Wrap the listener to ensure its async and 
-                    logs (instead of raises) exceptions.
-                    """
-                    try:
-                        await ensure_async(listener_to_wrap(channel_name, msg))
-                    except Exception as err:
-                        self.log.error(err)
+        for listener in self._listeners:
+            async def _notify(listener_to_call, channel_name, msg):
+                try:
+                    await ensure_async(listener_to_call(channel_name, msg))
+                except Exception:
+                    self.log.exception("Error in kernel message listener")
 
-                tg.start_soon(_wrap_listener, listener, channel_name, msg)    
+            asyncio.create_task(_notify(listener, channel_name, msg))    
 
     async def handle_outgoing_message(self, channel_name: str, msg: list[bytes]):
         """This is the main method that consumes every
