@@ -6,7 +6,6 @@ from traitlets import Instance, Type
 from .handlers import FileIDIndexHandler
 from .websockets import YRoomWebsocket
 from .rooms.yroom_manager import YRoomManager
-from .outputs import OutputsManager, outputs_handlers
 from .events import JSD_AWARENESS_EVENT_SCHEMA, JSD_ROOM_EVENT_SCHEMA
 from .jcollab_api import JCollabAPI
 
@@ -21,7 +20,6 @@ class ServerDocsApp(ExtensionApp):
         # # handler that just adds compatibility with Jupyter Collaboration's frontend
         # (r"api/collaboration/session/(.*)", YRoomSessionHandler),
         (r"api/fileid/index", FileIDIndexHandler),
-        *outputs_handlers
     ]
 
     yroom_manager_class = Type(
@@ -30,18 +28,6 @@ class ServerDocsApp(ExtensionApp):
         default_value=YRoomManager,
         config=True,
     )
-
-    outputs_manager_class = Type(
-        klass=OutputsManager,
-        help="Outputs manager class.",
-        default_value=OutputsManager
-    ).tag(config=True)
-
-    outputs_manager = Instance(
-        klass=OutputsManager,
-        help="An instance of the OutputsManager",
-        allow_none=True
-    ).tag(config=True)
 
     yroom_manager = Instance(klass=YRoomManager, allow_none=True)
 
@@ -64,10 +50,6 @@ class ServerDocsApp(ExtensionApp):
         YRoomManagerClass = self.yroom_manager_class
         self.yroom_manager = YRoomManagerClass(parent=self)
         self.settings["yroom_manager"] = self.yroom_manager
-
-        # Initialize OutputsManager
-        self.outputs_manager = self.outputs_manager_class(parent=self)
-        self.settings["outputs_manager"] = self.outputs_manager
 
         # Serve Jupyter Collaboration API on
         # `self.settings["jupyter_server_ydoc"]` for compatibility with

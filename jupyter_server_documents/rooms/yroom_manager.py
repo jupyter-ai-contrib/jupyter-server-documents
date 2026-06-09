@@ -11,8 +11,6 @@ import traitlets
 from traitlets.config import LoggingConfigurable
 from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
 
-from ..outputs.manager import OutputsManager
-
 if TYPE_CHECKING:
     import logging
     from jupyter_server.extension.application import ExtensionApp
@@ -125,13 +123,6 @@ class YRoomManager(LoggingConfigurable):
         if event_logger is None:
             raise RuntimeError("Event logger is not available")
         return event_logger
-    
-
-    @property
-    def outputs_manager(self) -> OutputsManager:
-        if not hasattr(self.parent, 'outputs_manager'):
-            raise RuntimeError("Outputs manager is not available")
-        return self.parent.outputs_manager
     
 
     def get_room(self, room_id: str) -> YRoom | None:

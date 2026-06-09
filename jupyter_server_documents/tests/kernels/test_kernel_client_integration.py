@@ -8,7 +8,6 @@ import pycrdt
 
 from jupyter_server_documents.kernels.kernel_client import DocumentAwareKernelClient
 from jupyter_server_documents.rooms.yroom import YRoom
-from jupyter_server_documents.outputs import OutputProcessor
 
 
 class TestDocumentAwareKernelClientIntegration:
@@ -101,10 +100,6 @@ class TestDocumentAwareKernelClientIntegration:
         
         # Add the YRoom to the client
         client._yrooms = {yroom}
-        
-        # Mock output processor
-        client.output_processor = MagicMock(spec=OutputProcessor)
-        client.output_processor.process_output = MagicMock()
         
         return client, yroom, ynotebook
 
@@ -207,7 +202,7 @@ class TestDocumentAwareKernelClientIntegration:
 
     @pytest.mark.asyncio
     async def test_output_message_processed_and_suppressed(self, kernel_client_with_yroom):
-        """Test that output messages are processed by output processor and suppressed."""
+        """Test that output messages are written to YDoc and suppressed."""
         client, yroom, ynotebook = kernel_client_with_yroom
         
         # Mock message cache to return cell_id
@@ -228,17 +223,20 @@ class TestDocumentAwareKernelClientIntegration:
         # Process the message
         result = await client.handle_document_related_message(msg_parts[1:])  # Skip delimiter
         
-        # Verify the output processor was called
-        client.output_processor.process_output.assert_called_once_with(
-            "execute_result", cell_id, content
-        )
+        # Verify the output was written to YDoc
+        cells = ynotebook.get_cell_list()
+        target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
+        assert target_cell is not None
+        outputs = target_cell.get("outputs", [])
+        assert len(outputs) == 1
+        assert outputs[0]["output_type"] == "execute_result"
         
         # Verify the message was suppressed (returned None)
         assert result is None
 
     @pytest.mark.asyncio
     async def test_stream_output_message_processed(self, kernel_client_with_yroom):
-        """Test that stream output messages are processed correctly."""
+        """Test that stream output messages are written to YDoc."""
         client, yroom, ynotebook = kernel_client_with_yroom
         
         # Mock message cache to return cell_id
@@ -258,17 +256,21 @@ class TestDocumentAwareKernelClientIntegration:
         # Process the message
         result = await client.handle_document_related_message(msg_parts[1:])  # Skip delimiter
         
-        # Verify the output processor was called
-        client.output_processor.process_output.assert_called_once_with(
-            "stream", cell_id, content
-        )
+        # Verify the output was written to YDoc
+        cells = ynotebook.get_cell_list()
+        target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
+        assert target_cell is not None
+        outputs = target_cell.get("outputs", [])
+        assert len(outputs) == 1
+        assert outputs[0]["output_type"] == "stream"
+        assert outputs[0]["text"] == "4\n"
         
         # Verify the message was suppressed
         assert result is None
 
     @pytest.mark.asyncio
     async def test_error_output_message_processed(self, kernel_client_with_yroom):
-        """Test that error output messages are processed correctly."""
+        """Test that error output messages are written to YDoc."""
         client, yroom, ynotebook = kernel_client_with_yroom
         
         # Mock message cache to return cell_id
@@ -289,10 +291,14 @@ class TestDocumentAwareKernelClientIntegration:
         # Process the message
         result = await client.handle_document_related_message(msg_parts[1:])  # Skip delimiter
         
-        # Verify the output processor was called
-        client.output_processor.process_output.assert_called_once_with(
-            "error", cell_id, content
-        )
+        # Verify the output was written to YDoc
+        cells = ynotebook.get_cell_list()
+        target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
+        assert target_cell is not None
+        outputs = target_cell.get("outputs", [])
+        assert len(outputs) == 1
+        assert outputs[0]["output_type"] == "error"
+        assert outputs[0]["ename"] == "NameError"
         
         # Verify the message was suppressed
         assert result is None
@@ -354,10 +360,10 @@ class TestDocumentAwareKernelClientIntegration:
         cell_execution_states = awareness.get_local_state().get("cell_execution_states", {})
         assert cell_execution_states.get(cell_id) == "idle"
         
-        # Verify output processor was called for the result
-        client.output_processor.process_output.assert_called_with(
-            "execute_result", cell_id, result_content
-        )
+        # Verify output was written to YDoc
+        outputs = target_cell.get("outputs", [])
+        assert len(outputs) == 1
+        assert outputs[0]["output_type"] == "execute_result"
 
     @pytest.mark.asyncio
     async def test_awareness_state_updates_for_kernel_status(self, kernel_client_with_yroom):
@@ -458,7 +464,7 @@ class TestDocumentAwareKernelClientIntegration:
 
     @pytest.mark.asyncio
     async def test_display_data_message_processing(self, kernel_client_with_yroom):
-        """Test that display_data messages are processed correctly."""
+        """Test that display_data messages are written to YDoc."""
         client, yroom, ynotebook = kernel_client_with_yroom
         
         # Mock message cache to return cell_id
@@ -481,10 +487,13 @@ class TestDocumentAwareKernelClientIntegration:
         # Process the message
         result = await client.handle_document_related_message(msg_parts[1:])
         
-        # Verify the output processor was called
-        client.output_processor.process_output.assert_called_once_with(
-            "display_data", cell_id, content
-        )
+        # Verify the output was written to YDoc
+        cells = ynotebook.get_cell_list()
+        target_cell = next((cell for cell in cells if cell.get("id") == cell_id), None)
+        assert target_cell is not None
+        outputs = target_cell.get("outputs", [])
+        assert len(outputs) == 1
+        assert outputs[0]["output_type"] == "display_data"
         
         # Verify the message was suppressed
         assert result is None

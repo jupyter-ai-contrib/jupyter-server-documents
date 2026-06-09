@@ -15,7 +15,6 @@ if TYPE_CHECKING:
     from .yroom import YRoom
     from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
     from jupyter_server.services.contents.manager import ContentsManager
-    from ..outputs.manager import OutputsManager
 
 DEFAULT_MIN_POLL_INTERVAL = 0.5
 DEFAULT_POLL_INTERVAL_MULTIPLIER = 5.0
@@ -27,7 +26,6 @@ class YRoomFileAPI(LoggingConfigurable):
     - Loading file content from Jupyter Server's ContentsManager into a YDoc
     - Saving YDoc changes back to the filesystem with adaptive timing
     - Detecting and responding to in-band and out-of-band file changes
-    - Managing notebook outputs through the OutputsManager
 
     Usage:
         1. Create instance with parent YRoom: `file_api = YRoomFileAPI(parent=yroom)`
@@ -230,15 +228,6 @@ class YRoomFileAPI(LoggingConfigurable):
         return self.parent.contents_manager
 
     @property
-    def outputs_manager(self) -> OutputsManager:
-        """Get the OutputsManager from the parent.
-
-        Returns:
-            The OutputsManager instance for handling notebook outputs.
-        """
-        return self.parent.outputs_manager
-
-    @property
     def content_loaded(self) -> bool:
         """Check if the YDoc content has finished loading.
 
@@ -308,8 +297,8 @@ class YRoomFileAPI(LoggingConfigurable):
     async def _get_content(self, path: str) -> tuple[Any, datetime]:
         """Fetch file content from ContentsManager and return (content, last_modified).
 
-        Fetches the file at `path`, updates `_is_writable`, processes notebook
-        outputs if applicable, and normalises CRLF line endings.
+        Fetches the file at `path`, updates `_is_writable`, and normalises
+        CRLF line endings.
 
         This is the shared fetch logic used by both `_load_content` (initial
         load) and `_reload_content_inplace` (out-of-band reload).
@@ -332,9 +321,6 @@ class YRoomFileAPI(LoggingConfigurable):
         # The content manager uses this to tell consumers of the API if the file is writable.
         # We need to save this so we can use it during save.
         self._is_writable = file_data.get('writable', True)
-
-        if self.file_type == "notebook":
-            file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
         # Replace CRLF line terminators with LF line terminators
         # Fixes #176, see issue description for more context.
@@ -586,7 +572,6 @@ class YRoomFileAPI(LoggingConfigurable):
 
         This method performs a synchronous save operation, writing the YDoc
         content to the filesystem via ContentsManager. It also:
-        - Processes notebook outputs through OutputsManager if applicable
         - Updates the last_modified timestamp
         - Clears the dirty flag on the YDoc
         - Calculates and updates the adaptive poll interval
@@ -619,9 +604,6 @@ class YRoomFileAPI(LoggingConfigurable):
             # save on the next tick when a save is scheduled while `CM.get()` is
             # being awaited.
             self._save_scheduled = False
-
-            if self.file_type == "notebook":
-                content = self.outputs_manager.process_saving_notebook(content, self.file_id)
 
             # Save the YDoc via the ContentsManager
             async with self._content_lock:

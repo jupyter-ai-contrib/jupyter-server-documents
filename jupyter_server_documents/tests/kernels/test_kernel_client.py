@@ -3,7 +3,6 @@ from unittest.mock import MagicMock, patch
 
 from jupyter_server_documents.kernels.kernel_client import DocumentAwareKernelClient
 from jupyter_server_documents.kernels.message_cache import KernelMessageCache
-from jupyter_server_documents.outputs import OutputProcessor
 
 
 class TestDocumentAwareKernelClient:
@@ -13,11 +12,6 @@ class TestDocumentAwareKernelClient:
         """Test that message cache is created by default."""
         client = DocumentAwareKernelClient()
         assert isinstance(client.message_cache, KernelMessageCache)
-
-    def test_default_output_processor(self):
-        """Test that output processor is created by default."""
-        client = DocumentAwareKernelClient()
-        assert isinstance(client.output_processor, OutputProcessor)
 
     @pytest.mark.asyncio
     async def test_stop_listening_no_task(self):
@@ -160,6 +154,7 @@ class TestConsoleOutputPassthrough:
     async def test_output_suppressed_with_yrooms(self):
         """Output messages must be intercepted when _yrooms is non-empty."""
         from jupyter_client.session import Session
+        from unittest.mock import AsyncMock
 
         client = DocumentAwareKernelClient()
         session = Session(key=b"test-key")
@@ -179,16 +174,15 @@ class TestConsoleOutputPassthrough:
             {"text": "hello\n", "name": "stdout"}
         )
 
-        # Add a mock yroom (notebook scenario)
+        # Add a mock yroom with a notebook that has a matching cell
         mock_yroom = MagicMock()
+        mock_cell = {"outputs": MagicMock()}
+        mock_notebook = MagicMock()
+        mock_notebook.find_cell = MagicMock(return_value=(0, mock_cell))
+        mock_yroom.get_jupyter_ydoc = AsyncMock(return_value=mock_notebook)
         client._yrooms.add(mock_yroom)
 
-        with patch.object(client.output_processor, 'process_output') as mock_process:
-            result = await client.handle_document_related_message(msg_list)
+        result = await client.handle_document_related_message(msg_list)
 
-        # Message should be suppressed (output processor handled it)
+        # Message should be suppressed (output handled inline)
         assert result is None
-        mock_process.assert_called_once()
-        args = mock_process.call_args[0]
-        assert args[0] == "stream"
-        assert args[1] == cell_id

@@ -8,7 +8,6 @@ import { IChangedArgs } from '@jupyterlab/coreutils';
 import { Notebook, NotebookPanel, NotebookActions } from '@jupyterlab/notebook';
 import { CellChange, createMutex, ISharedCodeCell } from '@jupyter/ydoc';
 import { IOutputAreaModel, OutputAreaModel } from '@jupyterlab/outputarea';
-import { requestAPI } from '../handler';
 import { ResettableNotebook } from './notebook';
 
 const globalModelDBMutex = createMutex();
@@ -50,21 +49,9 @@ const DIRTY_CLASS = 'jp-mod-dirty';
           }
         }
         if ('insert' in outputsChange) {
-          // Inserting an output always results in appending it.
           for (const output of outputsChange.insert!) {
-            // For compatibility with older ydoc where a plain object,
-            // (rather than a Map instance) could be provided.
-            // In a future major release the use of Map will be required.
             if ('toJSON' in output) {
-              const json = (output as { toJSON: () => any }).toJSON();
-              if (json.metadata?.url) {
-                // fetch the output from ouputs service
-                requestAPI(json.metadata.url).then(data => {
-                  this._outputs.add(data);
-                });
-              } else {
-                this._outputs.add(json);
-              }
+              this._outputs.add((output as { toJSON: () => any }).toJSON());
             } else {
               this._outputs.add(output);
             }
@@ -98,42 +85,6 @@ const DIRTY_CLASS = 'jp-mod-dirty';
 ) {
   // no-op
 };
-
-/* An OutputAreaModel that loads outputs from outputs service */
-class RtcOutputAreaModel extends OutputAreaModel implements IOutputAreaModel {
-  constructor(options: IOutputAreaModel.IOptions = {}) {
-    super({ ...options, values: [] }); // Don't pass values to OutputAreaModel
-    if (options.values?.length) {
-      const firstValue = options.values[0];
-      if ((firstValue as any).metadata?.url) {
-        let outputsUrl = (firstValue as any).metadata.url;
-        // Skip the last section with *.output
-        outputsUrl = outputsUrl.substring(0, outputsUrl.lastIndexOf('/'));
-        requestAPI(outputsUrl)
-          .then(outputs => {
-            (outputs as any).forEach((output: any) => {
-              if (!(this as any).isDisposed) {
-                const index = (this as any)._add(output) - 1;
-                const item = (this as any).list.get(index);
-                item.changed.connect((this as any)._onGenericChange, this);
-              }
-            });
-          })
-          .catch(error => {
-            console.error('Error fetching output:', error);
-          });
-      } else {
-        options.values.forEach((output: any) => {
-          if (!(this as any).isDisposed) {
-            const index = (this as any)._add(output) - 1;
-            const item = (this as any).list.get(index);
-            item.changed.connect((this as any)._onGenericChange, this);
-          }
-        });
-      }
-    }
-  }
-}
 
 /**
  * NOTE: We should upstream this fix. This is a bug in JupyterLab.
@@ -325,7 +276,7 @@ const originalDispose = CodeCell.prototype.dispose;
 CodeCellModel.ContentFactory.prototype.createOutputArea = function (
   options: IOutputAreaModel.IOptions
 ): IOutputAreaModel {
-  return new RtcOutputAreaModel(options);
+  return new OutputAreaModel(options);
 };
 
 export class RtcNotebookContentFactory
@@ -341,56 +292,13 @@ export class RtcNotebookContentFactory
   }
 }
 
-// Add a handler for the outputCleared signal
+// Clear outputs in YDoc when user clears cell outputs via UI
 NotebookActions.outputCleared.connect((sender, args) => {
-  const { notebook, cell } = args;
-  const cellId = cell.model.sharedModel.getId();
-  const awareness = notebook.model?.sharedModel.awareness;
-  const awarenessStates = awareness?.getStates();
-
-  // FIRST: Clear outputs in YDoc for immediate real-time sync to all clients
+  const { cell } = args;
   try {
     const sharedCodeCell = cell.model.sharedModel as ISharedCodeCell;
     sharedCodeCell.setOutputs([]);
-    console.debug(`Cleared outputs in YDoc for cell ${cellId}`);
   } catch (error: unknown) {
     console.error('Error clearing YDoc outputs:', error);
-  }
-
-  if (awarenessStates?.size === 0) {
-    console.log('Could not delete cell output, awareness is not present');
-    return; // Early return since we can't get fileId without awareness
-  }
-
-  let fileId = null;
-  for (const [_, state] of awarenessStates || []) {
-    if (state && 'file_id' in state) {
-      fileId = state['file_id'];
-    }
-  }
-
-  if (fileId === null) {
-    console.error('No fileId found in awareness');
-    return; // Early return since we can't make API call without fileId
-  }
-
-  // SECOND: Send API request to clear outputs from disk storage
-  try {
-    requestAPI(`/api/outputs/${fileId}/${cellId}`, {
-      method: 'DELETE'
-    })
-      .then(() => {
-        console.debug(
-          `Successfully cleared outputs from disk for cell ${cellId}`
-        );
-      })
-      .catch((error: Error) => {
-        console.error(
-          `Failed to clear outputs from disk for cell ${cellId}:`,
-          error
-        );
-      });
-  } catch (error: unknown) {
-    console.error('Error in disk output clearing process:', error);
   }
 });

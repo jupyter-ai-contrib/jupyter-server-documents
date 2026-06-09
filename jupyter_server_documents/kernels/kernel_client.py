@@ -6,12 +6,12 @@ import asyncio
 import json
 import typing as t
 
+from pycrdt import Map
 from traitlets import Set, Instance, Any, Type, default
 from jupyter_client.asynchronous.client import AsyncKernelClient
 
 from .message_cache import KernelMessageCache
 from jupyter_server_documents.rooms.yroom import YRoom
-from jupyter_server_documents.outputs import OutputProcessor
 from jupyter_server.utils import ensure_async
 
 from .kernel_client_abc import AbstractDocumentAwareKernelClient
@@ -43,21 +43,8 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     # status messages.
     _yrooms: t.Set[YRoom] = Set(trait=Instance(YRoom), default_value=set())
 
-
-    output_processor = Instance(
-        OutputProcessor,
-        allow_none=True
-    )
-
-    output_process_class = Type(
-        klass=OutputProcessor,
-        default_value=OutputProcessor
-    ).tag(config=True)
-
-    @default("output_processor")
-    def _default_output_processor(self) -> OutputProcessor:
-        self.log.info("Creating output processor")
-        return self.output_process_class(parent=self, config=self.config)
+    _pending_clear_cells: set = Set(default_value=set())
+    _output_index_by_display_id: dict = Instance(dict, args=())
 
     async def start_listening(self):
         """Start listening to messages coming from the kernel.
@@ -128,7 +115,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # Also clear outputs immediately for this cell execution
         if msg_type == "execute_request" and channel_name == "shell" and cell_id:
             # Always clear outputs when executing a cell
-            asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+            asyncio.create_task(self._clear_cell_outputs(cell_id))
             for yroom in self._yrooms:
                 yroom.set_cell_awareness_state(cell_id, "busy")
 
@@ -228,8 +215,7 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         
         Messages are deserialized and handled based on their type. Supported message types
         include updating language info, kernel status, execution state, execution count,
-        and various output types. Some messages may be processed by an output processor
-        before deciding whether to forward them.
+        and various output types.
 
         Returns the original message if it is not processed further, otherwise None to indicate
         that the message should not be forwarded.
@@ -301,22 +287,69 @@ class DocumentAwareKernelClient(AsyncKernelClient):
                             target_cell["execution_count"] = execution_count
                             break
 
-            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data" | "clear_output":
-                if cell_id:
-                    # If no YRooms are registered (e.g. kernel consoles), let
-                    # the message pass through to listeners unmodified.
-                    if not self._yrooms:
-                        pass
-                    # Process specific output messages through an optional processor
-                    elif self.output_processor:
-                        content = self.session.unpack(dmsg["content"])
-                        self.output_processor.process_output(dmsg['msg_type'], cell_id, content)
-                        
-                        # Suppress forwarding of processed messages by returning None
-                        return None
+            case "stream" | "display_data" | "execute_result" | "error" | "update_display_data":
+                if cell_id and self._yrooms:
+                    content = self.session.unpack(dmsg["content"])
+                    output = self._transform_output(dmsg['msg_type'], content)
+                    display_id = content.get("transient", {}).get("display_id")
+                    for yroom in self._yrooms:
+                        notebook = await yroom.get_jupyter_ydoc()
+                        _, target_cell = notebook.find_cell(cell_id)
+                        if target_cell is not None:
+                            # Handle pending clear_output(wait=True)
+                            if cell_id in self._pending_clear_cells:
+                                target_cell["outputs"].clear()
+                                self._pending_clear_cells.discard(cell_id)
+                            # Handle display_id updates
+                            if display_id and display_id in self._output_index_by_display_id:
+                                idx = self._output_index_by_display_id[display_id]
+                                if idx < len(target_cell["outputs"]):
+                                    target_cell["outputs"][idx] = output
+                                else:
+                                    target_cell["outputs"].append(output)
+                            else:
+                                target_cell["outputs"].append(output)
+                                if display_id:
+                                    self._output_index_by_display_id[display_id] = len(target_cell["outputs"]) - 1
+                            break
+                    return None
+
+            case "clear_output":
+                if cell_id and self._yrooms:
+                    content = self.session.unpack(dmsg["content"])
+                    if content.get("wait", False):
+                        self._pending_clear_cells.add(cell_id)
+                    else:
+                        for yroom in self._yrooms:
+                            notebook = await yroom.get_jupyter_ydoc()
+                            _, target_cell = notebook.find_cell(cell_id)
+                            if target_cell is not None:
+                                target_cell["outputs"].clear()
+                                break
+                    return None
 
         # Default return if message is processed and does not need forwarding
         return msg
+
+    def _transform_output(self, msg_type: str, content: dict) -> Map:
+        """Transform output from IOPub messages to the nbformat specification."""
+        if msg_type == "stream":
+            return Map({"output_type": "stream", "text": content["text"], "name": content["name"]})
+        elif msg_type in ("display_data", "update_display_data"):
+            return Map({"output_type": "display_data", "data": content["data"], "metadata": content["metadata"]})
+        elif msg_type == "execute_result":
+            return Map({"output_type": "execute_result", "data": content["data"], "metadata": content["metadata"], "execution_count": content["execution_count"]})
+        elif msg_type == "error":
+            return Map({"output_type": "error", "traceback": content["traceback"], "ename": content["ename"], "evalue": content["evalue"]})
+
+    async def _clear_cell_outputs(self, cell_id: str):
+        """Clear all outputs for a cell in the YDoc."""
+        for yroom in self._yrooms:
+            notebook = await yroom.get_jupyter_ydoc()
+            _, target_cell = notebook.find_cell(cell_id)
+            if target_cell is not None:
+                target_cell["outputs"].clear()
+                break
 
     async def add_yroom(self, yroom: YRoom):
         """
