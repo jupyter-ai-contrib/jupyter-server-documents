@@ -333,7 +333,7 @@ class YRoomFileAPI(LoggingConfigurable):
         # We need to save this so we can use it during save.
         self._is_writable = file_data.get('writable', True)
 
-        if self.file_type == "notebook":
+        if self.file_type == "notebook" and self.outputs_manager.enabled:
             file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
         # Replace CRLF line terminators with LF line terminators
@@ -620,7 +620,7 @@ class YRoomFileAPI(LoggingConfigurable):
             # being awaited.
             self._save_scheduled = False
 
-            if self.file_type == "notebook":
+            if self.file_type == "notebook" and self.outputs_manager.enabled:
                 content = self.outputs_manager.process_saving_notebook(content, self.file_id)
 
             # Save the YDoc via the ContentsManager

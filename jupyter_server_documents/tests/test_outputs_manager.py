@@ -576,6 +576,7 @@ def test_process_loaded_notebook():
     with TemporaryDirectory() as td:
         op = OutputsManager()
         op.outputs_path = Path(td) / "outputs"
+        op.enabled = True
         file_id = str(uuid4())
 
         # Create notebook data with outputs using nbformat
@@ -618,6 +619,7 @@ def test_process_saving_notebook():
     with TemporaryDirectory() as td:
         op = OutputsManager()
         op.outputs_path = Path(td) / "outputs"
+        op.enabled = True
         file_id = str(uuid4())
         cell_id = str(uuid4())
 
@@ -657,6 +659,7 @@ def test_process_saving_notebook_missing_cell_id():
     with TemporaryDirectory() as td:
         op = OutputsManager()
         op.outputs_path = Path(td) / "outputs"
+        op.enabled = True
         file_id = str(uuid4())
 
         # Notebook with cell missing ID
@@ -689,6 +692,7 @@ def test_complete_load_modify_save_cycle():
     with TemporaryDirectory() as td:
         op = OutputsManager()
         op.outputs_path = Path(td) / "outputs"
+        op.enabled = True
         file_id = str(uuid4())
 
         # Step 1: Load notebook with outputs using nbformat
