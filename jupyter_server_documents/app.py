@@ -65,8 +65,11 @@ class ServerDocsApp(ExtensionApp):
         self.yroom_manager = YRoomManagerClass(parent=self)
         self.settings["yroom_manager"] = self.yroom_manager
 
-        # Initialize OutputsManager
-        self.outputs_manager = self.outputs_manager_class(parent=self)
+        # Initialize OutputsManager (only if outputs service is enabled via config)
+        if self.config.get("OutputProcessor", {}).get("use_outputs_service", False):
+            self.outputs_manager = self.outputs_manager_class(parent=self)
+        else:
+            self.outputs_manager = None
         self.settings["outputs_manager"] = self.outputs_manager
 
         # Serve Jupyter Collaboration API on

@@ -236,7 +236,7 @@ function handleOutputCleared(
  * When disabled (autoStart: false by default), outputs live directly in the YDoc.
  *
  * NOTE: The outputs service on the server must be enabled via the
- * `--OutputsManager.enabled=True` trait to use this plugin.
+ * `--OutputProcessor.use_outputs_service=True` trait to use this plugin.
  */
 export const outputsServicePlugin: JupyterFrontEndPlugin<void> = {
   id: '@jupyter-ai-contrib/server-documents:outputs-service',

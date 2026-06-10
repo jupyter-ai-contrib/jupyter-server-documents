@@ -128,9 +128,9 @@ class YRoomManager(LoggingConfigurable):
     
 
     @property
-    def outputs_manager(self) -> OutputsManager:
+    def outputs_manager(self) -> OutputsManager | None:
         if not hasattr(self.parent, 'outputs_manager'):
-            raise RuntimeError("Outputs manager is not available")
+            return None
         return self.parent.outputs_manager
     
 

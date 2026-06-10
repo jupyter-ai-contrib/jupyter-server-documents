@@ -230,11 +230,11 @@ class YRoomFileAPI(LoggingConfigurable):
         return self.parent.contents_manager
 
     @property
-    def outputs_manager(self) -> OutputsManager:
+    def outputs_manager(self) -> OutputsManager | None:
         """Get the OutputsManager from the parent.
 
         Returns:
-            The OutputsManager instance for handling notebook outputs.
+            The OutputsManager instance for handling notebook outputs, or None if disabled.
         """
         return self.parent.outputs_manager
 
@@ -333,7 +333,7 @@ class YRoomFileAPI(LoggingConfigurable):
         # We need to save this so we can use it during save.
         self._is_writable = file_data.get('writable', True)
 
-        if self.file_type == "notebook" and self.outputs_manager.enabled:
+        if self.file_type == "notebook" and self.outputs_manager:
             self.log.info(f"Processing loaded notebook through outputs manager: '{self.room_id}'.")
             file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
@@ -619,7 +619,7 @@ class YRoomFileAPI(LoggingConfigurable):
             # being awaited.
             self._save_scheduled = False
 
-            if self.file_type == "notebook" and self.outputs_manager.enabled:
+            if self.file_type == "notebook" and self.outputs_manager:
                 self.log.debug(f"Fetching notebook outputs from outputs manager: '{self.room_id}'.")
                 content = self.outputs_manager.process_saving_notebook(content, self.file_id)
 

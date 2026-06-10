@@ -8,7 +8,7 @@ from pycrdt import Map
 import nbformat
 
 from traitlets.config import LoggingConfigurable
-from traitlets import Bool, Dict, Instance, default
+from traitlets import Dict, Instance, default
 
 from jupyter_core.paths import jupyter_runtime_dir
 
@@ -82,12 +82,6 @@ class OutputsManager(LoggingConfigurable):
     - Keeps outputs out of YDoc using placeholders
     - Stores outputs in runtime directory for HTTP access
     """
-    enabled = Bool(
-        default_value=False,
-        help="When True, outputs are stored on disk and served via REST API. "
-             "When False, outputs live directly in the YDoc."
-    ).tag(config=True)
-
     _last_output_index = Dict(default_value={})
     _output_index_by_display_id = Dict(default_value={})
     _display_ids_by_cell_id = Dict(default_value={})
@@ -361,8 +355,6 @@ class OutputsManager(LoggingConfigurable):
         Returns:
             dict: The modified file data with processed outputs
         """
-        if not self.enabled:
-            return file_data
         # Notebook content is a tree of nbformat.NotebookNode objects,
         # which are a subclass of dict.
         nb = file_data['content']
@@ -403,8 +395,6 @@ class OutputsManager(LoggingConfigurable):
         Returns:
             dict: The modified notebook dict with outputs included
         """
-        if not self.enabled:
-            return nb
         for cell in nb.get('cells', []):
             if cell.get('cell_type') == 'code':
                 cell_id = cell.get('id')

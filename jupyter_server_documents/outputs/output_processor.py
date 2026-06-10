@@ -2,7 +2,7 @@ import asyncio
 
 from pycrdt import Map
 
-from traitlets import Unicode, Set
+from traitlets import Unicode, Bool, Set
 from traitlets.config import LoggingConfigurable
 from jupyter_server_documents.kernels.message_cache import KernelMessageCache
 
@@ -11,19 +11,10 @@ class OutputProcessor(LoggingConfigurable):
     _file_id = Unicode(default_value=None, allow_none=True)
     _pending_clear_output_cells = Set(default_value=set())
 
-    @property
-    def use_outputs_service(self):
-        """Whether outputs are routed to the outputs service.
-
-        Backwards-compatible alias for ``self.outputs_manager.enabled``.
-        Prefer ``self.enabled`` in new code.
-        """
-        return self.outputs_manager.enabled
-
-    @property
-    def enabled(self):
-        """Whether the outputs service is enabled."""
-        return self.outputs_manager.enabled
+    use_outputs_service = Bool(
+        default_value=True,
+        help="Should outputs be routed to the outputs service to minimize the in memory ydoc size."
+    ).tag(config=True)
 
     @property
     def settings(self):

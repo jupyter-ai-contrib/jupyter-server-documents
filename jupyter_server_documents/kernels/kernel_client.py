@@ -55,7 +55,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
     ).tag(config=True)
 
     @default("output_processor")
-    def _default_output_processor(self) -> OutputProcessor:
+    def _default_output_processor(self) -> OutputProcessor | None:
+        if not self.config.get("OutputProcessor", {}).get("use_outputs_service", False):
+            return None
         self.log.info("Creating output processor")
         return self.output_process_class(parent=self, config=self.config)
 
@@ -127,8 +129,9 @@ class DocumentAwareKernelClient(AsyncKernelClient):
         # This ensures queued cells show '*' prompt even before kernel starts processing them
         # Also clear outputs immediately for this cell execution
         if msg_type == "execute_request" and channel_name == "shell" and cell_id:
-            # Always clear outputs when executing a cell
-            asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
+            # Clear outputs when executing a cell if outputs service enabled
+            if self.output_processor:
+                asyncio.create_task(self.output_processor.clear_cell_outputs(cell_id))
             for yroom in self._yrooms:
                 yroom.set_cell_awareness_state(cell_id, "busy")
 

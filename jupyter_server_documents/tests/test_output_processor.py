@@ -38,7 +38,7 @@ def _make_output_processor(outputs_manager, file_id):
     op = OutputProcessorForTest()
     op._test_settings = {"outputs_manager": outputs_manager}
     op._file_id = file_id
-    outputs_manager.enabled = True
+    op.use_outputs_service = True
     op._get_file_info = AsyncMock(return_value=(file_id, f"/path/to/{file_id}.ipynb"))
     return op
 
@@ -70,7 +70,6 @@ def _make_op(fake_nb, *, file_id="file-1", use_outputs_service=True):
     mock_outputs_mgr = MagicMock()
     mock_outputs_mgr.write.side_effect = lambda **kw: kw["output"]
     mock_outputs_mgr.get_output_index.return_value = None
-    mock_outputs_mgr.enabled = use_outputs_service
 
     mock_session_mgr = AsyncMock()
     mock_session_mgr.get_session.return_value = {"path": "nb.ipynb"}
@@ -84,6 +83,7 @@ def _make_op(fake_nb, *, file_id="file-1", use_outputs_service=True):
         "session_manager": mock_session_mgr,
         "file_id_manager": mock_file_id_mgr,
     }
+    op.use_outputs_service = use_outputs_service
     return op, mock_outputs_mgr
 
 
