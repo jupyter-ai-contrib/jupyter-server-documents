@@ -48,6 +48,7 @@ import { AwarenessKernelStatus } from './kernelstatus';
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import { notebookFactoryPlugin } from './notebook-factory';
 import { disableSavePlugin } from './disablesave';
+import { outputsServicePlugin } from './outputs-service';
 
 /**
  * Initialization data for the @jupyter-ai-contrib/server-documents extension.
@@ -314,7 +315,9 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   codemirrorYjsPlugin,
   backupCellExecutorPlugin,
   disableSavePlugin,
-  ychat
+  ychat,
+  // not enabled by default
+  outputsServicePlugin
 ];
 
 export default plugins;
