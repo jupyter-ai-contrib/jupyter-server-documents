@@ -48,7 +48,7 @@ import { AwarenessKernelStatus } from './kernelstatus';
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import { notebookFactoryPlugin } from './notebook-factory';
 import { disableSavePlugin } from './disablesave';
-import { outputsServicePlugin } from './outputs-service';
+import { outputsServicePlugin } from './outputs';
 
 /**
  * Initialization data for the @jupyter-ai-contrib/server-documents extension.

@@ -66,11 +66,15 @@ class ServerDocsApp(ExtensionApp):
         self.settings["yroom_manager"] = self.yroom_manager
 
         # Initialize OutputsManager (only if outputs service is enabled via config)
-        if self.config.get("OutputProcessor", {}).get("use_outputs_service", False):
+        outputs_service_enabled = self.config.get("OutputProcessor", {}).get("use_outputs_service", False)
+        if outputs_service_enabled:
             self.outputs_manager = self.outputs_manager_class(parent=self)
         else:
             self.outputs_manager = None
         self.settings["outputs_manager"] = self.outputs_manager
+
+        # Pass outputs service status to frontend via page_config_data
+        self.serverapp.web_app.settings.setdefault("page_config_data", {})["outputsServiceEnabled"] = str(outputs_service_enabled).lower()
 
         # Serve Jupyter Collaboration API on
         # `self.settings["jupyter_server_ydoc"]` for compatibility with
