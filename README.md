@@ -17,9 +17,6 @@ Jupyter Server Documents is a powerful extension for JupyterLab that enhances yo
 
 ### Enhanced Performance
 
-- Optimized memory usage through intelligent output management
-- Significantly faster loading of notebooks with large outputs
-- Reduced memory footprint for notebooks with extensive output data
 - Automatic saving of changes to prevent data loss
 
 ### Improved Kernel Management
@@ -29,10 +26,31 @@ Jupyter Server Documents is a powerful extension for JupyterLab that enhances yo
 - Streamlined message handling between kernels and the frontend
 - Improved kernel restart and reconnection capabilities
 
-### Efficient Output Handling
+### Outputs Service (Optional)
 
-- Smart output storage separates large outputs from notebook documents
-- Output streaming controls prevent memory issues with unbounded outputs
+The outputs service is an optional feature that stores notebook outputs on disk
+separately from the notebook document. This reduces YDoc memory usage and
+improves loading times for notebooks with large outputs.
+
+When disabled (the default), outputs live directly in the YDoc and `.ipynb` file
+— the standard Jupyter behavior.
+
+To enable the outputs service, pass the following flag when starting JupyterLab:
+
+```bash
+jupyter lab --OutputProcessor.use_outputs_service=True
+```
+
+Or add it to your `jupyter_server_config.py`:
+
+```python
+c.OutputProcessor.use_outputs_service = True
+```
+
+When enabled, the outputs service provides:
+
+- Smart output storage that separates large outputs from notebook documents
+- Output streaming controls to prevent memory issues with unbounded outputs
 - Faster notebook navigation even with extensive computational outputs
 - Lazy loading of outputs for improved responsiveness
 
