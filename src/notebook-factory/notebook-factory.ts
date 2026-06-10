@@ -156,10 +156,6 @@ export class RtcNotebookContentFactory
   extends NotebookPanel.ContentFactory
   implements NotebookPanel.IContentFactory
 {
-  createCodeCell(options: CodeCell.IOptions): CodeCell {
-    return new CodeCell(options).initializeState();
-  }
-
   createNotebook(options: Notebook.IOptions): Notebook {
     return new ResettableNotebook(options);
   }
