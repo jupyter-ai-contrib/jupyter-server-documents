@@ -2,6 +2,26 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.2.3
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.2...22ad4489c33991b6abfcb7a7d2001635e4c25405))
+
+### Bugs fixed
+
+- Bump @playwright/test to ^1.60.0 to fix CI stalling [#245](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/245) ([@dlqqq](https://github.com/dlqqq))
+- fix: restore kernel.last_activity updates for idle monitoring [#240](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/240) ([@joshuatowner](https://github.com/joshuatowner), [@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-05-12&to=2026-06-10&type=c))
+
+@dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-05-12..2026-06-10&type=Issues)) | @joshuatowner ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Ajoshuatowner+updated%3A2026-05-12..2026-06-10&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.2
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.1...e75961d30c314752555950d5161e56b2bebce156))
@@ -20,8 +40,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-05-05&to=2026-05-12&type=c))
 
 @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-05-05..2026-05-12&type=Issues)) | @snoopuppy582 ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Asnoopuppy582+updated%3A2026-05-05..2026-05-12&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-05-05..2026-05-12&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.2.1
 
