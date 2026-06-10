@@ -334,6 +334,7 @@ class YRoomFileAPI(LoggingConfigurable):
         self._is_writable = file_data.get('writable', True)
 
         if self.file_type == "notebook" and self.outputs_manager.enabled:
+            self.log.info(f"Processing loaded notebook through outputs manager: '{self.room_id}'.")
             file_data = self.outputs_manager.process_loaded_notebook(file_id=self.file_id, file_data=file_data)
 
         # Replace CRLF line terminators with LF line terminators
@@ -366,8 +367,6 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_path = path
 
         self.log.info(f"Loading content for room ID '{self.room_id}', found at path: '{path}'.")
-        if self.file_type == "notebook":
-            self.log.info(f"Processing outputs for loaded notebook: '{self.room_id}'.")
 
         content, last_modified = await self._get_content(path)
 
@@ -621,6 +620,7 @@ class YRoomFileAPI(LoggingConfigurable):
             self._save_scheduled = False
 
             if self.file_type == "notebook" and self.outputs_manager.enabled:
+                self.log.debug(f"Fetching notebook outputs from outputs manager: '{self.room_id}'.")
                 content = self.outputs_manager.process_saving_notebook(content, self.file_id)
 
             # Save the YDoc via the ContentsManager
