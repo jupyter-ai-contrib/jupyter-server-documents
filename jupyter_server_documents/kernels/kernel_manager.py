@@ -105,6 +105,7 @@ class NextGenKernelManager(AsyncKernelManager):
         # Track execution state by watching all messages that come through
         # the kernel client.
         self.main_client.add_listener(self.execution_state_listener)
+        self.main_client.add_listener(self._record_activity)
         self.set_state(LifecycleStates.CONNECTING, ExecutionStates.STARTING)
         await self.broadcast_state()
         self.main_client.start_channels()
@@ -173,3 +174,9 @@ class NextGenKernelManager(AsyncKernelManager):
                 parent_channel = message_data.get("channel")
                 if parent_channel and parent_channel == "shell":
                     self.set_state(LifecycleStates.CONNECTED, ExecutionStates(execution_state))
+
+    def _record_activity(self, channel_name: str, msg: list[bytes]):
+        """Update last_activity on IOPub messages for idle monitoring."""
+        if channel_name == "iopub":
+            from jupyter_client.utils import utcnow
+            self.last_activity = utcnow()
