@@ -23,9 +23,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 def make_yroom():
     """Return a YRoom with all kernel state initialized but no real __init__."""
-    from jupyter_server_documents.rooms.yroom import YRoom
+    from jupyter_server_documents.rooms.ynotebook_room import YNotebookRoom
 
-    room = YRoom.__new__(YRoom)
+    room = YNotebookRoom.__new__(YNotebookRoom)
     room.room_id = "json:notebook:file-abc"
     room.log = MagicMock()
     room._kernel_client = None

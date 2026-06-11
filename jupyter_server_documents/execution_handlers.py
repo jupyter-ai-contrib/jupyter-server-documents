@@ -2,6 +2,8 @@ from jupyter_server.auth.decorator import authorized
 from jupyter_server.base.handlers import APIHandler
 from tornado import web
 
+from .rooms.ynotebook_room import YNotebookRoom
+
 
 AUTH_RESOURCE = "executions"
 
@@ -16,7 +18,7 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
 
     Jupyverse-compatible server-side execution endpoint.
     Accepts { cell_id, document_id } or { cell_id, path } and delegates
-    directly to the appropriate YRoom.
+    directly to the appropriate YNotebookRoom.
 
     Returns null (fire-and-forget) to match the jupyverse response shape so
     the existing NotebookCellServerExecutor in jupyter-collaboration works
@@ -45,6 +47,9 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
         yroom = self.settings["yroom_manager"].get_room(document_id)
         if yroom is None:
             raise web.HTTPError(400, f"No YRoom available for document: {document_id!r}")
+
+        if not isinstance(yroom, YNotebookRoom):
+            raise web.HTTPError(400, f"Room {document_id!r} is not a notebook room")
 
         try:
             await yroom.execute_cell(cell_id, clear_outputs=True, timeout=timeout)

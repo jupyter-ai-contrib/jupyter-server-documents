@@ -6,6 +6,7 @@ from jupyter_server.serverapp import ServerApp
 from jupyter_server_fileid.manager import BaseFileIdManager
 from jupyter_server_documents.rooms.yroom_manager import YRoomManager
 from jupyter_server_documents.rooms.yroom import YRoom
+from jupyter_server_documents.rooms.ynotebook_room import YNotebookRoom
 import asyncio
 
 
@@ -62,13 +63,13 @@ class YDocSessionManager(SessionManager):
         return yroom
     
 
-    def _init_session_yroom(self, session_id: str, path: str) -> YRoom:
+    def _init_session_yroom(self, session_id: str, path: str) -> YNotebookRoom:
         """
-        Returns a `YRoom` for a session identified by the given `session_id` and
+        Returns a `YNotebookRoom` for a session identified by the given `session_id` and
         `path`. This should be called only in `create_session()`.
 
         This method stores the new room ID & session ID in `self._room_ids`. The
-        `YRoom` for a session can be retrieved via `self.get_yroom()` after this
+        `YNotebookRoom` for a session can be retrieved via `self.get_yroom()` after this
         method is called.
         """
         file_id = self.file_id_manager.index(path)
@@ -135,8 +136,12 @@ class YDocSessionManager(SessionManager):
             # Get YRoom for this session and store its ID in `self._room_ids`
             yroom = self._init_session_yroom(session_id, real_path)
 
-            # Connect the YRoom to the kernel — creates its own AsyncKernelClient,
-            # starts iopub/shell watchers, fetches language_info.
+            # Connect the YRoom to the kernel — only YNotebookRoom supports this;
+            # other room types (text files, chat) never have a kernel attached.
+            if not isinstance(yroom, YNotebookRoom):
+                raise RuntimeError(
+                    f"Room {yroom.room_id!r} is not a YNotebookRoom and cannot connect to a kernel"
+                )
             kernel_manager = self.kernel_manager.get_kernel(kernel_id)
             await yroom.connect_kernel(kernel_manager)
         except Exception:

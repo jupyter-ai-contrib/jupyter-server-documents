@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .yroom import YRoom
+from .ynotebook_room import YNotebookRoom
 from .gc_debug_logger import GcDebugLogger
 from typing import TYPE_CHECKING
 import asyncio
@@ -168,7 +169,12 @@ class YRoomManager(LoggingConfigurable):
             raise Exception(f"Room already exists: '{room_id}'.")
 
         self.log.info(f"Initializing room '{room_id}'.")
-        YRoomClass = self.yroom_class
+        # Use YNotebookRoom for notebook rooms so kernel methods are available
+        # and consumers can isinstance-check before calling connect_kernel() etc.
+        if room_id.startswith("json:notebook:"):
+            YRoomClass = YNotebookRoom
+        else:
+            YRoomClass = self.yroom_class
         yroom = YRoomClass(
             parent=self,
             room_id=room_id,
