@@ -2,6 +2,25 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.2.4
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.3...39c6f391b80ce14451861c1312722cba48e9c857))
+
+### Bugs fixed
+
+- Support jupyter-collaboration-ui 2.4.0 [#249](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/249) ([@dlqqq](https://github.com/dlqqq))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-06-10&to=2026-06-11&type=c))
+
+@dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-06-10..2026-06-11&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.3
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.2...22ad4489c33991b6abfcb7a7d2001635e4c25405))
@@ -19,8 +38,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-05-12&to=2026-06-10&type=c))
 
 @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-05-12..2026-06-10&type=Issues)) | @joshuatowner ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Ajoshuatowner+updated%3A2026-05-12..2026-06-10&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.2.2
 
