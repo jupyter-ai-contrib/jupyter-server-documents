@@ -1274,16 +1274,26 @@ class YRoom(LoggingConfigurable):
 
         self.log.debug("_run_item: cell_id=%r", item.cell_id)
         output_processor = self.output_processor
+        # Capture execution_count from execute_input but don't write it yet.
+        # Writing it immediately triggers executionCountChange on the frontend
+        # which sets executionState='idle', clearing [*] before the cell finishes.
+        # We write it atomically with execution_state='idle' after completion.
+        _execution_count = None
 
         def output_hook(msg: dict) -> None:
+            nonlocal _execution_count
             msg_type = msg["header"]["msg_type"]
             content = msg.get("content", {})
             if msg_type == "status":
                 state = content.get("execution_state", "")
-                if state in ("busy", "idle"):
-                    ycell["execution_state"] = state
+                # Map kernel status:idle → YDoc "idle".
+                # kernel status:busy is intentionally ignored — the cell is
+                # already "running" in the YDoc from the time it was enqueued.
+                if state == "idle":
+                    ycell["execution_state"] = "idle"
             elif msg_type == "execute_input":
-                ycell["execution_count"] = content.get("execution_count")
+                # Capture but don't write yet — see comment above.
+                _execution_count = content.get("execution_count")
             elif msg_type in (
                 "execute_result", "display_data", "update_display_data",
                 "stream", "error", "clear_output",
@@ -1301,10 +1311,12 @@ class YRoom(LoggingConfigurable):
                 allow_stdin=False,
                 timeout=item.timeout,
             )
-            # Unconditionally write idle here.  The kernel may not send a
-            # final status:idle message on short executions or after an
-            # interrupt, so we can't rely solely on the output_hook for this.
+            # Write execution_count and state together so the frontend
+            # sees them in the same YDoc transaction — avoids a brief
+            # flash where the count shows before the state clears [*].
             ycell["execution_state"] = "idle"
+            if _execution_count is not None:
+                ycell["execution_count"] = _execution_count
             self.log.debug("execute_cell completed: cell_id=%s outputs_len=%s",
                           item.cell_id, len(ycell.get("outputs", [])))
         except TimeoutError:
@@ -1324,10 +1336,14 @@ class YRoom(LoggingConfigurable):
     ) -> None:
         """Enqueue a cell for execution and return immediately (fire-and-forget).
 
-        Marks the cell as 'queued' in the YDoc so the UI shows [*] right away.
+        Marks the cell as 'running' in the YDoc so the UI shows [*] right away.
         The actual execution happens in the background worker; outputs appear
         via YDoc sync as the kernel produces them. This allows long-running
         cells (hours) without holding an HTTP connection open.
+
+        'running' matches the IExecutionState type defined in @jupyter/ydoc
+        (values: 'running' | 'idle') and is what the standard JupyterLab
+        _updatePrompt() checks to render [*].
         """
         if self._kernel_client is None:
             raise RuntimeError("YRoom is not connected to a kernel")
@@ -1339,7 +1355,7 @@ class YRoom(LoggingConfigurable):
         file_id = self.room_id.split(":", 2)[2]
         if clear_outputs:
             del ycell["outputs"][:]
-        ycell["execution_state"] = "queued"
+        ycell["execution_state"] = "running"
 
         item = _ExecutionItem(
             cell_id=cell_id,

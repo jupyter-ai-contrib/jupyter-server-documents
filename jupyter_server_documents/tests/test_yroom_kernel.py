@@ -212,7 +212,7 @@ class TestDisconnectKernel:
         assert room._execution_queue is None
 
     @pytest.mark.asyncio
-    async def test_queued_cells_marked_idle_on_disconnect(self):
+    async def test_running_cells_marked_idle_on_disconnect(self):
         """Cells waiting in the queue must be reset to 'idle' on disconnect.
 
         Without this, cells would remain stuck showing [*] after a kernel
@@ -222,7 +222,7 @@ class TestDisconnectKernel:
         await connect(room)
 
         # Enqueue a cell manually — bypasses execute_cell() guards
-        ycell = {"id": "cell-1", "execution_state": "queued"}
+        ycell = {"id": "cell-1", "execution_state": "running"}
         item = MagicMock()
         item.ycell = ycell
         await room._execution_queue.put(item)
@@ -297,8 +297,8 @@ class TestExecuteCell:
             await room.execute_cell("cell-1")
 
     @pytest.mark.asyncio
-    async def test_marks_cell_queued_and_returns_immediately(self):
-        """execute_cell must set execution_state='queued' and enqueue, not block.
+    async def test_marks_cell_running_and_returns_immediately(self):
+        """execute_cell must set execution_state='running' and enqueue, not block.
 
         A blocked execute_cell would hold the HTTP connection open for the
         entire duration of the cell run, defeating fire-and-forget semantics.
@@ -318,7 +318,7 @@ class TestExecuteCell:
 
         try:
             await asyncio.wait_for(room.execute_cell("cell-1"), timeout=1.0)
-            assert mock_cell["execution_state"] == "queued"
+            assert mock_cell["execution_state"] == "running"
             assert not room._execution_queue.empty()
         finally:
             room._execution_worker_task.cancel()
@@ -434,8 +434,12 @@ class TestOutputHook:
         return mock_cell, mock_processor
 
     @pytest.mark.asyncio
-    async def test_status_busy_written_to_ydoc(self):
-        """status:busy must set ycell['execution_state'] so the UI shows [*]."""
+    async def test_status_busy_from_kernel_is_ignored(self):
+        """kernel status:busy must NOT overwrite the YDoc state.
+
+        The cell is already 'running' from enqueue time. 'busy' from the
+        kernel is an implementation detail that should not leak into the YDoc.
+        """
         cell, _ = await self._run_with_hook([
             {"header": {"msg_type": "status"}, "content": {"execution_state": "busy"}},
         ])
