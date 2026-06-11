@@ -50,15 +50,16 @@ def make_mock_km():
 
     km = MagicMock()
     km.get_connection_info.return_value = {}
+    # client_factory is what _connect_client calls to instantiate the client
+    km.client_factory = MagicMock(return_value=mock_client)
     return km, mock_client
 
 
 def patch_client(mock_client):
-    """Patch AsyncKernelClient so connect_kernel() uses mock_client."""
-    return patch(
-        "jupyter_server_documents.rooms.yroom.AsyncKernelClient",
-        return_value=mock_client,
-    )
+    """Set client_factory on the mock km so connect_kernel() uses mock_client."""
+    # No patching needed — make_mock_km already sets km.client_factory.
+    from contextlib import nullcontext
+    return nullcontext()
 
 
 async def connect(room, km=None, mock_client=None):
@@ -78,21 +79,48 @@ class TestConnectKernel:
 
     @pytest.mark.asyncio
     async def test_creates_independent_client(self):
-        """connect_kernel must create its own AsyncKernelClient, not use km.client().
+        """connect_kernel must instantiate via client_factory, not km.client().
 
         Using km.client() clones the kernel manager's session, so every
         connected client gets the same ZMQ DEALER identity.  The kernel's
         ROUTER then routes execute_reply to the wrong socket.  We verify that
-        AsyncKernelClient is instantiated directly and km.client() is never
-        called.
+        client_factory is called directly and km.client() is never called.
         """
         room = make_yroom()
         km, mock_client = make_mock_km()
-        with patch_client(mock_client) as mock_cls, \
-             patch("jupyter_server_documents.outputs.OutputProcessor"):
+        with patch("jupyter_server_documents.outputs.OutputProcessor"):
             await room.connect_kernel(km)
-        mock_cls.assert_called_once()
+        km.client_factory.assert_called_once()
         km.client.assert_not_called()
+        await room.disconnect_kernel()
+
+    @pytest.mark.asyncio
+    async def test_custom_client_factory_is_used(self):
+        """A custom client class set on client_factory must be what the YRoom uses.
+
+        kernel_manager.client_factory is a configurable trait — operators can
+        swap in a custom AsyncKernelClient subclass. The YRoom must honour that.
+        """
+        room = make_yroom()
+        km, _ = make_mock_km()
+
+        class CustomKernelClient:
+            instantiated = False
+            def __init__(self, **kwargs):
+                CustomKernelClient.instantiated = True
+                self.session = MagicMock()
+                self.hb_channel = MagicMock()
+                self._async_is_alive = AsyncMock(return_value=True)
+                self._async_wait_for_ready = AsyncMock(return_value=None)
+            def load_connection_info(self, info): pass
+            def start_channels(self, **kwargs): pass
+            def stop_channels(self): pass
+
+        km.client_factory = CustomKernelClient
+        with patch("jupyter_server_documents.outputs.OutputProcessor"):
+            await room.connect_kernel(km)
+        assert CustomKernelClient.instantiated
+        assert isinstance(room._kernel_client, CustomKernelClient)
         await room.disconnect_kernel()
 
     @pytest.mark.asyncio
@@ -150,11 +178,12 @@ class TestConnectKernel:
 
         # Point the same km at a new client for the second connect
 
-        with patch_client(second_client), patch("jupyter_server_documents.outputs.OutputProcessor"):
+        km.client_factory = MagicMock(return_value=second_client)
+        with patch("jupyter_server_documents.outputs.OutputProcessor"):
             await room.connect_kernel(km)
 
         first_client.stop_channels.assert_called_once()
-        assert room._kernel_client is not first_client
+        assert room._kernel_client is second_client
         await room.disconnect_kernel()
 
 

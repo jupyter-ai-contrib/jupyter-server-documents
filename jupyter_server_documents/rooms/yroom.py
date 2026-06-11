@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 import time
 import uuid
 import pycrdt
-from jupyter_client.asynchronous.client import AsyncKernelClient
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 from jupyter_server_documents.ydocs import ydocs as jupyter_ydoc_classes
 from jupyter_server_documents.outputs import OutputProcessor
@@ -22,6 +21,7 @@ from .yroom_update_channel import YRoomUpdateChannel
 if TYPE_CHECKING:
     import logging
     from typing import Callable, Coroutine, Literal, Tuple, Any
+    from jupyter_client.asynchronous.client import AsyncKernelClient
     from .yroom_manager import YRoomManager
     from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
     from jupyter_server.services.contents.manager import ContentsManager
@@ -1159,19 +1159,26 @@ class YRoom(LoggingConfigurable):
 
         Shared by connect_kernel().  Does NOT touch the execution queue or worker.
 
-        We do NOT use kernel_manager.client() because it clones the manager's
-        session, giving all clients the same ZMQ DEALER identity.  The kernel's
-        ROUTER would then route execute_reply to the wrong socket.  A fresh
-        AsyncKernelClient gets its own independent session.
+        We use kernel_manager.client_factory (the configured client class) rather
+        than hardcoding AsyncKernelClient.  This respects whatever client_class the
+        user or the kernel manager has set, keeping our instantiation consistent
+        with the rest of the jupyter_client stack.
+
+        We do NOT use kernel_manager.client() even though it also uses client_factory
+        internally.  client() clones the manager's session, giving every client the
+        same ZMQ DEALER identity.  The kernel's ROUTER then routes execute_reply to
+        the wrong socket.  Instantiating client_factory directly gives us an
+        independent session and correct reply routing.
         """
+        client_class = kernel_manager.client_factory
         try:
-            self._kernel_client = AsyncKernelClient(
+            self._kernel_client = client_class(
                 parent=kernel_manager,
                 config=getattr(kernel_manager, "config", None),
             )
         except Exception:
             # parent might not be a Configurable (e.g. in tests)
-            self._kernel_client = AsyncKernelClient()
+            self._kernel_client = client_class()
 
         connection_info = kernel_manager.get_connection_info()
         self._kernel_client.load_connection_info(connection_info)
