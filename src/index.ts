@@ -8,7 +8,12 @@ import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
 import { disableSavePlugin } from './disablesave';
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
-import { rtcContentProvider, ynotebook, ychat, rtcGlobalAwarenessPlugin } from './docprovider';
+import {
+  rtcContentProvider,
+  ynotebook,
+  ychat,
+  rtcGlobalAwarenessPlugin
+} from './docprovider';
 import { outputsServicePlugin } from './outputs';
 
 /**
@@ -57,9 +62,9 @@ export const plugin: JupyterFrontEndPlugin<void> = {
  * autoStart: false means this only activates when no other implementation
  * of INotebookCellExecutor has been provided.
  */
-export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
+export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
   {
-    id: '@jupyter-ai-contrib/server-documents:backup-cell-executor',
+    id: '@jupyter-ai-contrib/server-documents:server-cell-executor',
     description:
       'Provides notebook cell executor; uses server-side execution when enabled.',
     autoStart: false,
@@ -70,6 +75,9 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
       }
 
       const serverSettings = app.serviceManager.serverSettings;
+      // Track the last request_id per document so successive runCell calls
+      // can chain previous_request_id without touching any notebook internals.
+      const lastRequestIdByDoc = new Map<string, string>();
       return {
         async runCell({
           cell,
@@ -114,8 +122,40 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
           // room name set by the WebSocket provider (same key used by
           // jupyter-server-nbmodel).  Falls back to path so the server can
           // resolve it via file_id_manager if document_id is not yet set.
-          const documentId = (notebook.sharedModel as any).getState?.('document_id') as string | undefined;
+          const documentId = notebook.sharedModel.getState('document_id') as
+            | string
+            | undefined;
           const path = sessionContext?.session?.path ?? '';
+
+          // Compute SHA-256 of the cell source so the server can detect if
+          // another user's edit arrived after this user pressed Run.
+          const source = cell.model.sharedModel.getSource();
+          const sourceBytes = new TextEncoder().encode(source);
+          const hashBuffer = await crypto.subtle.digest('SHA-256', sourceBytes);
+          const sourceHash = Array.from(new Uint8Array(hashBuffer))
+            .map(b => b.toString(16).padStart(2, '0'))
+            .join('');
+
+          // Include the Yjs client ID so the server can attribute who executed
+          // the cell and scope the ordering chain per-client.  Each browser tab
+          // gets a unique client ID from the collaborative drive's awareness.
+          const clientId = String(
+            notebook.sharedModel.awareness?.clientID ?? ''
+          );
+
+          // Generate a unique ID for this request and chain it to the
+          // previous one so the server can enforce FIFO order even when
+          // network jitter causes requests to arrive out of sequence.
+          // The chain is keyed per document+client so that two users running
+          // cells simultaneously don't block each other.
+          const docKey = `${documentId ?? path}:${clientId}`;
+          const requestId = crypto.randomUUID();
+          const previousRequestId = lastRequestIdByDoc.get(docKey);
+          lastRequestIdByDoc.set(docKey, requestId);
+
+          const basePayload = documentId
+            ? { document_id: documentId }
+            : { path };
 
           onCellExecutionScheduled({ cell });
           try {
@@ -123,14 +163,29 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               apiURL,
               {
                 method: 'POST',
-                body: JSON.stringify(
-                  documentId
-                    ? { cell_id: cellId, document_id: documentId }
-                    : { cell_id: cellId, path }
-                )
+                body: JSON.stringify({
+                  ...basePayload,
+                  cell_id: cellId,
+                  source_hash: sourceHash,
+                  client_id: clientId || undefined,
+                  request_id: requestId,
+                  ...(previousRequestId
+                    ? { previous_request_id: previousRequestId }
+                    : {})
+                })
               },
               serverSettings
             );
+            if (response.status === 409) {
+              // Source mismatch — another user edited the cell after this user
+              // pressed Run.  Treat as a soft failure: clear the running state
+              // and report to the user without throwing.
+              console.warn(
+                `[JSD] Cell ${cellId} not executed: source changed since Run was pressed`
+              );
+              onCellExecuted({ cell, success: false });
+              return false;
+            }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
@@ -147,7 +202,7 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
-  backupCellExecutorPlugin,
+  serverCellExecutorPlugin,
   disableSavePlugin,
   codemirrorYjsPlugin,
   // Provide our own collaborative content provider so notebooks connect to

@@ -34,6 +34,7 @@ def make_yroom():
     room._execution_queue = None
     room._execution_worker_task = None
     room.output_processor = None
+    room._enqueued_events = {}
     return room
 
 

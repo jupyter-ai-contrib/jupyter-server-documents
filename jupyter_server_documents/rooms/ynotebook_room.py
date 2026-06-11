@@ -11,6 +11,7 @@ Keeping kernel-related state and methods in a dedicated subclass means:
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
+import hashlib
 from dataclasses import dataclass
 
 from .yroom import YRoom
@@ -20,6 +21,31 @@ if TYPE_CHECKING:
     from ..outputs.output_processor import OutputProcessor
 
 
+# How long a request with previous_request_id will wait for its predecessor.
+_PREDECESSOR_TIMEOUT = 10.0
+
+
+def _source_hash(source: str) -> str:
+    return hashlib.sha256(source.encode()).hexdigest()
+
+
+class SourceMismatchError(Exception):
+    """The client's source_hash does not match the current YDoc source.
+
+    Raised by execute_cell() when source_hash is provided and the cell's
+    source has been edited (by any collaborator) since the user pressed Run.
+    The caller should return HTTP 409 so the client can decide whether to
+    re-run with the new source.
+    """
+    def __init__(self, cell_id: str):
+        super().__init__(f"Source hash mismatch for cell {cell_id!r}")
+        self.cell_id = cell_id
+
+
+class PredecessorTimeoutError(Exception):
+    """Timed out waiting for previous_request_id to be enqueued."""
+
+
 @dataclass
 class _ExecutionItem:
     """A cell execution request queued for the YNotebookRoom execution worker."""
@@ -27,7 +53,6 @@ class _ExecutionItem:
     ycell: Any
     file_id: str
     clear_outputs: bool
-    timeout: Optional[float]
 
 
 class YNotebookRoom(YRoom):
@@ -50,6 +75,10 @@ class YNotebookRoom(YRoom):
         self._execution_queue: asyncio.Queue | None = None
         self._execution_worker_task: asyncio.Task | None = None
         self.output_processor: OutputProcessor | None = None
+        # Per-request ordering: maps request_id → Event that is set once the
+        # request has been enqueued.  Lets a successor wait for its predecessor
+        # without blocking the event loop.
+        self._enqueued_events: dict[str, asyncio.Event] = {}
 
     # ── Kernel client lifecycle ───────────────────────────────────────────────────
 
@@ -121,6 +150,9 @@ class YNotebookRoom(YRoom):
 
         self._kernel_manager = None
         self._shell_confirmed = False
+        # Clear the request-ordering state so stale pre-disconnect events
+        # don't linger and consume memory across sessions.
+        self._enqueued_events.clear()
 
     async def _on_kernel_restart(self) -> None:
         # Save the kernel manager before disconnect_kernel() nulls it out,
@@ -295,7 +327,6 @@ class YNotebookRoom(YRoom):
                 str(ycell.get("source", "")),
                 output_hook=output_hook,
                 allow_stdin=False,
-                timeout=item.timeout,
             )
             # Write execution_count and state together so the frontend
             # sees them in the same YDoc transaction — avoids a brief
@@ -318,26 +349,65 @@ class YNotebookRoom(YRoom):
         self,
         cell_id: str,
         clear_outputs: bool = False,
-        timeout: Optional[float] = None,
+        source_hash: Optional[str] = None,
+        request_id: Optional[str] = None,
+        previous_request_id: Optional[str] = None,
     ) -> None:
         """Enqueue a cell for execution and return immediately (fire-and-forget).
 
         Marks the cell as 'running' in the YDoc so the UI shows [*] right away.
         The actual execution happens in the background worker; outputs appear
-        via YDoc sync as the kernel produces them. This allows long-running
-        cells (hours) without holding an HTTP connection open.
+        via YDoc sync as the kernel produces them.
 
-        'running' matches the IExecutionState type defined in @jupyter/ydoc
-        (values: 'running' | 'idle') and is what the standard JupyterLab
-        _updatePrompt() checks to render [*].
+        Args:
+            source_hash: Optional SHA-256 hex of the cell source at request
+                time.  If provided and the current YDoc source hashes to a
+                different value, SourceMismatchError is raised before any
+                execution takes place.
+
+            request_id: Optional UUID for this request.  After enqueuing, an
+                event is stored under this ID so a subsequent request can
+                chain off it via previous_request_id.
+
+            previous_request_id: Optional UUID of a preceding request.  This
+                method waits until that request has been enqueued before
+                enqueuing the current one, guaranteeing FIFO order despite
+                network jitter between rapid execute calls.
         """
         if self._kernel_client is None:
             raise RuntimeError("YNotebookRoom is not connected to a kernel")
         if self._execution_queue is None:
             raise RuntimeError("YNotebookRoom execution worker is not running")
 
+        # Wait for the predecessor to be enqueued first.
+        # If the predecessor hasn't registered its event yet (B arrived before
+        # A due to network jitter), create an unset event now and wait for A
+        # to set it when it enqueues.  asyncio is single-threaded so the
+        # check-and-set is safe without a lock.
+        if previous_request_id:
+            if previous_request_id not in self._enqueued_events:
+                self._enqueued_events[previous_request_id] = asyncio.Event()
+            event = self._enqueued_events[previous_request_id]
+            try:
+                await asyncio.wait_for(event.wait(), timeout=_PREDECESSOR_TIMEOUT)
+            except asyncio.TimeoutError:
+                # Delete the orphan entry so it doesn't linger until disconnect.
+                self._enqueued_events.pop(previous_request_id, None)
+                raise PredecessorTimeoutError()
+            # Predecessor consumed — delete its entry.  Each request_id is
+            # referenced by exactly one successor in the chain, so once we've
+            # waited on it nobody else needs it.
+            self._enqueued_events.pop(previous_request_id, None)
+
         ydoc = await self.get_jupyter_ydoc()
         ycell = self._find_kernel_cell(ydoc, cell_id)
+
+        # Verify the source hasn't changed since the user pressed Run.
+        if source_hash is not None:
+            current_source = str(ycell.get("source", ""))
+            if _source_hash(current_source) != source_hash:
+                raise SourceMismatchError(cell_id)
+
         file_id = self.room_id.split(":", 2)[2]
         if clear_outputs:
             del ycell["outputs"][:]
@@ -348,10 +418,21 @@ class YNotebookRoom(YRoom):
             ycell=ycell,
             file_id=file_id,
             clear_outputs=clear_outputs,
-            timeout=timeout,
         )
         await self._execution_queue.put(item)
-        # Returns immediately — the worker executes in the background.
+
+        # Signal that this request has been enqueued so any successor that
+        # named us as previous_request_id can proceed.  If B already created
+        # an unset event for our request_id (because B arrived first), set it;
+        # otherwise create and store a pre-set event for future successors.
+        if request_id is not None:
+            existing = self._enqueued_events.get(request_id)
+            if existing is not None:
+                existing.set()
+            else:
+                done = asyncio.Event()
+                done.set()
+                self._enqueued_events[request_id] = done
 
     def _find_kernel_cell(self, ydoc, cell_id: str):
         """Find a code cell by id. Raises LookupError if not found, ValueError if not code."""
@@ -361,3 +442,4 @@ class YNotebookRoom(YRoom):
                     raise ValueError(f"Cell {cell_id!r} is not a code cell")
                 return cell
         raise LookupError(f"Cell {cell_id!r} not found in document")
+

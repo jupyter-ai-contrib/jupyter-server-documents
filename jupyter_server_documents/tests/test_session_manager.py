@@ -16,7 +16,8 @@ parent SessionManager.
 """
 import asyncio
 import pytest
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, MagicMock, patch
+from jupyter_server_documents.rooms.ynotebook_room import YNotebookRoom
 from traitlets.config import LoggingConfigurable
 from jupyter_server.services.kernels.kernelmanager import MappingKernelManager
 from jupyter_server_documents.session_manager import YDocSessionManager
@@ -62,7 +63,7 @@ async def _create_notebook_session(session_manager, session_id="session-123", ke
     create_session so callers can simulate GC.
     """
     file_id = "test-file-id"
-    mock_yroom = Mock()
+    mock_yroom = MagicMock(spec=YNotebookRoom)
     mock_yroom.room_id = f"json:notebook:{file_id}"
     mock_yroom.connect_kernel = AsyncMock()
     mock_yroom.disconnect_kernel = AsyncMock()

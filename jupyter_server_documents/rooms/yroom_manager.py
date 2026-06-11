@@ -171,10 +171,9 @@ class YRoomManager(LoggingConfigurable):
         self.log.info(f"Initializing room '{room_id}'.")
         # Use YNotebookRoom for notebook rooms so kernel methods are available
         # and consumers can isinstance-check before calling connect_kernel() etc.
-        if room_id.startswith("json:notebook:"):
-            YRoomClass = YNotebookRoom
-        else:
-            YRoomClass = self.yroom_class
+        YRoomClass: type[YRoom] = (
+            YNotebookRoom if room_id.startswith("json:notebook:") else self.yroom_class
+        )
         yroom = YRoomClass(
             parent=self,
             room_id=room_id,
