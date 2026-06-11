@@ -320,7 +320,7 @@ class YRoom(LoggingConfigurable):
     
 
     @property
-    def outputs_manager(self) -> OutputsManager:
+    def outputs_manager(self) -> OutputsManager | None:
         return self.parent.outputs_manager
     
 

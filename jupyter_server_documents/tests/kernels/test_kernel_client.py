@@ -15,8 +15,16 @@ class TestDocumentAwareKernelClient:
         assert isinstance(client.message_cache, KernelMessageCache)
 
     def test_default_output_processor(self):
-        """Test that output processor is created by default."""
+        """Test that output processor is None by default (outputs service disabled)."""
         client = DocumentAwareKernelClient()
+        assert client.output_processor is None
+
+    def test_output_processor_created_when_enabled(self):
+        """Test that output processor is created when use_outputs_service is True."""
+        from traitlets.config import Config
+        config = Config()
+        config.OutputProcessor.use_outputs_service = True
+        client = DocumentAwareKernelClient(config=config)
         assert isinstance(client.output_processor, OutputProcessor)
 
     @pytest.mark.asyncio
@@ -160,8 +168,11 @@ class TestConsoleOutputPassthrough:
     async def test_output_suppressed_with_yrooms(self):
         """Output messages must be intercepted when _yrooms is non-empty."""
         from jupyter_client.session import Session
+        from traitlets.config import Config
 
-        client = DocumentAwareKernelClient()
+        config = Config()
+        config.OutputProcessor.use_outputs_service = True
+        client = DocumentAwareKernelClient(config=config)
         session = Session(key=b"test-key")
         client.session = session
 
