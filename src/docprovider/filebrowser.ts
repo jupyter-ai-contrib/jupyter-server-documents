@@ -314,3 +314,50 @@ export const logger: JupyterFrontEndPlugin<void> = {
     })();
   }
 };
+
+import { IStateDB, StateDB } from '@jupyterlab/statedb';
+import { IAwareness } from '@jupyter/ydoc';
+import * as Y from 'yjs';
+import { Awareness as YAwareness } from 'y-protocols/awareness';
+import { ServerConnection } from '@jupyterlab/services';
+import { URLExt } from '@jupyterlab/coreutils';
+import { WebSocketAwarenessProvider } from './awareness';
+
+/**
+ * Plugin that provides the global awareness object. We override the one
+ * from jupyter-collaboration to ensure it connects to our own backend
+ * and not one from a version of jupyter-collaboration-ui that may differ.
+ * See jupyter-ai-contrib/jupyter-server-documents#249.
+ */
+export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
+  id: '@jupyter-ai-contrib/server-documents:rtc-global-awareness',
+  description: 'Add global awareness to share working document of users.',
+  requires: [IStateDB],
+  provides: IGlobalAwareness,
+  activate: (app: JupyterFrontEnd, state: StateDB): IAwareness => {
+    const { user } = app.serviceManager;
+    const ydoc = new Y.Doc();
+    const awareness = new YAwareness(ydoc);
+
+    const server = ServerConnection.makeSettings();
+    const url = URLExt.join(server.wsUrl, 'api/collaboration/room');
+    new WebSocketAwarenessProvider({
+      url,
+      roomID: 'JupyterLab:globalAwareness',
+      awareness,
+      user
+    });
+
+    state.changed.connect(async () => {
+      const data: any = await state.toJSON();
+      const current: string = data['layout-restorer:data']?.main?.current || '';
+      if (current.match(/^\w+:.+/)) {
+        awareness.setLocalStateField('current', current);
+      } else {
+        awareness.setLocalStateField('current', null);
+      }
+    });
+
+    return awareness;
+  }
+};

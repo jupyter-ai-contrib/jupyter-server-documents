@@ -1,11 +1,12 @@
 import os
+import traceback
 from typing import Optional, Any
 from jupyter_server.services.sessions.sessionmanager import SessionManager, KernelName, ModelName
 from jupyter_server.serverapp import ServerApp
 from jupyter_server_fileid.manager import BaseFileIdManager
 from jupyter_server_documents.rooms.yroom_manager import YRoomManager
 from jupyter_server_documents.rooms.yroom import YRoom
-from jupyter_server_documents.kernels.kernel_client import DocumentAwareKernelClient
+import asyncio
 
 
 class YDocSessionManager(SessionManager): 
@@ -44,12 +45,6 @@ class YDocSessionManager(SessionManager):
         super().__init__(*args, **kwargs)
         self._room_ids = {}
         self._console_session_ids = set()
-
-    def get_kernel_client(self, kernel_id: str) -> DocumentAwareKernelClient:
-        """Get the kernel client for a running kernel."""
-        kernel_manager = self.kernel_manager.get_kernel(kernel_id)
-        kernel_client = kernel_manager.main_client
-        return kernel_client
 
     def _is_console_session(self, session_id: str) -> bool:
         """Returns True if the session is a kernel console (no backing YDoc)."""
@@ -136,19 +131,22 @@ class YDocSessionManager(SessionManager):
         # by dropping the UUID and appending the file name.
         real_path = os.path.join(os.path.split(path)[0], name)
 
-        # Get YRoom for this session and store its ID in `self._room_ids`
-        yroom = self._init_session_yroom(session_id, real_path)
+        try:
+            # Get YRoom for this session and store its ID in `self._room_ids`
+            yroom = self._init_session_yroom(session_id, real_path)
 
-        # Add YRoom to this session's kernel client
-        # TODO: we likely have a race condition here... need to 
-        # think about it more. Currently, the kernel client gets
-        # created after the kernel starts fully. We need the 
-        # kernel client instantiated _before_ trying to connect
-        # the yroom.
-        kernel_client = self.get_kernel_client(kernel_id)
-        await kernel_client.add_yroom(yroom)
-        yroom.add_stop_callback(lambda: kernel_client.remove_yroom(yroom))
-        self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}. yroom: {yroom}")
+            # Connect the YRoom to the kernel — creates its own AsyncKernelClient,
+            # starts iopub/shell watchers, fetches language_info.
+            kernel_manager = self.kernel_manager.get_kernel(kernel_id)
+            await yroom.connect_kernel(kernel_manager)
+        except Exception:
+            self.log.error(
+                "create_session: failed to set up yroom for session %s path %r:\n%s",
+                session_id, real_path, traceback.format_exc(),
+            )
+            raise
+        yroom.add_stop_callback(lambda: asyncio.create_task(yroom.disconnect_kernel()))
+        self.log.info(f"Connected yroom {yroom.room_id} to kernel {kernel_id}.")
         return session_model
     
 
@@ -172,7 +170,7 @@ class YDocSessionManager(SessionManager):
         # Otherwise, first remove the YRoom from the old kernel client and add
         # the YRoom to the new kernel client, before applying the update.
         old_session_info = (await self.get_session(session_id=session_id) or {})
-        old_kernel_id = old_session_info.get("kernel_id", None)
+        old_kernel_id = old_session_info.get("kernel", {}).get("id")
         new_kernel_id = update.get("kernel_id", None)
         self.log.info(
             f"Updating session '{session_id}' from kernel '{old_kernel_id}' "
@@ -180,11 +178,10 @@ class YDocSessionManager(SessionManager):
         )
         yroom = self.get_yroom(session_id)
         if old_kernel_id:
-            old_kernel_client = self.get_kernel_client(old_kernel_id)
-            await old_kernel_client.remove_yroom(yroom=yroom)
+            await yroom.disconnect_kernel()
         if new_kernel_id:
-            new_kernel_client = self.get_kernel_client(new_kernel_id)
-            await new_kernel_client.add_yroom(yroom=yroom)
+            new_km = self.kernel_manager.get_kernel(new_kernel_id)
+            await yroom.connect_kernel(new_km)
 
         # Apply update and return
         return await super().update_session(session_id, **update)
@@ -202,10 +199,9 @@ class YDocSessionManager(SessionManager):
         session = await self.get_session(session_id=session_id)
         kernel_id = session["kernel"]["id"]
 
-        # Remove YRoom from session's kernel client
+        # Disconnect YRoom from its kernel client
         yroom = self.get_yroom(session_id)
-        kernel_client = self.get_kernel_client(kernel_id)
-        await kernel_client.remove_yroom(yroom)
+        await yroom.disconnect_kernel()
 
         # Remove room ID stored for the session
         self._room_ids.pop(session_id, None)

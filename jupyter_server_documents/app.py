@@ -9,6 +9,7 @@ from .rooms.yroom_manager import YRoomManager
 from .outputs import OutputsManager, outputs_handlers
 from .events import JSD_AWARENESS_EVENT_SCHEMA, JSD_ROOM_EVENT_SCHEMA
 from .jcollab_api import JCollabAPI
+from .execution_handlers import executions_handlers
 
 class ServerDocsApp(ExtensionApp):
     name = "jupyter_server_documents"
@@ -16,12 +17,11 @@ class ServerDocsApp(ExtensionApp):
     description = "A new implementation of real-time collaboration (RTC) in JupyterLab."
 
     handlers = [  # type:ignore[assignment]
-        # # ydoc websocket
+        # ydoc websocket
         (r"api/collaboration/room/(.*)", YRoomWebsocket),
-        # # handler that just adds compatibility with Jupyter Collaboration's frontend
-        # (r"api/collaboration/session/(.*)", YRoomSessionHandler),
         (r"api/fileid/index", FileIDIndexHandler),
-        *outputs_handlers
+        *outputs_handlers,
+        *executions_handlers,
     ]
 
     yroom_manager_class = Type(
@@ -73,8 +73,10 @@ class ServerDocsApp(ExtensionApp):
             self.outputs_manager = None
         self.settings["outputs_manager"] = self.outputs_manager
 
-        # Pass outputs service status to frontend via page_config_data
-        self.serverapp.web_app.settings.setdefault("page_config_data", {})["outputsServiceEnabled"] = str(outputs_service_enabled).lower()
+        # Pass outputs service status and enable server-side execution in frontend
+        page_config = self.serverapp.web_app.settings.setdefault("page_config_data", {})
+        page_config["outputsServiceEnabled"] = str(outputs_service_enabled).lower()
+        page_config["serverSideExecution"] = "true"
 
         # Serve Jupyter Collaboration API on
         # `self.settings["jupyter_server_ydoc"]` for compatibility with
@@ -87,9 +89,7 @@ class ServerDocsApp(ExtensionApp):
     def _link_jupyter_server_extension(self, server_app):
         """Setup custom config needed by this extension."""
         c = Config()
-        c.ServerApp.kernel_websocket_connection_class = "jupyter_server_documents.kernels.websocket_connection.NextGenKernelWebsocketConnection"
-        c.ServerApp.kernel_manager_class = "jupyter_server_documents.kernels.multi_kernel_manager.NextGenMappingKernelManager"
-        c.MultiKernelManager.kernel_manager_class = "jupyter_server_documents.kernels.kernel_manager.NextGenKernelManager"
+        c.ServerApp.kernel_websocket_connection_class = "jupyter_server_documents.websocket_connection.KernelWebsocketConnection"
         c.ServerApp.session_manager_class = "jupyter_server_documents.session_manager.YDocSessionManager"
         server_app.update_config(c)
         super()._link_jupyter_server_extension(server_app)

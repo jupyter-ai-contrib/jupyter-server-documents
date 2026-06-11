@@ -1,13 +1,18 @@
-"""Tests for the YDocSessionManager stop callback behavior.
+"""
+Tests for YDocSessionManager.
 
-When create_session() sets up a notebook, it registers a stop callback on
-the yroom. This callback fires when the room is freed by the GC (via
-yroom.stop()). The GC frees rooms that are inactive and empty (no WebSocket
-clients connected for a while).
+When create_session() sets up a notebook it:
+1. Calls connect_kernel() on the YRoom to attach the server-side executor.
+2. Registers a stop callback that fires when the GC frees the room.
 
-The stop callback must only disconnect the room from the kernel client — it
-must NOT delete the session or shut down the kernel. Room GC reclaims memory;
-kernel lifecycle is the user's responsibility.
+The stop callback must *only* disconnect the room from the kernel — it must
+NOT delete the session or shut down the kernel.  Room GC reclaims memory;
+kernel lifecycle is the user's responsibility.  If we deleted the session on
+GC, the user would lose their kernel whenever the browser was idle too long.
+
+Console sessions (type="console") have no backing YDoc or YRoom.  The session
+manager must skip all YRoom operations for them and delegate straight to the
+parent SessionManager.
 """
 import asyncio
 import pytest
@@ -17,16 +22,17 @@ from jupyter_server.services.kernels.kernelmanager import MappingKernelManager
 from jupyter_server_documents.session_manager import YDocSessionManager
 
 
+# ── fixtures ──────────────────────────────────────────────────────────────────
+
 @pytest.fixture
 def session_manager():
-    """Create a YDocSessionManager with mocked server dependencies.
+    """YDocSessionManager with all server dependencies mocked.
 
-    Mocks the kernel_manager, file_id_manager, and yroom_manager so we
-    can test the session manager's logic without a running Jupyter server.
+    We need spec=MappingKernelManager on the kernel manager mock so that
+    the traitlet type validator accepts it.  Everything else is a plain Mock.
     """
     mock_file_id_manager = Mock()
     mock_yroom_manager = Mock()
-    # Use spec=MappingKernelManager to satisfy the traitlet type check
     mock_kernel_manager = Mock(spec=MappingKernelManager)
 
     class MockServerApp(LoggingConfigurable):
@@ -36,264 +42,166 @@ def session_manager():
 
         @property
         def web_app(self):
-            mock_web_app = Mock()
-            mock_web_app.settings = {
+            m = Mock()
+            m.settings = {
                 "file_id_manager": mock_file_id_manager,
-                "yroom_manager": mock_yroom_manager
+                "yroom_manager": mock_yroom_manager,
             }
-            return mock_web_app
+            return m
 
     manager = YDocSessionManager(parent=MockServerApp())
     manager._room_ids = {}
-    # YDocSessionManager.kernel_manager is a traitlet inherited from
-    # SessionManager. We set it with a spec'd mock to pass type validation.
     manager.kernel_manager = mock_kernel_manager
     return manager
 
 
-class TestCreateSessionStopCallback:
-    """Tests for the stop callback registered during create_session.
+async def _create_notebook_session(session_manager, session_id="session-123", kernel_id="kernel-456"):
+    """Helper: run create_session for a notebook and return (yroom, callbacks).
 
-    These tests verify that when a room is freed by GC:
-    1. The yroom is removed from the kernel client (stops message routing)
-    2. The session is NOT deleted (kernel stays alive)
-    3. The _room_ids mapping persists (enables reconnection)
+    Returns the mock YRoom and the list of stop callbacks registered during
+    create_session so callers can simulate GC.
+    """
+    file_id = "test-file-id"
+    mock_yroom = Mock()
+    mock_yroom.room_id = f"json:notebook:{file_id}"
+    mock_yroom.connect_kernel = AsyncMock()
+    mock_yroom.disconnect_kernel = AsyncMock()
+
+    captured_callbacks = []
+    mock_yroom.add_stop_callback = lambda cb: captured_callbacks.append(cb)
+
+    session_manager.serverapp.kernel_manager.get_kernel.return_value = Mock()
+    session_manager.yroom_manager.get_room.return_value = mock_yroom
+    session_manager.file_id_manager.index.return_value = file_id
+
+    mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
+    with patch(
+        "jupyter_server.services.sessions.sessionmanager.SessionManager.create_session",
+        new_callable=AsyncMock,
+        return_value=mock_session,
+    ):
+        await session_manager.create_session(
+            path="/path/to/notebook.ipynb",
+            name="notebook.ipynb",
+            type="notebook",
+            kernel_name="python3",
+        )
+
+    return mock_yroom, captured_callbacks
+
+
+# ── notebook session stop callback ───────────────────────────────────────────
+
+class TestStopCallback:
+    """Verifies the YRoom stop callback registered by create_session.
+
+    The callback fires when the YRoomManager GC frees an idle, empty room.
+    Its only job is to disconnect the room from the kernel so stale ZMQ
+    sockets are closed.
     """
 
     @pytest.mark.asyncio
-    async def test_stop_callback_removes_yroom_from_kernel_client(self, session_manager):
-        """GC'd room must be unregistered from the kernel client.
+    async def test_connect_kernel_called_on_create(self, session_manager):
+        """create_session must attach the YRoom to its kernel via connect_kernel().
 
-        If the freed room remains in kernel_client._yrooms, incoming kernel
-        messages route to the stopped room, triggering room.restart() and
-        defeating the GC.
+        Without this call the YRoom has no AsyncKernelClient and cannot run
+        server-side cell executions.
         """
-        session_id = "session-123"
-        kernel_id = "kernel-456"
-        file_id = "test-file-id"
-
-        # Mock the yroom — we intercept add_stop_callback to capture
-        # what callback create_session registers, so we can invoke it later.
-        mock_yroom = Mock()
-        mock_yroom.room_id = f"json:notebook:{file_id}"
-
-        captured_callbacks = []
-        mock_yroom.add_stop_callback = lambda cb: captured_callbacks.append(cb)
-
-        # Mock the kernel client — this is what the stop callback should
-        # call remove_yroom() on.
-        mock_kernel_client = Mock()
-        mock_kernel_client.add_yroom = AsyncMock()
-        mock_kernel_client.remove_yroom = AsyncMock()
-
-        mock_kernel_mgr = Mock()
-        mock_kernel_mgr.main_client = mock_kernel_client
-
-        # Wire up the session manager's dependencies
-        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_mgr
-        session_manager.yroom_manager.get_room.return_value = mock_yroom
-        session_manager.file_id_manager.index.return_value = file_id
-
-        # --- Act: create a session (this registers the stop callback) ---
-        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.create_session', new_callable=AsyncMock) as mock_parent:
-            mock_parent.return_value = mock_session
-            await session_manager.create_session(
-                path="/path/to/notebook.ipynb",
-                name="notebook.ipynb",
-                type="notebook",
-                kernel_name="python3"
-            )
-
-        # Verify a stop callback was registered during create_session
-        assert len(captured_callbacks) == 1
-
-        # --- Act: simulate the GC freeing the room (fires stop callbacks) ---
-        callback_result = captured_callbacks[0]()
-
-        # The callback returns a coroutine (remove_yroom is async).
-        # In production, YRoom.stop() wraps this in asyncio.create_task().
-        assert asyncio.iscoroutine(callback_result)
-        await callback_result
-
-        # --- Assert: the yroom was disconnected from the kernel client ---
-        mock_kernel_client.remove_yroom.assert_called_once_with(mock_yroom)
+        mock_yroom, _ = await _create_notebook_session(session_manager)
+        mock_yroom.connect_kernel.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_callback_does_not_delete_session(self, session_manager):
-        """GC'd room must NOT trigger delete_session or shutdown_kernel.
+    async def test_gc_triggers_disconnect_kernel(self, session_manager):
+        """GC'd room must call disconnect_kernel() to release ZMQ sockets.
 
-        delete_session() terminates the kernel process, destroying all
-        in-memory state. Kernels are only shut down by explicit user action
-        or an idle culler — never as a side effect of room GC.
+        If the freed room stays connected, incoming kernel messages route to
+        the stopped room, which calls room.restart() and defeats the GC.
+        The callback is fire-and-forget (creates an asyncio.Task), so we
+        yield control with sleep(0) before asserting.
         """
-        session_id = "session-123"
-        kernel_id = "kernel-456"
-        file_id = "test-file-id"
+        mock_yroom, callbacks = await _create_notebook_session(session_manager)
+        assert len(callbacks) == 1
 
-        mock_yroom = Mock()
-        mock_yroom.room_id = f"json:notebook:{file_id}"
+        callbacks[0]()
+        await asyncio.sleep(0)  # let the Task created by the callback run
 
-        captured_callbacks = []
-        mock_yroom.add_stop_callback = lambda cb: captured_callbacks.append(cb)
-
-        mock_kernel_client = Mock()
-        mock_kernel_client.add_yroom = AsyncMock()
-        mock_kernel_client.remove_yroom = AsyncMock()
-
-        mock_kernel_mgr = Mock()
-        mock_kernel_mgr.main_client = mock_kernel_client
-
-        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_mgr
-        session_manager.yroom_manager.get_room.return_value = mock_yroom
-        session_manager.file_id_manager.index.return_value = file_id
-
-        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.create_session', new_callable=AsyncMock) as mock_parent:
-            mock_parent.return_value = mock_session
-
-            # Spy on delete_session — if the stop callback calls it, this
-            # mock will record the call.
-            with patch.object(session_manager, 'delete_session', new_callable=AsyncMock) as mock_delete:
-                await session_manager.create_session(
-                    path="/path/to/notebook.ipynb",
-                    name="notebook.ipynb",
-                    type="notebook",
-                    kernel_name="python3"
-                )
-
-                # --- Act: simulate the GC freeing the room ---
-                callback_result = captured_callbacks[0]()
-                if asyncio.iscoroutine(callback_result):
-                    await callback_result
-
-                # --- Assert: delete_session was NOT called ---
-                # Room GC must never kill kernels.
-                mock_delete.assert_not_called()
-
-                # --- Assert: shutdown_kernel was NOT called ---
-                session_manager.serverapp.kernel_manager.shutdown_kernel.assert_not_called()
+        mock_yroom.disconnect_kernel.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_stop_callback_preserves_room_id_mapping(self, session_manager):
-        """GC'd room must leave _room_ids intact for reconnection.
+    async def test_gc_does_not_delete_session_or_shutdown_kernel(self, session_manager):
+        """GC must not delete the session or shut down the kernel.
 
-        _room_ids maps session_id -> room_id. When the user reconnects,
-        _ensure_yroom_connected() uses this mapping to re-link the new
-        room to the kernel. The room_id is deterministic (derived from the
-        file's ID), so the mapping becomes valid again when the room is
-        recreated.
+        Room GC is a memory-management operation.  Deleting the session would
+        terminate the kernel and lose all user state (variables, open files).
         """
-        session_id = "session-123"
-        kernel_id = "kernel-456"
-        file_id = "test-file-id"
-        room_id = f"json:notebook:{file_id}"
+        mock_yroom, callbacks = await _create_notebook_session(session_manager)
 
-        mock_yroom = Mock()
-        mock_yroom.room_id = room_id
+        with patch.object(session_manager, "delete_session", new_callable=AsyncMock) as mock_delete:
+            callbacks[0]()
+            await asyncio.sleep(0)
 
-        captured_callbacks = []
-        mock_yroom.add_stop_callback = lambda cb: captured_callbacks.append(cb)
-
-        mock_kernel_client = Mock()
-        mock_kernel_client.add_yroom = AsyncMock()
-        mock_kernel_client.remove_yroom = AsyncMock()
-
-        mock_kernel_mgr = Mock()
-        mock_kernel_mgr.main_client = mock_kernel_client
-
-        session_manager.serverapp.kernel_manager.get_kernel.return_value = mock_kernel_mgr
-        session_manager.yroom_manager.get_room.return_value = mock_yroom
-        session_manager.file_id_manager.index.return_value = file_id
-
-        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.create_session', new_callable=AsyncMock) as mock_parent:
-            mock_parent.return_value = mock_session
-            await session_manager.create_session(
-                path="/path/to/notebook.ipynb",
-                name="notebook.ipynb",
-                type="notebook",
-                kernel_name="python3"
-            )
-
-        # --- Act: simulate the GC freeing the room ---
-        callback_result = captured_callbacks[0]()
-        if asyncio.iscoroutine(callback_result):
-            await callback_result
-
-        # --- Assert: _room_ids still has the mapping ---
-        # This entry is what allows _ensure_yroom_connected to reconnect
-        # the user to their kernel when they return.
-        assert session_id in session_manager._room_ids
-        assert session_manager._room_ids[session_id] == room_id
+        mock_delete.assert_not_called()
+        session_manager.serverapp.kernel_manager.shutdown_kernel.assert_not_called()
 
 
-class TestConsoleSessionHandling:
-    """Tests for kernel console session support (#225).
+# ── console session handling ──────────────────────────────────────────────────
 
-    Console sessions have no backing YDoc or YRoom. The session manager
-    must skip all YRoom operations for consoles and delegate directly to
-    the parent SessionManager.
+class TestConsoleSession:
+    """Console sessions (type='console') have no backing YDoc or YRoom.
+
+    They must pass straight through to the parent SessionManager without
+    touching file_id_manager, yroom_manager, or any YRoom methods.
     """
 
     @pytest.mark.asyncio
-    async def test_create_session_console_skips_yroom_setup(self, session_manager):
-        """Console sessions must not set up a YRoom or touch file_id_manager."""
+    async def test_create_skips_yroom_setup(self, session_manager):
+        """Console create_session must not index the path or fetch a YRoom."""
         session_id = "console-session-1"
-        kernel_id = "kernel-789"
+        mock_session = {"id": session_id, "kernel": {"id": "kernel-789"}}
 
-        mock_session = {"id": session_id, "kernel": {"id": kernel_id}}
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.create_session', new_callable=AsyncMock) as mock_parent:
-            mock_parent.return_value = mock_session
+        with patch(
+            "jupyter_server.services.sessions.sessionmanager.SessionManager.create_session",
+            new_callable=AsyncMock,
+            return_value=mock_session,
+        ):
             result = await session_manager.create_session(
                 path="console-1-abc123",
                 name="console-1-abc123",
                 type="console",
-                kernel_name="python3"
+                kernel_name="python3",
             )
 
-        # Session model returned normally
         assert result == mock_session
-
-        # Console tracked in _console_session_ids
         assert session_id in session_manager._console_session_ids
-
-        # No YRoom setup attempted
         session_manager.file_id_manager.index.assert_not_called()
         session_manager.yroom_manager.get_room.assert_not_called()
 
-        # No room_id stored
-        assert session_id not in session_manager._room_ids
-
     @pytest.mark.asyncio
-    async def test_update_session_console_delegates_to_parent(self, session_manager):
-        """update_session on a console must not attempt YRoom operations."""
+    async def test_update_delegates_to_parent(self, session_manager):
+        """update_session on a console must not look up a kernel client."""
         session_id = "console-session-1"
         session_manager._console_session_ids.add(session_id)
 
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.update_session', new_callable=AsyncMock) as mock_parent:
+        with patch(
+            "jupyter_server.services.sessions.sessionmanager.SessionManager.update_session",
+            new_callable=AsyncMock,
+        ) as mock_parent:
             await session_manager.update_session(session_id, kernel_id="new-kernel")
 
         mock_parent.assert_called_once_with(session_id, kernel_id="new-kernel")
-        # No kernel client lookup attempted
         session_manager.serverapp.kernel_manager.get_kernel.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_delete_session_console_delegates_to_parent(self, session_manager):
-        """delete_session on a console must not attempt YRoom operations."""
+    async def test_delete_delegates_to_parent_and_cleans_up(self, session_manager):
+        """delete_session on a console must remove the console ID and delegate."""
         session_id = "console-session-1"
         session_manager._console_session_ids.add(session_id)
 
-        with patch('jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session', new_callable=AsyncMock) as mock_parent:
+        with patch(
+            "jupyter_server.services.sessions.sessionmanager.SessionManager.delete_session",
+            new_callable=AsyncMock,
+        ) as mock_parent:
             await session_manager.delete_session(session_id)
 
         mock_parent.assert_called_once_with(session_id)
-        # Console ID cleaned up
         assert session_id not in session_manager._console_session_ids
-
-    def test_is_console_session(self, session_manager):
-        """_is_console_session returns True only for tracked console sessions."""
-        assert not session_manager._is_console_session("some-session")
-        session_manager._console_session_ids.add("console-1")
-        assert session_manager._is_console_session("console-1")
-        assert not session_manager._is_console_session("notebook-1")

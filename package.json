@@ -1,6 +1,6 @@
 {
     "name": "@jupyter-ai-contrib/server-documents",
-    "version": "0.2.4",
+    "version": "0.2.3",
     "description": "A JupyterLab extension that provides RTC capabilities.",
     "keywords": [
         "jupyter",
@@ -135,8 +135,7 @@
         "schemaDir": "schema",
         "disabledExtensions": [
             "@jupyterlab/codemirror-extension:binding",
-            "@jupyter/docprovider-extension",
-            "@jupyter/collaboration-extension:rtcGlobalAwareness"
+            "@jupyter/docprovider-extension"
         ],
         "sharedPackages": {
             "@jupyter/chat": {
