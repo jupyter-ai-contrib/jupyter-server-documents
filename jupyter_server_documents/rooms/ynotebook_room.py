@@ -345,45 +345,40 @@ class YNotebookRoom(YRoom):
 
     # ── Cell execution ────────────────────────────────────────────────────────────
 
-    async def execute_cell(
+    async def execute_cells(
         self,
-        cell_id: str,
+        cells: list,
         clear_outputs: bool = False,
-        source_hash: Optional[str] = None,
         request_id: Optional[str] = None,
         previous_request_id: Optional[str] = None,
     ) -> None:
-        """Enqueue a cell for execution and return immediately (fire-and-forget).
+        """Enqueue a batch of cells atomically and return immediately.
 
-        Marks the cell as 'running' in the YDoc so the UI shows [*] right away.
-        The actual execution happens in the background worker; outputs appear
-        via YDoc sync as the kernel produces them.
+        All cells are verified (hash check) and enqueued before this method
+        returns, so no other request can interleave with the batch.  This
+        makes "Run All" safe against concurrent single-cell requests from
+        other users — see davidbrochart's comment in PR #248.
 
         Args:
-            source_hash: Optional SHA-256 hex of the cell source at request
-                time.  If provided and the current YDoc source hashes to a
-                different value, SourceMismatchError is raised before any
-                execution takes place.
+            cells: List of dicts with keys:
+                - ``cell_id`` (str, required) — Yjs cell ID
+                - ``source_hash`` (str | None, optional) — SHA-256 hex of
+                  the cell's source at request time.  Returns 409 for the
+                  first cell whose source has diverged; no cells are enqueued.
 
-            request_id: Optional UUID for this request.  After enqueuing, an
-                event is stored under this ID so a subsequent request can
-                chain off it via previous_request_id.
+            request_id: UUID for this batch.  Set after all cells are enqueued
+                so a chained successor waits for the whole batch, not just the
+                first cell.
 
-            previous_request_id: Optional UUID of a preceding request.  This
-                method waits until that request has been enqueued before
-                enqueuing the current one, guaranteeing FIFO order despite
-                network jitter between rapid execute calls.
+            previous_request_id: Wait for this predecessor batch to be fully
+                enqueued before enqueuing any cell in this batch.
         """
         if self._kernel_client is None:
             raise RuntimeError("YNotebookRoom is not connected to a kernel")
         if self._execution_queue is None:
             raise RuntimeError("YNotebookRoom execution worker is not running")
 
-        # Wait for the predecessor to be enqueued first.
-        # If the predecessor hasn't registered its event yet (B arrived before
-        # A due to network jitter), create an unset event now and wait for A
-        # to set it when it enqueues.  asyncio is single-threaded so the
-        # check-and-set is safe without a lock.
+        # Wait for predecessor batch to finish enqueuing.
         if previous_request_id:
             if previous_request_id not in self._enqueued_events:
                 self._enqueued_events[previous_request_id] = asyncio.Event()
@@ -391,40 +386,41 @@ class YNotebookRoom(YRoom):
             try:
                 await asyncio.wait_for(event.wait(), timeout=_PREDECESSOR_TIMEOUT)
             except asyncio.TimeoutError:
-                # Delete the orphan entry so it doesn't linger until disconnect.
                 self._enqueued_events.pop(previous_request_id, None)
                 raise PredecessorTimeoutError()
-            # Predecessor consumed — delete its entry.  Each request_id is
-            # referenced by exactly one successor in the chain, so once we've
-            # waited on it nobody else needs it.
             self._enqueued_events.pop(previous_request_id, None)
 
         ydoc = await self.get_jupyter_ydoc()
-        ycell = self._find_kernel_cell(ydoc, cell_id)
-
-        # Verify the source hasn't changed since the user pressed Run.
-        if source_hash is not None:
-            current_source = str(ycell.get("source", ""))
-            if _source_hash(current_source) != source_hash:
-                raise SourceMismatchError(cell_id)
-
         file_id = self.room_id.split(":", 2)[2]
-        if clear_outputs:
-            del ycell["outputs"][:]
-        ycell["execution_state"] = "running"
 
-        item = _ExecutionItem(
-            cell_id=cell_id,
-            ycell=ycell,
-            file_id=file_id,
-            clear_outputs=clear_outputs,
-        )
-        await self._execution_queue.put(item)
+        # Resolve and verify ALL cells before touching any state, so a hash
+        # mismatch leaves the notebook completely unchanged.
+        items = []
+        for entry in cells:
+            cell_id = entry.get("cell_id") or entry  # accept plain string too
+            if not isinstance(cell_id, str):
+                raise ValueError(f"Each cell entry must have a cell_id string, got {entry!r}")
+            source_hash = entry.get("source_hash") if isinstance(entry, dict) else None
+            ycell = self._find_kernel_cell(ydoc, cell_id)
+            if source_hash is not None:
+                current_source = str(ycell.get("source", ""))
+                if _source_hash(current_source) != source_hash:
+                    raise SourceMismatchError(cell_id)
+            items.append((cell_id, ycell))
 
-        # Signal that this request has been enqueued so any successor that
-        # named us as previous_request_id can proceed.  If B already created
-        # an unset event for our request_id (because B arrived first), set it;
-        # otherwise create and store a pre-set event for future successors.
+        # All checks passed — mark running and enqueue atomically.
+        for cell_id, ycell in items:
+            if clear_outputs:
+                del ycell["outputs"][:]
+            ycell["execution_state"] = "running"
+            await self._execution_queue.put(_ExecutionItem(
+                cell_id=cell_id,
+                ycell=ycell,
+                file_id=file_id,
+                clear_outputs=clear_outputs,
+            ))
+
+        # Signal that the whole batch has been enqueued.
         if request_id is not None:
             existing = self._enqueued_events.get(request_id)
             if existing is not None:
@@ -433,6 +429,22 @@ class YNotebookRoom(YRoom):
                 done = asyncio.Event()
                 done.set()
                 self._enqueued_events[request_id] = done
+
+    async def execute_cell(
+        self,
+        cell_id: str,
+        clear_outputs: bool = False,
+        source_hash: Optional[str] = None,
+        request_id: Optional[str] = None,
+        previous_request_id: Optional[str] = None,
+    ) -> None:
+        """Convenience wrapper: enqueue a single cell via execute_cells()."""
+        await self.execute_cells(
+            [{"cell_id": cell_id, "source_hash": source_hash}],
+            clear_outputs=clear_outputs,
+            request_id=request_id,
+            previous_request_id=previous_request_id,
+        )
 
     def _find_kernel_cell(self, ydoc, cell_id: str):
         """Find a code cell by id. Raises LookupError if not found, ValueError if not code."""

@@ -153,9 +153,11 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
           const previousRequestId = lastRequestIdByDoc.get(docKey);
           lastRequestIdByDoc.set(docKey, requestId);
 
-          const basePayload = documentId
-            ? { document_id: documentId }
-            : { path };
+          if (!documentId) {
+            // document_id not yet in shared model state — fall back to path.
+            // The server resolves it via file_id_manager.
+            console.warn('[JSD] document_id not set; falling back to path');
+          }
 
           onCellExecutionScheduled({ cell });
           try {
@@ -164,9 +166,8 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               {
                 method: 'POST',
                 body: JSON.stringify({
-                  ...basePayload,
-                  cell_id: cellId,
-                  source_hash: sourceHash,
+                  document_id: documentId ?? path,
+                  cells: [{ cell_id: cellId, source_hash: sourceHash }],
                   client_id: clientId || undefined,
                   request_id: requestId,
                   ...(previousRequestId

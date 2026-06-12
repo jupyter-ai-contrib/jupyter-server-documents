@@ -17,45 +17,59 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
     """
     POST /api/kernels/{kernel_id}/execute
 
-    Jupyverse-compatible server-side execution endpoint.
+    Server-side cell execution endpoint.
 
-    Request body:
-      cell_id              string   required — Yjs cell ID
-      document_id          string   required (or path)
-      path                 string   required (or document_id)
-      source_hash          string   optional — SHA-256 hex of source at
-                                    request time; server returns 409 if
-                                    the YDoc source has diverged
-      request_id           string   optional — UUID for this request so
-                                    the next call can chain off it
-      previous_request_id  string   optional — UUID of the preceding
-                                    request; server waits until that
-                                    request has been enqueued before
-                                    enqueuing this one (FIFO guarantee)
+    ## Request body
 
-    Responses:
-      200 null   — accepted (fire-and-forget)
-      400        — bad request
-      408        — predecessor timeout
-      409        — source mismatch {"error": "source_mismatch", "cell_id": "..."}
+    ```json
+    {
+      "document_id": "string",   // required — Yjs room name
+      "cells": [                 // required — cells to execute in order
+        {
+          "cell_id":     "string",  // required — Yjs cell ID
+          "source_hash": "string"   // optional — SHA-256 hex of cell source
+        }
+      ],
+
+      // Execution ordering (optional)
+      "client_id":          "string",  // doc.clientID from @jupyter/ydoc
+      "request_id":         "string",  // UUID for this request
+      "previous_request_id":"string"   // wait for this request to be enqueued first
+    }
+    ```
+
+    All cells in ``cells`` are verified (hash check) and enqueued atomically
+    before the response is sent, so no other request can interleave with the
+    batch.  This makes "Run All" and "Restart and Run All" safe regardless of
+    network timing.
+
+    The ``source_hash`` per cell is a SHA-256 hex of the cell source at the
+    time the user pressed Run.  The server returns 409 if the YDoc source has
+    diverged (another user edited the cell after the request was sent).
+
+    ## Responses
+    - ``200 null``  — accepted (fire-and-forget)
+    - ``400``       — bad request
+    - ``408``       — predecessor request timed out
+    - ``409 {"error": "source_mismatch", "cell_id": "..."}`` — source diverged
     """
 
     @web.authenticated
     @authorized
     async def post(self, kernel_id: str):
         body = self.get_json_body() or {}
-        cell_id = body.get("cell_id")
         document_id = body.get("document_id")
-        path = body.get("path")
 
-        if not cell_id:
-            raise web.HTTPError(400, "cell_id is required")
-        if not document_id and not path:
-            raise web.HTTPError(400, "document_id or path is required")
+        if not document_id:
+            raise web.HTTPError(400, "document_id is required")
 
-        if path:
-            file_id = self.settings["file_id_manager"].index(path)
-            document_id = f"json:notebook:{file_id}"
+        cells_payload = body.get("cells")
+        if not cells_payload or not isinstance(cells_payload, list):
+            raise web.HTTPError(400, "cells must be a non-empty list of {cell_id, source_hash?}")
+
+        client_id = body.get("client_id")
+        request_id = body.get("request_id")
+        previous_request_id = body.get("previous_request_id")
 
         yroom = self.settings["yroom_manager"].get_room(document_id)
         if yroom is None:
@@ -63,21 +77,10 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
         if not isinstance(yroom, YNotebookRoom):
             raise web.HTTPError(400, f"Room {document_id!r} is not a notebook room")
 
-        source_hash = body.get("source_hash")
-        client_id = body.get("client_id")   # Yjs awareness clientID — used for attribution
-        request_id = body.get("request_id")
-        previous_request_id = body.get("previous_request_id")
-        # NOTE: ordering is per-client (docKey = document:client_id on the frontend)
-        # so two users' chains don't block each other.  A remaining gap is "Run All":
-        # today it sends N chained single-cell requests, so another user's single
-        # cell can slip between them.  A future `cells: []` batch payload would
-        # make "Run All" truly atomic.  See davidbrochart's comment in PR #248.
-
         try:
-            await yroom.execute_cell(
-                cell_id,
+            await yroom.execute_cells(
+                cells_payload,
                 clear_outputs=True,
-                source_hash=source_hash,
                 request_id=request_id,
                 previous_request_id=previous_request_id,
             )
