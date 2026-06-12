@@ -4,6 +4,7 @@
 |----------------------------------------------------------------------------*/
 
 import { IDocumentProvider } from '@jupyter/collaborative-drive';
+import { IForkProvider } from '@jupyter/docprovider';
 import { showErrorMessage, Dialog } from '@jupyterlab/apputils';
 import { User } from '@jupyterlab/services';
 import { TranslationBundle } from '@jupyterlab/translation';
@@ -30,7 +31,7 @@ import { Widget } from '@lumino/widgets';
  *
  */
 
-export class WebSocketProvider implements IDocumentProvider {
+export class WebSocketProvider implements IDocumentProvider, IForkProvider {
   /**
    * Maximum number of reconnect attempts before showing the retry dialog.
    */
@@ -152,6 +153,19 @@ export class WebSocketProvider implements IDocumentProvider {
   async reconnect(): Promise<void> {
     this._disconnect();
     this._connect();
+  }
+
+  async connectToForkDoc(
+    _forkRoomId: string,
+    _sessionId: string
+  ): Promise<void> {
+    throw new Error(
+      'NotImplementedError: Jupyter Server Documents does not yet support document forks.'
+    );
+  }
+
+  async save(): Promise<void> {
+    // No-op: saving is handled server-side.
   }
 
   /**

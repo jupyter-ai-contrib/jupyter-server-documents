@@ -7,14 +7,10 @@ import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
 import { Notification } from '@jupyterlab/apputils';
+import { AwarenessExecutionIndicator } from './executionindicator';
+import { jsdDocumentProviderFactory } from './docprovider';
+import { AwarenessKernelStatus } from './kernelstatus';
 import { disableSavePlugin } from './disablesave';
-import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
-import {
-  rtcContentProvider,
-  ynotebook,
-  ychat,
-  rtcGlobalAwarenessPlugin
-} from './docprovider';
 import { outputsServicePlugin } from './outputs';
 import { murmur2 } from './murmur2';
 
@@ -55,6 +51,7 @@ export const plugin: JupyterFrontEndPlugin<void> = {
 
 /**
  * Notebook cell executor plugin.
+
  *
  * When serverSideExecution is enabled (set by the Python extension), runs
  * cells via POST /api/kernels/{id}/execute so outputs route through the
@@ -212,18 +209,12 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
+  executionIndicator,
+  kernelStatus,
   serverCellExecutorPlugin,
   disableSavePlugin,
-  codemirrorYjsPlugin,
-  // Provide our own collaborative content provider so notebooks connect to
-  // our YRoom WebSocket directly, without requiring jupyter-collaboration's
-  // Python server extension or its contentProviderRegistry machinery.
-  rtcContentProvider,
-  ynotebook,
-  ychat,
-  // Override jupyter-collaboration's global awareness to ensure it connects
-  // to our own backend. See #249 and dlqqq's review comment on #248.
-  rtcGlobalAwarenessPlugin,
+  jsdDocumentProviderFactory,
+  // not enabled by default
   outputsServicePlugin
 ];
 

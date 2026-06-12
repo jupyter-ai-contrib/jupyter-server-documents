@@ -690,34 +690,6 @@ class YRoomFileAPI(LoggingConfigurable):
         """
         return self._stopped
 
-    def restart(self) -> None:
-        """Restart the FileAPI by resetting internal state.
-
-        This method stops the FileAPI if running, then clears all state
-        including content loading status, save scheduling, file metadata,
-        and adaptive timing. After calling this, consumers must call
-        load_content_into() again to resume normal operation.
-
-        Note:
-            Any pending saves are discarded when restarting.
-        """
-        # Stop if not stopped already
-        if not self.stopped:
-            self.stop()
-
-        # Reset instance attributes
-        self._stopped = False
-        self._content_load_event = asyncio.Event()
-        self._content_loading = False
-        self._save_scheduled = False
-        self._last_modified = None
-        self._last_path = None
-
-        # Reset adaptive timing attributes
-        self._adaptive_poll_interval = self.min_poll_interval
-
-        self.log.info(f"Restarted FileAPI for room '{self.room_id}'.")
-
 
 
 # File types that can be saved via ContentsManager
