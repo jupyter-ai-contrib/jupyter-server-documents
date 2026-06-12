@@ -26,27 +26,9 @@ import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { AwarenessExecutionIndicator } from './executionindicator';
 
-import {
-  rtcContentProvider,
-  yfile,
-  ynotebook,
-  ychat,
-  logger
-} from './docprovider';
+import { jsdDocumentProviderFactory } from './docprovider';
 
-import { IStateDB, StateDB } from '@jupyterlab/statedb';
-import { IGlobalAwareness } from '@jupyter/collaborative-drive';
-import * as Y from 'yjs';
-import { Awareness } from 'y-protocols/awareness';
-import { IAwareness } from '@jupyter/ydoc';
-
-import { ServerConnection } from '@jupyterlab/services';
-import { WebSocketAwarenessProvider } from './docprovider/awareness';
-import { URLExt } from '@jupyterlab/coreutils';
 import { AwarenessKernelStatus } from './kernelstatus';
-
-import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
-import { notebookFactoryPlugin } from './notebook-factory';
 import { disableSavePlugin } from './disablesave';
 import { outputsServicePlugin } from './outputs';
 
@@ -85,51 +67,10 @@ export const plugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
-/**
- * Jupyter plugin creating a global awareness for RTC.
- */
-export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
-  id: '@jupyter-ai-contrib/server-documents:rtc-global-awareness',
-  description: 'Add global awareness to share working document of users.',
-  requires: [IStateDB],
-  provides: IGlobalAwareness,
-  activate: (app: JupyterFrontEnd, state: StateDB): IAwareness => {
-    const { user } = app.serviceManager;
-
-    const ydoc = new Y.Doc();
-    const awareness = new Awareness(ydoc);
-
-    // TODO: Uncomment once global awareness is working
-    const server = ServerConnection.makeSettings();
-    const url = URLExt.join(server.wsUrl, 'api/collaboration/room');
-
-    new WebSocketAwarenessProvider({
-      url: url,
-      roomID: 'JupyterLab:globalAwareness',
-      awareness: awareness,
-      user: user
-    });
-
-    state.changed.connect(async () => {
-      const data: any = await state.toJSON();
-      const current: string = data['layout-restorer:data']?.main?.current || '';
-
-      // For example matches `notebook:Untitled.ipynb` or `editor:untitled.txt`,
-      // but not when in launcher or terminal.
-      if (current.match(/^\w+:.+/)) {
-        awareness.setLocalStateField('current', current);
-      } else {
-        awareness.setLocalStateField('current', null);
-      }
-    });
-
-    return awareness;
-  }
-};
-
-class AwarenessExecutionIndicatorIcon
-  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel>
-{
+class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
+  NotebookPanel,
+  INotebookModel
+> {
   createNew(panel: NotebookPanel): IDisposable {
     const item = new AwarenessExecutionIndicator();
     const nb = panel.content;
@@ -303,19 +244,12 @@ export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
   };
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
-  rtcContentProvider,
-  yfile,
-  ynotebook,
-  logger,
-  rtcGlobalAwarenessPlugin,
   plugin,
   executionIndicator,
   kernelStatus,
-  notebookFactoryPlugin,
-  codemirrorYjsPlugin,
   backupCellExecutorPlugin,
   disableSavePlugin,
-  ychat,
+  jsdDocumentProviderFactory,
   // not enabled by default
   outputsServicePlugin
 ];
