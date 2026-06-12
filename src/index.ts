@@ -49,9 +49,22 @@ export const plugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
+
+class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
+  NotebookPanel,
+  INotebookModel
+> {
+  createNew(panel: NotebookPanel): IDisposable {
+    const item = new AwarenessExecutionIndicator();
+    const nb = panel.content;
+    item.model.attachNotebook({ content: nb });
+    panel.toolbar.insertAfter('kernelName', 'awarenessExecutionProgress', item);
+    return item;
+  }
+}
+
 /**
  * Notebook cell executor plugin.
-
  *
  * When serverSideExecution is enabled (set by the Python extension), runs
  * cells via POST /api/kernels/{id}/execute so outputs route through the
