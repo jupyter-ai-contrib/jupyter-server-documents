@@ -50,7 +50,12 @@ class YRoomWebsocket(WebSocketHandler):
         # Verify the file ID contained in the room ID points to a valid file.
         if self.room_id != "JupyterLab:globalAwareness":
             fileid = self.room_id.split(":")[-1]
-            path = self.fileid_manager.get_path(fileid)
+            try:
+                path = self.fileid_manager.get_path(fileid)
+            except Exception as e:
+                self.log.error("WS prepare: fileid_manager.get_path failed for fileid=%r: %s", fileid, e)
+                raise HTTPError(500, f"file_id_manager error: {e}")
+            self.log.debug("WS prepare: room_id=%r fileid=%r path=%r", self.room_id, fileid, path)
             if not path:
                 raise HTTPError(404, f"No file with ID '{fileid}'.")
     

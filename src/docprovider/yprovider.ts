@@ -192,10 +192,12 @@ export class WebSocketProvider implements IDocumentProvider {
       return;
     }
 
-    // Otherwise, initialize the `YWebsocketProvider` to connect
+    const roomName = `${this._format}:${this._contentType}:${this._fileId}`;
+
+    // Initialize the `YWebsocketProvider` to connect
     this._yWebsocketProvider = new YWebsocketProvider(
       this._serverUrl,
-      `${this._format}:${this._contentType}:${this._fileId}`,
+      roomName,
       this._sharedModel.ydoc,
       {
         disableBc: true,
@@ -396,6 +398,12 @@ export class WebSocketProvider implements IDocumentProvider {
     if (isSynced) {
       if (this._yWebsocketProvider) {
         this._yWebsocketProvider.off('sync', this._onSync);
+      }
+      // Store document_id AFTER sync so it doesn't create a pre-sync Y.js
+      // operation that causes a divergent-history false-positive on the server.
+      const roomName = this._yWebsocketProvider?.roomname;
+      if (roomName) {
+        this._sharedModel.setState('document_id', roomName);
       }
       this._ready.resolve();
     }

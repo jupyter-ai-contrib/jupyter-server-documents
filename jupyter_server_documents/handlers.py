@@ -6,15 +6,15 @@ from tornado.escape import json_encode
 
 from jupyter_server_fileid.manager import BaseFileIdManager
 
-# TODO: This handler belongs in Jupyter Server FileID. 
+# TODO: This handler belongs in Jupyter Server FileID.
 # Putting it here for now so we don't have to wait for upstream releases.
-class FileIDIndexHandler(APIHandler): 
+class FileIDIndexHandler(APIHandler):
     auth_resource = "contents"
 
     @property
     def file_id_manager(self) -> BaseFileIdManager:
         return self.settings.get("file_id_manager")
-    
+
     @web.authenticated
     @authorized
     def post(self):

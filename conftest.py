@@ -45,7 +45,10 @@ def jp_server_config(jp_server_config, tmp_path):
             },
             "root_dir": str(tmp_path)
         },
-        "ContentsManager": {"root_dir": str(tmp_path)}
+        "ContentsManager": {"root_dir": str(tmp_path)},
+        # Keep the file ID database inside tmp_path so CI runners that restrict
+        # writes to the home directory don't fail with OperationalError.
+        "ArbitraryFileIdManager": {"db_path": str(tmp_path / "file_id_manager.db")}
     })
 
 class MockServerDocsApp(LoggingConfigurable):

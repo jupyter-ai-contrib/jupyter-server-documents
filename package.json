@@ -135,8 +135,7 @@
         "schemaDir": "schema",
         "disabledExtensions": [
             "@jupyterlab/codemirror-extension:binding",
-            "@jupyter/docprovider-extension",
-            "@jupyter/collaboration-extension:rtcGlobalAwareness"
+            "@jupyter/docprovider-extension"
         ],
         "sharedPackages": {
             "@jupyter/chat": {
