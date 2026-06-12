@@ -67,9 +67,10 @@ export const plugin: JupyterFrontEndPlugin<void> = {
   }
 };
 
-class AwarenessExecutionIndicatorIcon
-  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel>
-{
+class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
+  NotebookPanel,
+  INotebookModel
+> {
   createNew(panel: NotebookPanel): IDisposable {
     const item = new AwarenessExecutionIndicator();
     const nb = panel.content;
