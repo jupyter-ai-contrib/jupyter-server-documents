@@ -41,8 +41,8 @@ NOTEBOOK_CONTENT = json.dumps({
 # ── HTTP contract tests ────────────────────────────────────────────────────────
 
 
-async def test_missing_cell_id_returns_400(jp_fetch):
-    """POST without cell_id must return 400."""
+async def test_missing_cells_returns_400(jp_fetch):
+    """POST without cells must return 400."""
     with pytest.raises(HTTPClientError) as exc_info:
         await jp_fetch(
             "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
@@ -59,7 +59,7 @@ async def test_missing_document_id_returns_400(jp_fetch):
         await jp_fetch(
             "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
             method="POST",
-            body=json.dumps({"cell_id": CELL_ID}),
+            body=json.dumps({"cells": [{"cell_id": CELL_ID}]}),
             headers={"Content-Type": "application/json"},
         )
     assert exc_info.value.code == 400
@@ -72,8 +72,8 @@ async def test_unknown_document_id_returns_400(jp_fetch):
             "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
             method="POST",
             body=json.dumps({
-                "cell_id": CELL_ID,
                 "document_id": "json:notebook:does-not-exist",
+                "cells": [{"cell_id": CELL_ID}],
             }),
             headers={"Content-Type": "application/json"},
         )
@@ -138,7 +138,7 @@ async def test_full_execution_via_jupyverse_endpoint(jp_fetch, jp_serverapp, tmp
     r = await jp_fetch(
         "api", "kernels", kernel_id, "execute",
         method="POST",
-        body=json.dumps({"cell_id": CELL_ID, "document_id": document_id}),
+        body=json.dumps({"document_id": document_id, "cells": [{"cell_id": CELL_ID}]}),
         headers={"Content-Type": "application/json"},
     )
     assert r.code == 200
