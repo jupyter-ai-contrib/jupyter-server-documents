@@ -108,6 +108,9 @@
         "typescript": "~5.0.2",
         "yjs": "^13.5.0"
     },
+    "resolutions": {
+        "webpack": "~5.106.0"
+    },
     "sideEffects": [
         "style/*.css",
         "style/index.js"
