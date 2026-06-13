@@ -668,11 +668,9 @@ class YRoom(LoggingConfigurable):
         3. Awaits the client's SyncStep2 reply (up to 5s timeout),
         4. Applies the client's SyncStep2 reply.
 
-        If the client has divergent history (stale client from a previous
-        session), the server clears the YDoc source before the handshake,
-        suppresses broadcasts and saves, then restores the source after the
-        handshake completes. This prevents content duplication caused by merging
-        two YDocs with the same content but different CRDT histories.
+        Content duplication from divergent clients (stale clients reconnecting
+        after YRoom GC) is handled client-side: the frontend clears its YDoc
+        on a staging copy before applying SS2, producing a zero-diff net update.
         """
         # Mark client as desynced
         self.clients.mark_desynced(client_id)
@@ -684,32 +682,6 @@ class YRoom(LoggingConfigurable):
         # which triggers a pycrdt offset encoding bug (#197) where
         # incremental Text updates after multi-byte characters crash JS yjs.
         pre_sync_sv = self._ydoc.get_state()
-
-        # Check if client has divergent history
-        ss1_payload = ss1_message[1:]
-        divergent = self._has_divergent_history(ss1_payload, pre_sync_sv)
-
-        # If divergent, pause update broadcasts and file saves then clear the
-        # YDoc source to prevent content duplication.
-        saved_source = None
-        if divergent and self._jupyter_ydoc is not None:
-            self.log.warning(
-                "Client '%s' has divergent history in room '%s'. Clearing YDoc source before handshake.",
-                client_id,
-                self.room_id
-            )
-            self.update_channel.pause()
-            if self.file_api is not None:
-                self.file_api._reloading_content = True
-            # reset JupyterYDoc source
-            saved_source = self._jupyter_ydoc.source
-            _, file_type, _ = self.room_id.split(":")
-            JupyterYDocClass = cast(
-                type[YBaseDoc],
-                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
-            )
-            empty_jupyter_ydoc = JupyterYDocClass()
-            self._jupyter_ydoc.source = empty_jupyter_ydoc.source
 
         # Initialize future that resolves when an SS2 reply is received.
         loop = asyncio.get_running_loop()
@@ -736,15 +708,8 @@ class YRoom(LoggingConfigurable):
             self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
             handshake_failed = True
 
-        # Restore the YDoc source, flush the update_channel with a batched
-        # catchup diff, and resume saving, regardless of whether the handshake
-        # succeeded.
-        if saved_source is not None and self._jupyter_ydoc is not None:
-            self._jupyter_ydoc.source = saved_source
-            self.log.info("Restored YDoc source.")
+        # Flush the update_channel with a batched catchup diff.
         self.update_channel.resume(pre_sync_sv=pre_sync_sv)
-        if self.file_api is not None:
-            self.file_api._reloading_content = False
         
         # Clear instance state
         self._pending_ss2_future = None
