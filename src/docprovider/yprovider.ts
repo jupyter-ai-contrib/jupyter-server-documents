@@ -14,6 +14,10 @@ import { Notification } from '@jupyterlab/apputils';
 import { DocumentChange, YDocument } from '@jupyter/ydoc';
 
 import { Awareness } from 'y-protocols/awareness';
+import * as syncProtocol from 'y-protocols/sync';
+import * as Y from 'yjs';
+import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
 import { JupyterFrontEnd } from '@jupyterlab/application';
@@ -203,6 +207,81 @@ export class WebSocketProvider implements IDocumentProvider {
         awareness: this.awareness
       }
     );
+
+    // Override the sync message handler to prevent content duplication when
+    // reconnecting to a server that recreated its YRoom (divergent CRDT
+    // history). Before applying SS2, we clear the YDoc on a staging copy and
+    // compute the net diff — which is zero when content is unchanged. This
+    // avoids cell widget destruction and scroll position resets.
+    const messageSync = 0;
+    this._yWebsocketProvider.messageHandlers[messageSync] = (
+      encoder: encoding.Encoder,
+      decoder: decoding.Decoder,
+      provider: any,
+      emitSynced: boolean,
+      _messageType: number
+    ) => {
+      encoding.writeVarUint(encoder, messageSync);
+      const subType = decoding.readVarUint(decoder);
+
+      if (subType === syncProtocol.messageYjsSyncStep2) {
+        const serverUpdate = decoding.readVarUint8Array(decoder);
+
+        // 1. Store original state vector of the real doc
+        const originalSV = Y.encodeStateVector(provider.doc);
+
+        // 2. Create staging doc and copy current state into it
+        const stagingDoc = new Y.Doc();
+        Y.applyUpdate(stagingDoc, Y.encodeStateAsUpdate(provider.doc));
+
+        // 3. Explicitly access shared types on staging (applyUpdate does not
+        //    populate doc.share)
+        for (const [key, type] of provider.doc.share) {
+          if (type instanceof Y.Text) {
+            stagingDoc.getText(key);
+          } else if (type instanceof Y.Array) {
+            stagingDoc.getArray(key);
+          } else if (type instanceof Y.Map) {
+            stagingDoc.getMap(key);
+          }
+        }
+
+        // 4. Clear everything in staging
+        stagingDoc.transact(() => {
+          for (const [, type] of stagingDoc.share) {
+            if (type instanceof Y.Text) {
+              type.delete(0, type.length);
+            } else if (type instanceof Y.Array) {
+              type.delete(0, type.length);
+            } else if (type instanceof Y.Map) {
+              for (const key of Array.from(type.keys())) {
+                type.delete(key);
+              }
+            }
+          }
+        });
+
+        // 5. Apply SS2 (server state) to staging
+        Y.applyUpdate(stagingDoc, serverUpdate);
+
+        // 6. Compute net diff from original state to staging's final state
+        const netUpdate = Y.encodeStateAsUpdate(stagingDoc, originalSV);
+
+        // 7. Apply the single net update to the real doc
+        Y.applyUpdate(provider.doc, netUpdate);
+
+        // Cleanup
+        stagingDoc.destroy();
+
+        if (emitSynced && !provider.synced) {
+          provider.synced = true;
+        }
+      } else if (subType === syncProtocol.messageYjsSyncStep1) {
+        syncProtocol.readSyncStep1(decoder, encoder, provider.doc);
+      } else if (subType === syncProtocol.messageYjsUpdate) {
+        syncProtocol.readUpdate(decoder, provider.doc, provider);
+      }
+    };
 
     this._yWebsocketProvider.on('sync', this._onSync);
     this._yWebsocketProvider.on('connection-close', this._onConnectionClosed);
