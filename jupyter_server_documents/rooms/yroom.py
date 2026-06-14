@@ -638,26 +638,6 @@ class YRoom(LoggingConfigurable):
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
             self.handle_sync_update(client_id, message)
 
-    @staticmethod
-    def _decode_state_vector(sv: bytes) -> dict[int, int]:
-        d = pycrdt.Decoder(sv)
-        return {d.read_var_uint(): d.read_var_uint() for _ in range(d.read_var_uint())}
-
-    def _has_divergent_history(self, message_payload: bytes, server_sv_bytes: bytes) -> bool:
-        """Returns True if the client's state vector contains client IDs
-        unknown to the server, indicating a stale client from a previous
-        session."""
-        d = pycrdt.Decoder(message_payload)
-        d.read_var_uint()  # skip subtype
-        sv_bytes = d.read_message()
-        if sv_bytes is None:
-            return False
-        client_sv = self._decode_state_vector(sv_bytes)
-        if not client_sv:
-            return False
-        server_sv = self._decode_state_vector(server_sv_bytes)
-        return bool(set(client_sv) - set(server_sv))
-
     async def handle_sync(self, client_id: str, ss1_message: bytes) -> None:
         """
         Handles the bidirectional sync handshake initiated upon receiving a
@@ -667,12 +647,6 @@ class YRoom(LoggingConfigurable):
         2. Sends a SyncStep1 message requesting client side updates,
         3. Awaits the client's SyncStep2 reply (up to 5s timeout),
         4. Applies the client's SyncStep2 reply.
-
-        If the client has divergent history (stale client from a previous
-        session), the server clears the YDoc source before the handshake,
-        suppresses broadcasts and saves, then restores the source after the
-        handshake completes. This prevents content duplication caused by merging
-        two YDocs with the same content but different CRDT histories.
         """
         # Mark client as desynced
         self.clients.mark_desynced(client_id)
@@ -684,32 +658,6 @@ class YRoom(LoggingConfigurable):
         # which triggers a pycrdt offset encoding bug (#197) where
         # incremental Text updates after multi-byte characters crash JS yjs.
         pre_sync_sv = self._ydoc.get_state()
-
-        # Check if client has divergent history
-        ss1_payload = ss1_message[1:]
-        divergent = self._has_divergent_history(ss1_payload, pre_sync_sv)
-
-        # If divergent, pause update broadcasts and file saves then clear the
-        # YDoc source to prevent content duplication.
-        saved_source = None
-        if divergent and self._jupyter_ydoc is not None:
-            self.log.warning(
-                "Client '%s' has divergent history in room '%s'. Clearing YDoc source before handshake.",
-                client_id,
-                self.room_id
-            )
-            self.update_channel.pause()
-            if self.file_api is not None:
-                self.file_api._reloading_content = True
-            # reset JupyterYDoc source
-            saved_source = self._jupyter_ydoc.source
-            _, file_type, _ = self.room_id.split(":")
-            JupyterYDocClass = cast(
-                type[YBaseDoc],
-                jupyter_ydoc_classes.get(file_type, jupyter_ydoc_classes["file"])
-            )
-            empty_jupyter_ydoc = JupyterYDocClass()
-            self._jupyter_ydoc.source = empty_jupyter_ydoc.source
 
         # Initialize future that resolves when an SS2 reply is received.
         loop = asyncio.get_running_loop()
@@ -736,16 +684,9 @@ class YRoom(LoggingConfigurable):
             self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
             handshake_failed = True
 
-        # Restore the YDoc source, flush the update_channel with a batched
-        # catchup diff, and resume saving, regardless of whether the handshake
-        # succeeded.
-        if saved_source is not None and self._jupyter_ydoc is not None:
-            self._jupyter_ydoc.source = saved_source
-            self.log.info("Restored YDoc source.")
+        # Flush the update_channel with a batched catchup diff.
         self.update_channel.resume(pre_sync_sv=pre_sync_sv)
-        if self.file_api is not None:
-            self.file_api._reloading_content = False
-        
+
         # Clear instance state
         self._pending_ss2_future = None
         self._pending_ss2_client_id = None

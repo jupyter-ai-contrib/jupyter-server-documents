@@ -605,6 +605,11 @@ class YRoomFileAPI(LoggingConfigurable):
         start_time = time.perf_counter()
 
         try:
+            # Return immediately if a content reload is in progress to prevent
+            # writing empty/intermediate content to disk.
+            if self._reloading_content:
+                return
+
             # Return immediately if the content manager has marked this file as non-writable
             if not self._is_writable:
                 return

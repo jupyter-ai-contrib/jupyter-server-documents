@@ -5,11 +5,9 @@ These tests use a FakeWebSocket client that simulates the client side of the
 Yjs sync protocol against a real YRoom instance. They verify:
 
 1. Normal sync handshake completes successfully.
-2. Divergent client detection works correctly.
-3. Divergent client handshake resolves content duplication.
-4. Timeout fires if client never sends SS2.
-5. Update buffer pauses/resumes correctly during divergent handshake.
-6. No data loss when mutations occur during the sync handshake.
+2. Divergent clients complete handshake without data loss.
+3. Timeout fires if client never sends SS2.
+4. Multiple clients sync without data loss.
 """
 
 from __future__ import annotations
@@ -135,25 +133,16 @@ class TestNormalSync:
 
 
 class TestDivergentSync:
-    """Tests for divergent client sync (content deduplication)."""
+    """Tests for divergent client sync behavior.
+
+    Note: With the server-side source clearing removed (to prevent data loss),
+    divergent clients will cause content duplication. These tests verify the
+    handshake still completes and no data loss occurs.
+    """
 
     @pytest.mark.asyncio
-    async def test_divergent_client_detected(self, make_yroom: MakeYRoom):
-        """A client with unknown client IDs should be detected as divergent."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        # Client has same content but different CRDT history
-        ws = FakeWebSocket()
-        ws.doc["source"] += "hello world"
-
-        ss1 = ws.build_ss1()
-        assert yroom._has_divergent_history(ss1[1:], yroom._ydoc.get_state())
-
-    @pytest.mark.asyncio
-    async def test_divergent_client_no_duplication(self, make_yroom: MakeYRoom):
-        """After a divergent handshake, content should not be duplicated."""
+    async def test_divergent_client_completes_handshake(self, make_yroom: MakeYRoom):
+        """A divergent client should complete the handshake without error."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
         jupyter_ydoc.source = "hello world"
@@ -172,13 +161,13 @@ class TestDivergentSync:
         yroom.add_message(client_id, ss2_reply)
         await asyncio.sleep(0.1)
 
-        # No duplication on either side
-        assert jupyter_ydoc.source == "hello world"
-        assert ws.source == "hello world"
+        # Client should be synced (handshake completed)
+        client = yroom.clients.get(client_id)
+        assert client.synced
 
     @pytest.mark.asyncio
-    async def test_divergent_client_no_save_during_handshake(self, make_yroom: MakeYRoom):
-        """File saves should be suppressed during the divergent handshake."""
+    async def test_divergent_client_no_data_loss(self, make_yroom: MakeYRoom):
+        """A divergent client handshake must never cause data loss on the server."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
         jupyter_ydoc.source = "hello world"
@@ -191,40 +180,13 @@ class TestDivergentSync:
         yroom.add_message(client_id, ss1)
         await asyncio.sleep(0.1)
 
-        # During handshake, saves should be suppressed
-        assert yroom.file_api._reloading_content is True
-
         ss2_reply = ws.process_server_messages()
+        assert ss2_reply is not None
         yroom.add_message(client_id, ss2_reply)
         await asyncio.sleep(0.1)
 
-        # After handshake, saves should be re-enabled
-        assert yroom.file_api._reloading_content is False
-
-    @pytest.mark.asyncio
-    async def test_update_channel_paused_during_divergent_handshake(self, make_yroom: MakeYRoom):
-        """The update buffer should be paused during a divergent handshake."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        ws = FakeWebSocket()
-        ws.doc["source"] += "hello world"
-        client_id = yroom.clients.add(ws)
-
-        ss1 = ws.build_ss1()
-        yroom.add_message(client_id, ss1)
-        await asyncio.sleep(0.1)
-
-        # Buffer should be paused during handshake
-        assert yroom.update_channel._paused is True
-
-        ss2_reply = ws.process_server_messages()
-        yroom.add_message(client_id, ss2_reply)
-        await asyncio.sleep(0.1)
-
-        # Buffer should be unpaused after handshake
-        assert yroom.update_channel._paused is False
+        # Server content must contain the original text (may be duplicated, but never empty)
+        assert "hello world" in jupyter_ydoc.source
 
 
 class TestSyncTimeout:
@@ -233,7 +195,7 @@ class TestSyncTimeout:
     @pytest.mark.asyncio
     async def test_timeout_when_ss2_never_arrives(self, make_yroom: MakeYRoom):
         """If the client never sends SS2, the handshake should time out and
-        the source should be restored."""
+        the client should be disconnected. Content must be preserved."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
         jupyter_ydoc.source = "hello world"
@@ -248,12 +210,10 @@ class TestSyncTimeout:
         # Wait for timeout (5s + buffer)
         await asyncio.sleep(6)
 
-        # Source should be restored
+        # Content must be preserved (no data loss)
         assert jupyter_ydoc.source == "hello world"
-        # Saves should be re-enabled
-        assert yroom.file_api._reloading_content is False
-        # Buffer should be unpaused
-        assert yroom.update_channel._paused is False
+        # Client should be disconnected
+        assert ws.closed
 
 
 class TestMultipleClients:
@@ -261,8 +221,8 @@ class TestMultipleClients:
 
     @pytest.mark.asyncio
     async def test_two_divergent_clients_sequential(self, make_yroom: MakeYRoom):
-        """Two divergent clients syncing sequentially should both get correct
-        content."""
+        """Two divergent clients syncing sequentially should both complete
+        handshake and not cause data loss."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
         jupyter_ydoc.source = "hello world"
@@ -281,12 +241,13 @@ class TestMultipleClients:
             yroom.add_message(client_id, ss2_reply)
             await asyncio.sleep(0.1)
 
-            assert jupyter_ydoc.source == "hello world"
-            assert ws.source == "hello world"
+            # Content must never be empty (data loss)
+            assert "hello world" in jupyter_ydoc.source
 
     @pytest.mark.asyncio
     async def test_fresh_then_divergent_client(self, make_yroom: MakeYRoom):
-        """A fresh client followed by a divergent client should both work."""
+        """A fresh client followed by a divergent client should both complete
+        handshake without data loss."""
         yroom = await make_yroom()
         jupyter_ydoc = await yroom.get_jupyter_ydoc()
         jupyter_ydoc.source = "hello world"
@@ -311,8 +272,8 @@ class TestMultipleClients:
         yroom.add_message(cid2, ss2)
         await asyncio.sleep(0.1)
 
-        assert jupyter_ydoc.source == "hello world"
-        assert ws2.source == "hello world"
+        # No data loss — content must contain original text
+        assert "hello world" in jupyter_ydoc.source
 
 
 async def _complete_handshake(yroom: YRoom, ws: FakeWebSocket) -> str:
