@@ -181,12 +181,20 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             if (response.status === 409) {
               // Source mismatch — another user edited the cell after this user
               // pressed Run. Show a visible warning so the user knows to re-run.
+              // Clear the ordering chain: this request was never enqueued on the
+              // server so the next run must not reference it as a predecessor.
+              lastRequestIdByDoc.delete(docKey);
               Notification.warning(
                 'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
                 { autoClose: 5000 }
               );
               onCellExecuted({ cell, success: false });
               return false;
+            }
+            if (!response.ok) {
+              // Any other failure (408, 500, etc.) also breaks the chain —
+              // the request was never successfully enqueued.
+              lastRequestIdByDoc.delete(docKey);
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
