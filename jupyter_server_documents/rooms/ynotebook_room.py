@@ -391,7 +391,7 @@ class YNotebookRoom(YRoom):
 
         Args:
             cells: List of dicts with keys:
-                - ``cell_id`` (str, required) — Yjs cell ID
+                - ``cell_id`` (str, required) — cell ID
                 - ``source_hash`` (str, required) — MurmurHash2 (seed=0) of
                   the cell's source at request time, as a decimal string.
                   Returns 409 for the first cell whose source has diverged;

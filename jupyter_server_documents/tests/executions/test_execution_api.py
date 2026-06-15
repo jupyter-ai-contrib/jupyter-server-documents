@@ -149,7 +149,7 @@ async def test_full_execution_via_jupyverse_endpoint(jp_fetch, jp_serverapp, tmp
     # Wait for YRoom content to load
     yroom = await _wait_for_yroom(jp_serverapp, session_id, CELL_ID)
 
-    # document_id is the Yjs room name — same as the YRoom's room_id
+    # document_id is the room name — same as the YRoom's room_id
     document_id = yroom.room_id
 
     # Execute via the jupyverse-compatible endpoint

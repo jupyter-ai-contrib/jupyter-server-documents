@@ -175,7 +175,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             `api/kernels/${kernelId}/execute`
           );
           const cellId = cell.model.sharedModel.getId();
-          // Prefer document_id from the shared model state — this is the Yjs
+          // Prefer document_id from the shared model state — this is the
           // room name set by the WebSocket provider (same key used by
           // jupyter-server-nbmodel).  Falls back to path so the server can
           // resolve it via file_id_manager if document_id is not yet set.
@@ -192,7 +192,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
           const source = cell.model.sharedModel.getSource();
           const sourceHash = String(_murmur2(source, 0));
 
-          // Include the Yjs client ID so the server can attribute who executed
+          // Include the client ID so the server can attribute who executed
           // the cell and scope the ordering chain per-client.  Each browser tab
           // gets a unique client ID from the collaborative drive's awareness.
           const clientId = String(

@@ -26,7 +26,7 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
       "document_id": "string",   // required — room name
       "cells": [                 // required — cells to execute atomically and in order
         {
-          "cell_id":     "string",  // required — Yjs cell ID
+          "cell_id":     "string",  // required — cell ID
           "source_hash": "string"   // required — MurmurHash2 (seed=0) of cell source, as decimal string
         }
       ],
