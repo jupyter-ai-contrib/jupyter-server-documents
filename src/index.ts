@@ -6,6 +6,7 @@ import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
+import { Notification } from '@jupyterlab/apputils';
 import { disableSavePlugin } from './disablesave';
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import {
@@ -179,10 +180,10 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             );
             if (response.status === 409) {
               // Source mismatch — another user edited the cell after this user
-              // pressed Run.  Treat as a soft failure: clear the running state
-              // and report to the user without throwing.
-              console.warn(
-                `[JSD] Cell ${cellId} not executed: source changed since Run was pressed`
+              // pressed Run. Show a visible warning so the user knows to re-run.
+              Notification.warning(
+                'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
+                { autoClose: 5000 }
               );
               onCellExecuted({ cell, success: false });
               return false;
