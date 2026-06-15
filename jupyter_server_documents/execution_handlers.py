@@ -23,16 +23,16 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
 
     ```json
     {
-      "document_id": "string",   // required — Yjs room name
-      "cells": [                 // required — cells to execute in order
+      "document_id": "string",   // required — room name
+      "cells": [                 // required — cells to execute atomically and in order
         {
-          "cell_id":     "string",  // required — Yjs cell ID
+          "cell_id":     "string",  // required — cell ID
           "source_hash": "string"   // optional — SHA-256 hex of cell source
         }
       ],
 
       // Execution ordering (optional)
-      "client_id":          "string",  // doc.clientID from @jupyter/ydoc
+      "client_id":          "string",  // document client ID
       "request_id":         "string",  // UUID for this request
       "previous_request_id":"string"   // wait for this request to be enqueued first
     }
