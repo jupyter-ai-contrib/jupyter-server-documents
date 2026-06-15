@@ -11,7 +11,7 @@ Keeping kernel-related state and methods in a dedicated subclass means:
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
-import hashlib
+import struct
 from dataclasses import dataclass
 
 from .yroom import YRoom
@@ -26,7 +26,37 @@ _PREDECESSOR_TIMEOUT = 10.0
 
 
 def _source_hash(source: str) -> str:
-    return hashlib.sha256(source.encode()).hexdigest()
+    """MurmurHash2 of the UTF-8 encoded source, seeded with 0.
+
+    Matches the _murmur2(source, 0) call in the TypeScript frontend so that
+    the server can verify the hash without the client needing crypto.subtle
+    (which is HTTPS-only).
+    """
+    data = source.encode("utf-8")
+    m = 0x5BD1E995
+    seed = 0
+    h = (seed ^ len(data)) & 0xFFFFFFFF
+    i = 0
+    length = len(data)
+    while length >= 4:
+        k = struct.unpack_from("<I", data, i)[0]
+        k = (k * m) & 0xFFFFFFFF
+        k ^= k >> 24
+        k = (k * m) & 0xFFFFFFFF
+        h = ((h * m) & 0xFFFFFFFF) ^ k
+        length -= 4
+        i += 4
+    if length == 3:
+        h ^= (data[i + 2] & 0xFF) << 16
+    if length >= 2:
+        h ^= (data[i + 1] & 0xFF) << 8
+    if length >= 1:
+        h ^= data[i] & 0xFF
+        h = (h * m) & 0xFFFFFFFF
+    h ^= h >> 13
+    h = (h * m) & 0xFFFFFFFF
+    h ^= h >> 15
+    return str(h)
 
 
 class SourceMismatchError(Exception):
@@ -362,9 +392,10 @@ class YNotebookRoom(YRoom):
         Args:
             cells: List of dicts with keys:
                 - ``cell_id`` (str, required) — Yjs cell ID
-                - ``source_hash`` (str | None, optional) — SHA-256 hex of
-                  the cell's source at request time.  Returns 409 for the
-                  first cell whose source has diverged; no cells are enqueued.
+                - ``source_hash`` (str, required) — MurmurHash2 (seed=0) of
+                  the cell's source at request time, as a decimal string.
+                  Returns 409 for the first cell whose source has diverged;
+                  no cells are enqueued.
 
             request_id: UUID for this batch.  Set after all cells are enqueued
                 so a chained successor waits for the whole batch, not just the
@@ -401,11 +432,12 @@ class YNotebookRoom(YRoom):
             if not isinstance(cell_id, str):
                 raise ValueError(f"Each cell entry must have a cell_id string, got {entry!r}")
             source_hash = entry.get("source_hash") if isinstance(entry, dict) else None
+            if source_hash is None:
+                raise ValueError(f"source_hash is required for cell {cell_id!r}")
             ycell = self._find_kernel_cell(ydoc, cell_id)
-            if source_hash is not None:
-                current_source = str(ycell.get("source", ""))
-                if _source_hash(current_source) != source_hash:
-                    raise SourceMismatchError(cell_id)
+            current_source = str(ycell.get("source", ""))
+            if _source_hash(current_source) != source_hash:
+                raise SourceMismatchError(cell_id)
             items.append((cell_id, ycell))
 
         # All checks passed — mark running and enqueue atomically.
@@ -433,8 +465,8 @@ class YNotebookRoom(YRoom):
     async def execute_cell(
         self,
         cell_id: str,
+        source_hash: str,
         clear_outputs: bool = False,
-        source_hash: Optional[str] = None,
         request_id: Optional[str] = None,
         previous_request_id: Optional[str] = None,
     ) -> None:

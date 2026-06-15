@@ -10,7 +10,6 @@ single-cell execute calls arrive at the queue in the same order the user
 pressed Run, regardless of network jitter.
 """
 import asyncio
-import hashlib
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -48,14 +47,13 @@ def make_ydoc(cell_source: str, cell_id: str = "cell-1"):
 
 # ── source_hash helper ────────────────────────────────────────────────────────
 
-def test_source_hash_is_sha256_hex():
-    source = "print('hello')"
-    expected = hashlib.sha256(source.encode()).hexdigest()
-    assert _source_hash(source) == expected
+def test_source_hash_is_murmur2():
+    """_source_hash uses MurmurHash2 with seed 0, returned as a decimal string."""
+    assert _source_hash("print('hello')") == "3975440051"
 
 
 def test_source_hash_empty_string():
-    assert _source_hash("") == hashlib.sha256(b"").hexdigest()
+    assert _source_hash("") == "0"
 
 
 # ── source hash verification ──────────────────────────────────────────────────
@@ -92,15 +90,14 @@ class TestSourceHashVerification:
         assert cell.get("execution_state") is None
 
     @pytest.mark.asyncio
-    async def test_no_hash_always_allows_execution(self):
-        """Omitting source_hash skips verification entirely."""
+    async def test_missing_hash_raises_value_error(self):
+        """Omitting source_hash raises ValueError (it is now required)."""
         room = make_room()
         ydoc, _ = make_ydoc("any source")
         room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
 
-        await room.execute_cell("cell-1", source_hash=None)
-
-        assert not room._execution_queue.empty()
+        with pytest.raises(ValueError, match="source_hash is required"):
+            await room.execute_cell("cell-1", source_hash=None)
 
     @pytest.mark.asyncio
     async def test_empty_source_hash_matches_empty_cell(self):
@@ -121,7 +118,7 @@ class TestSourceHashVerification:
         room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
 
         with pytest.raises(SourceMismatchError) as exc_info:
-            await room.execute_cell("my-cell-99", source_hash="deadbeef" * 8)
+            await room.execute_cell("my-cell-99", source_hash="999999999")
 
         assert exc_info.value.cell_id == "my-cell-99"
 
@@ -138,7 +135,7 @@ class TestRequestOrdering:
         ydoc, _ = make_ydoc("x = 1")
         room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
 
-        await room.execute_cell("cell-1", request_id="req-A")
+        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), request_id="req-A")
 
         assert "req-A" in room._enqueued_events
         assert room._enqueued_events["req-A"].is_set()
@@ -156,7 +153,7 @@ class TestRequestOrdering:
 
         # Start the successor — it should block until we set the event.
         task = asyncio.create_task(
-            room.execute_cell("cell-1", request_id="req-B", previous_request_id="req-A")
+            room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), request_id="req-B", previous_request_id="req-A")
         )
         await asyncio.sleep(0)  # let the coroutine start
         assert room._execution_queue.empty(), "should still be waiting"
@@ -184,6 +181,7 @@ class TestRequestOrdering:
             with pytest.raises(PredecessorTimeoutError):
                 await room.execute_cell(
                     "cell-1",
+                    source_hash=_source_hash("x = 1"),
                     request_id="req-B",
                     previous_request_id="req-A-dropped",
                 )
@@ -203,7 +201,7 @@ class TestRequestOrdering:
         # Patch the timeout to a tiny value so the test runs fast.
         with patch("jupyter_server_documents.rooms.ynotebook_room._PREDECESSOR_TIMEOUT", 0.05):
             with pytest.raises(PredecessorTimeoutError):
-                await room.execute_cell("cell-1", previous_request_id="req-stuck")
+                await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), previous_request_id="req-stuck")
 
         assert room._execution_queue.empty(), "cell must not have been enqueued"
 
@@ -226,13 +224,13 @@ class TestRequestOrdering:
 
         # B arrives first — creates an unset event for "req-A" and waits.
         task_b = asyncio.create_task(
-            room.execute_cell("cell-b", request_id="req-B", previous_request_id="req-A")
+            room.execute_cell("cell-b", source_hash=_source_hash("b = 2"), request_id="req-B", previous_request_id="req-A")
         )
         await asyncio.sleep(0)  # let B start and register its wait
         assert room._execution_queue.empty(), "B should be blocked waiting for A"
 
         # A arrives and enqueues — sets the event B is waiting on.
-        await room.execute_cell("cell-a", request_id="req-A")
+        await room.execute_cell("cell-a", source_hash=_source_hash("a = 1"), request_id="req-A")
         await task_b  # B should now complete
 
         a_item = room._execution_queue.get_nowait()
@@ -266,8 +264,8 @@ class TestRequestOrdering:
         room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
 
         # Enqueue A, then B chained after A.
-        await room.execute_cell("cell-1", request_id="req-A")
-        await room.execute_cell("cell-1", request_id="req-B", previous_request_id="req-A")
+        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), request_id="req-A")
+        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), request_id="req-B", previous_request_id="req-A")
 
         # A's entry should be gone (consumed by B); B's entry is the tail.
         assert "req-A" not in room._enqueued_events
@@ -284,6 +282,6 @@ class TestRequestOrdering:
 
         with patch("jupyter_server_documents.rooms.ynotebook_room._PREDECESSOR_TIMEOUT", 0.05):
             with pytest.raises(PredecessorTimeoutError):
-                await room.execute_cell("cell-1", previous_request_id="req-stuck")
+                await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), previous_request_id="req-stuck")
 
         assert "req-stuck" not in room._enqueued_events

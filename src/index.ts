@@ -6,6 +6,63 @@ import { ISettingRegistry } from '@jupyterlab/settingregistry';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
+
+// Most of the implementation below is adapted from the following repository:
+// https://github.com/garycourt/murmurhash-js/blob/master/murmurhash2_gc.js
+// Which has the following MIT License:
+//
+// Copyright (c) 2011 Gary Court
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+// The above copyright notice and this permission notice shall be included in
+// all copies or substantial portions of the Software.
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+const _murmur2Encoder = new TextEncoder();
+function _murmur2(str: string, seed: number): number {
+  const m = 0x5bd1e995;
+  const data = _murmur2Encoder.encode(str);
+  let len = data.length;
+  let h = seed ^ len;
+  let i = 0;
+  while (len >= 4) {
+    let k =
+      (data[i] & 0xff) |
+      ((data[++i] & 0xff) << 8) |
+      ((data[++i] & 0xff) << 16) |
+      ((data[++i] & 0xff) << 24);
+    k = (k & 0xffff) * m + ((((k >>> 16) * m) & 0xffff) << 16);
+    k ^= k >>> 24;
+    k = (k & 0xffff) * m + ((((k >>> 16) * m) & 0xffff) << 16);
+    h = ((h & 0xffff) * m + ((((h >>> 16) * m) & 0xffff) << 16)) ^ k;
+    len -= 4;
+    ++i;
+  }
+  switch (len) {
+    case 3:
+      h ^= (data[i + 2] & 0xff) << 16;
+    // eslint-disable-next-line no-fallthrough
+    case 2:
+      h ^= (data[i + 1] & 0xff) << 8;
+    // eslint-disable-next-line no-fallthrough
+    case 1:
+      h ^= data[i] & 0xff;
+      h = (h & 0xffff) * m + ((((h >>> 16) * m) & 0xffff) << 16);
+  }
+  h ^= h >>> 13;
+  h = (h & 0xffff) * m + ((((h >>> 16) * m) & 0xffff) << 16);
+  h ^= h >>> 15;
+  return h >>> 0;
+}
 import { disableSavePlugin } from './disablesave';
 import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import {
@@ -127,14 +184,13 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             | undefined;
           const path = sessionContext?.session?.path ?? '';
 
-          // Compute SHA-256 of the cell source so the server can detect if
-          // another user's edit arrived after this user pressed Run.
+          // Compute MurmurHash2 of the cell source so the server can detect
+          // if another user's edit arrived after this user pressed Run.
+          // Uses seed 0 to match the hash format sent to the server.
+          // MurmurHash2 is synchronous and works in non-secure (HTTP) contexts,
+          // consistent with its use in @jupyterlab/debugger.
           const source = cell.model.sharedModel.getSource();
-          const sourceBytes = new TextEncoder().encode(source);
-          const hashBuffer = await crypto.subtle.digest('SHA-256', sourceBytes);
-          const sourceHash = Array.from(new Uint8Array(hashBuffer))
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join('');
+          const sourceHash = String(_murmur2(source, 0));
 
           // Include the Yjs client ID so the server can attribute who executed
           // the cell and scope the ordering chain per-client.  Each browser tab

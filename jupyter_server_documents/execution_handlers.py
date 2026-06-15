@@ -26,8 +26,8 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
       "document_id": "string",   // required — room name
       "cells": [                 // required — cells to execute atomically and in order
         {
-          "cell_id":     "string",  // required — cell ID
-          "source_hash": "string"   // optional — SHA-256 hex of cell source
+          "cell_id":     "string",  // required — Yjs cell ID
+          "source_hash": "string"   // required — MurmurHash2 (seed=0) of cell source, as decimal string
         }
       ],
 
@@ -43,9 +43,10 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
     batch.  This makes "Run All" and "Restart and Run All" safe regardless of
     network timing.
 
-    The ``source_hash`` per cell is a SHA-256 hex of the cell source at the
-    time the user pressed Run.  The server returns 409 if the YDoc source has
-    diverged (another user edited the cell after the request was sent).
+    The ``source_hash`` per cell is a MurmurHash2 (seed=0) decimal string of
+    the cell source at the time the user pressed Run.  The server returns 409
+    if the YDoc source has diverged (another user edited the cell after the
+    request was sent).
 
     ## Responses
     - ``200 null``  — accepted (fire-and-forget)
@@ -65,7 +66,7 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
 
         cells_payload = body.get("cells")
         if not cells_payload or not isinstance(cells_payload, list):
-            raise web.HTTPError(400, "cells must be a non-empty list of {cell_id, source_hash?}")
+            raise web.HTTPError(400, "cells must be a non-empty list of {cell_id, source_hash}")
 
         client_id = body.get("client_id")
         request_id = body.get("request_id")

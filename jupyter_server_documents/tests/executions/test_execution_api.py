@@ -13,6 +13,9 @@ from tornado.httpclient import HTTPClientError
 TEST_TIMEOUT = 30
 
 CELL_ID = "test-cell-aabbcc"
+CELL_SOURCE = "1 + 1"
+# MurmurHash2(seed=0) of CELL_SOURCE — matches _murmur2(source, 0) in the frontend.
+CELL_SOURCE_HASH = "3531899427"
 
 NOTEBOOK_CONTENT = json.dumps({
     "nbformat": 4,
@@ -29,7 +32,7 @@ NOTEBOOK_CONTENT = json.dumps({
         {
             "cell_type": "code",
             "id": CELL_ID,
-            "source": "1 + 1",
+            "source": CELL_SOURCE,
             "metadata": {},
             "outputs": [],
             "execution_count": None,
@@ -67,6 +70,21 @@ async def test_missing_document_id_returns_400(jp_fetch):
 
 async def test_unknown_document_id_returns_400(jp_fetch):
     """POST with a document_id that has no live YRoom must return 400."""
+    with pytest.raises(HTTPClientError) as exc_info:
+        await jp_fetch(
+            "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
+            method="POST",
+            body=json.dumps({
+                "document_id": "json:notebook:does-not-exist",
+                "cells": [{"cell_id": CELL_ID, "source_hash": CELL_SOURCE_HASH}],
+            }),
+            headers={"Content-Type": "application/json"},
+        )
+    assert exc_info.value.code == 400
+
+
+async def test_missing_source_hash_returns_400(jp_fetch):
+    """POST with a cell missing source_hash must return 400."""
     with pytest.raises(HTTPClientError) as exc_info:
         await jp_fetch(
             "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
@@ -138,7 +156,7 @@ async def test_full_execution_via_jupyverse_endpoint(jp_fetch, jp_serverapp, tmp
     r = await jp_fetch(
         "api", "kernels", kernel_id, "execute",
         method="POST",
-        body=json.dumps({"document_id": document_id, "cells": [{"cell_id": CELL_ID}]}),
+        body=json.dumps({"document_id": document_id, "cells": [{"cell_id": CELL_ID, "source_hash": CELL_SOURCE_HASH}]}),
         headers={"Content-Type": "application/json"},
     )
     assert r.code == 200

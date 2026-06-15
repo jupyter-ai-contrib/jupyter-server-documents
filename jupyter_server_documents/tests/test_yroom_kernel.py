@@ -295,7 +295,7 @@ class TestExecuteCell:
         """
         room = make_yroom()
         with pytest.raises(RuntimeError, match="not connected"):
-            await room.execute_cell("cell-1")
+            await room.execute_cell("cell-1", source_hash="0")
 
     @pytest.mark.asyncio
     async def test_marks_cell_running_and_returns_immediately(self):
@@ -318,7 +318,7 @@ class TestExecuteCell:
         room._execution_worker_task = asyncio.create_task(asyncio.sleep(9999))
 
         try:
-            await asyncio.wait_for(room.execute_cell("cell-1"), timeout=1.0)
+            await asyncio.wait_for(room.execute_cell("cell-1", source_hash="2728614991"), timeout=1.0)
             assert mock_cell["execution_state"] == "running"
             assert not room._execution_queue.empty()
         finally:
@@ -349,7 +349,7 @@ class TestExecuteCell:
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
-        await room.execute_cell("cell-1")
+        await room.execute_cell("cell-1", source_hash="3975440051")
         await asyncio.wait_for(executed.wait(), timeout=2.0)
 
         room._execution_worker_task.cancel()
@@ -381,7 +381,7 @@ class TestExecuteCell:
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
-        await room.execute_cell("cell-1")
+        await room.execute_cell("cell-1", source_hash="2878563358")
         await asyncio.wait_for(executed.wait(), timeout=2.0)
 
         room._execution_worker_task.cancel()
@@ -428,7 +428,7 @@ class TestOutputHook:
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
-        await room.execute_cell("cell-1")
+        await room.execute_cell("cell-1", source_hash="372604132")
         await asyncio.wait_for(executed.wait(), timeout=2.0)
         room._execution_worker_task.cancel()
         await asyncio.gather(room._execution_worker_task, return_exceptions=True)
