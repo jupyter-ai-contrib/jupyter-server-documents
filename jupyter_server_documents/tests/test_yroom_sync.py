@@ -270,6 +270,11 @@ class TestSyncHandshakeStress:
         yroom.add_message(cid_b, ss2_reply)
         await asyncio.sleep(0.1)
 
+        # Broadcasts are paused during the handshake, so the mutation made while
+        # the server awaited B's SS2 is delivered via the batched catchup diff
+        # broadcast on resume. Process the post-handshake messages to apply it.
+        ws_b.process_server_messages()
+
         assert ws_b.source == "initial\nmutated during handshake"
 
     @pytest.mark.asyncio
@@ -343,3 +348,51 @@ class TestSyncHandshakeStress:
         # All must have the final content
         for ws, _ in clients:
             assert ws.source == expected
+
+
+class TestSyncUpdateChannel:
+    """Invariants on the update channel during the sync handshake."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "divergent", [False, True], ids=["normal", "divergent"]
+    )
+    async def test_update_channel_paused_during_sync(
+        self, make_yroom: MakeYRoom, divergent: bool
+    ):
+        """The update channel must be paused for the duration of *any* sync
+        handshake (normal or divergent), then resumed once it completes.
+
+        The backend treats all syncs equivalently: broadcasts are paused so
+        that mutations during the handshake gap are batched into a single
+        catchup diff on resume rather than streamed individually (see
+        YRoomUpdateChannel and #197).
+        """
+        yroom = await make_yroom()
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+        jupyter_ydoc.source = "hello world"
+
+        ws = FakeWebSocket()
+        if divergent:
+            # Same content, authored under a different client ID, so the
+            # client's state vector contains an ID the server doesn't know.
+            ws.doc["source"] += "hello world"
+            assert yroom._has_divergent_history(
+                ws.build_ss1()[1:], yroom._ydoc.get_state()
+            )
+
+        client_id = yroom.clients.add(ws)
+        yroom.add_message(client_id, ws.build_ss1())
+        await asyncio.sleep(0.1)
+
+        # Mid-handshake: the server has sent SS2 + SS1 and is awaiting the
+        # client's SS2 reply, so broadcasts must be paused.
+        assert yroom.update_channel._paused is True
+
+        ss2_reply = ws.process_server_messages()
+        assert ss2_reply is not None
+        yroom.add_message(client_id, ss2_reply)
+        await asyncio.sleep(0.1)
+
+        # Handshake complete: the channel must be resumed.
+        assert yroom.update_channel._paused is False

@@ -656,6 +656,10 @@ class YRoom(LoggingConfigurable):
         # incremental Text updates after multi-byte characters crash JS yjs.
         pre_sync_sv = self._ydoc.get_state()
 
+        # Pause update broadcasts for the duration of the handshake. They are
+        # resumed below with a single batched catchup diff from `pre_sync_sv`.
+        self.update_channel.pause()
+
         # Log clients that reconnect with divergent history (i.e. holding client
         # IDs the server doesn't recognize, typically a stale client after YRoom
         # GC). This is a cheap, read-only check kept purely for debugging:
