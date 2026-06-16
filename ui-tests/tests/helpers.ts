@@ -283,10 +283,13 @@ export async function waitForServerContent(
   token: string
 ): Promise<void> {
   await expect
-    .poll(async () => sourceText(await getRoomInfo(page, path)).includes(token), {
-      timeout: 30000,
-      message: `server never received content '${token}'`
-    })
+    .poll(
+      async () => sourceText(await getRoomInfo(page, path)).includes(token),
+      {
+        timeout: 30000,
+        message: `server never received content '${token}'`
+      }
+    )
     .toBe(true);
 }
 

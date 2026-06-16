@@ -61,7 +61,10 @@ async function assertReconnectPreservesEdits(
  * Normal reconnect for a text file: an edit made while offline (never synced)
  * must survive the reconnect rather than being cleared.
  */
-async function textFileOfflineEdits({ page, tmpPath }: Fixtures): Promise<void> {
+async function textFileOfflineEdits({
+  page,
+  tmpPath
+}: Fixtures): Promise<void> {
   await page.goto();
 
   const unique = uniqueToken();
@@ -95,7 +98,10 @@ async function textFileOfflineEdits({ page, tmpPath }: Fixtures): Promise<void> 
  * Normal reconnect for a notebook: a cell edit made while offline must survive
  * the reconnect rather than being cleared.
  */
-async function notebookOfflineEdits({ page, tmpPath }: Fixtures): Promise<void> {
+async function notebookOfflineEdits({
+  page,
+  tmpPath
+}: Fixtures): Promise<void> {
   await page.goto();
 
   const unique = uniqueToken();
@@ -128,6 +134,12 @@ async function notebookOfflineEdits({ page, tmpPath }: Fixtures): Promise<void> 
 
 for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
   const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(`text file: offline edits survive a normal reconnect${suffix}`, textFileOfflineEdits);
-  test(`notebook: offline edits survive a normal reconnect${suffix}`, notebookOfflineEdits);
+  test(
+    `text file: offline edits survive a normal reconnect${suffix}`,
+    textFileOfflineEdits
+  );
+  test(
+    `notebook: offline edits survive a normal reconnect${suffix}`,
+    notebookOfflineEdits
+  );
 }
