@@ -96,7 +96,10 @@ async function assertNoDuplicationAfterRecreate(
  * Without resolution this produces duplication; the client-side divergence
  * detection in `yprovider.ts` must keep the content intact and un-duplicated.
  */
-async function textFileNoDuplication({ page, tmpPath }: Fixtures): Promise<void> {
+async function textFileNoDuplication({
+  page,
+  tmpPath
+}: Fixtures): Promise<void> {
   await page.goto();
 
   const unique = uniqueToken();
@@ -123,7 +126,10 @@ async function textFileNoDuplication({ page, tmpPath }: Fixtures): Promise<void>
  * the notebook content must contain the sentinel exactly once (no duplicated
  * cell / text, no loss).
  */
-async function notebookNoDuplication({ page, tmpPath }: Fixtures): Promise<void> {
+async function notebookNoDuplication({
+  page,
+  tmpPath
+}: Fixtures): Promise<void> {
   await page.goto();
 
   const unique = uniqueToken();
