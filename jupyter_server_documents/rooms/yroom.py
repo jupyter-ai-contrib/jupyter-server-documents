@@ -683,6 +683,19 @@ class YRoom(LoggingConfigurable):
         # incremental Text updates after multi-byte characters crash JS yjs.
         pre_sync_sv = self._ydoc.get_state()
 
+        # Log clients that reconnect with divergent history (i.e. holding client
+        # IDs the server doesn't recognize, typically a stale client after YRoom
+        # GC). This is a cheap, read-only check kept purely for debugging:
+        # content duplication is resolved client-side (see docstring above), so
+        # no server-side action is taken here.
+        if self._has_divergent_history(ss1_message[1:], pre_sync_sv):
+            self.log.warning(
+                "Client '%s' is reconnecting to room '%s' with divergent "
+                "history. Client should handle this. Proceeding...",
+                client_id,
+                self.room_id
+            )
+
         # Initialize future that resolves when an SS2 reply is received.
         loop = asyncio.get_running_loop()
         self._pending_ss2_future = loop.create_future()
