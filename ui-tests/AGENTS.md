@@ -69,7 +69,7 @@ ui-tests/
 ### Parallelism & retries (current defaults)
 
 - **One shared server** for all tests. With multiple workers, different spec
-  *files* may run concurrently against it; tests *within* a file run serially
+  _files_ may run concurrently against it; tests _within_ a file run serially
   (`fullyParallel` is not enabled in galata's base config).
 - **`retries: 0`** — nothing is auto-retried, so a failure is a real failure and
   flakiness is never masked.
@@ -107,7 +107,7 @@ touch the document under test, never another test's room or the shared
   `jupyter_server_documents/rooms/yroom.py` (`handle_sync` →
   `_has_divergent_history`).
 - `divergent-sync.spec.ts`: author content → `recreate-room` → assert the client
-  converges with the content present **exactly once** (catches duplication *and*
+  converges with the content present **exactly once** (catches duplication _and_
   loss). Asserts the room's `client_id` changed, proving divergence really
   happened.
 - `sync.spec.ts`: the **negative/over-fire guard** — drop the network with
@@ -122,31 +122,37 @@ GC defaults make the offline approach safe: `YRoom.inactivity_timeout=60s`,
 
 Import everything from `./helpers`.
 
-| Export | Purpose |
-| --- | --- |
-| `SYNC_TEST_RUNS` | How many times to register each repeatable test. `JSD_SYNC_TEST_RUNS` env override → else `5` on CI → else `1`. |
-| `EMPTY_NOTEBOOK` | JSON string of a minimal 1-empty-code-cell notebook for `uploadContent`. |
-| `uniqueToken()` | `Date.now()-rand` token; use it for both file names and content sentinels. |
-| `IRoomInfo` / `sourceText(room)` | Room shape; `sourceText` normalizes `source` (string or notebook object) to a searchable string (`''` if room is `null`). |
-| `getRoomInfo(page, path)` | Single room or `null` (404). Throws on other HTTP errors. |
-| `recreateRoom(page, path)` | Forces server room recreation; returns freed old `client_id`s. |
-| `openDocument(page, path)` | Opens a doc by **exact path** via the `docmanager:open` command. |
-| `getDocPath(page, fileName)` | Real server path of an open widget whose path ends with `fileName` (or `null`). |
-| `openedDocPath(page, fileName)` | Polls until the widget is open, returns its real path. |
-| `getDocText(page, path)` | Client-side document content as a normalized string (file source or notebook JSON). |
-| `typeInFileEditor(page, text)` | Real keystrokes into the file editor (appends at end of line). |
-| `appendToCell(page, idx, text)` | Real keystrokes appended to a notebook cell. |
-| `waitForRoom(page, path)` | Polls until a room exists (also verifies the test extension loaded). |
-| `waitForServerContent(page, path, token)` | Polls until the server's copy contains `token` (i.e. the edit synced up). |
-| `dismissKernelDialogIfPresent(page)` | Dismisses the "Select Kernel" dialog (picks "No Kernel"). |
+| Export                                    | Purpose                                                                                                                   |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SYNC_TEST_RUNS`                          | How many times to register each repeatable test. `JSD_SYNC_TEST_RUNS` env override → else `5` on CI → else `1`.           |
+| `EMPTY_NOTEBOOK`                          | JSON string of a minimal 1-empty-code-cell notebook for `uploadContent`.                                                  |
+| `uniqueToken()`                           | `Date.now()-rand` token; use it for both file names and content sentinels.                                                |
+| `IRoomInfo` / `sourceText(room)`          | Room shape; `sourceText` normalizes `source` (string or notebook object) to a searchable string (`''` if room is `null`). |
+| `getRoomInfo(page, path)`                 | Single room or `null` (404). Throws on other HTTP errors.                                                                 |
+| `recreateRoom(page, path)`                | Forces server room recreation; returns freed old `client_id`s.                                                            |
+| `openDocument(page, path)`                | Opens a doc by **exact path** via the `docmanager:open` command.                                                          |
+| `getDocPath(page, fileName)`              | Real server path of an open widget whose path ends with `fileName` (or `null`).                                           |
+| `openedDocPath(page, fileName)`           | Polls until the widget is open, returns its real path.                                                                    |
+| `getDocText(page, path)`                  | Client-side document content as a normalized string (file source or notebook JSON).                                       |
+| `typeInFileEditor(page, text)`            | Real keystrokes into the file editor (appends at end of line).                                                            |
+| `appendToCell(page, idx, text)`           | Real keystrokes appended to a notebook cell.                                                                              |
+| `waitForRoom(page, path)`                 | Polls until a room exists (also verifies the test extension loaded).                                                      |
+| `waitForServerContent(page, path, token)` | Polls until the server's copy contains `token` (i.e. the edit synced up).                                                 |
+| `dismissKernelDialogIfPresent(page)`      | Dismisses the "Select Kernel" dialog (picks "No Kernel").                                                                 |
 
 ## Recipe: add a new UI test
 
 ```ts
 import { expect, test } from '@jupyterlab/galata';
 import {
-  EMPTY_NOTEBOOK, openDocument, openedDocPath, uniqueToken,
-  waitForRoom, waitForServerContent, getDocText, typeInFileEditor,
+  EMPTY_NOTEBOOK,
+  openDocument,
+  openedDocPath,
+  uniqueToken,
+  waitForRoom,
+  waitForServerContent,
+  getDocText,
+  typeInFileEditor,
   dismissKernelDialogIfPresent
 } from './helpers';
 
@@ -157,7 +163,7 @@ test('my new file test', async ({ page, tmpPath }) => {
 
   const unique = uniqueToken();
   const fileName = `myfeature-${unique}.txt`;
-  const target = `${tmpPath}/${fileName}`;   // create inside the per-test temp dir
+  const target = `${tmpPath}/${fileName}`; // create inside the per-test temp dir
   const sentinel = `SENTINEL-${unique}`;
 
   await page.contents.uploadContent('', 'text', target);
@@ -165,7 +171,7 @@ test('my new file test', async ({ page, tmpPath }) => {
   const path = await openedDocPath(page, fileName);
   await waitForRoom(page, path);
 
-  await typeInFileEditor(page, sentinel);          // real keystrokes
+  await typeInFileEditor(page, sentinel); // real keystrokes
   await waitForServerContent(page, path, sentinel); // wait for upsync
 
   // ... your scenario + assertions on getDocText(page, path) ...
@@ -185,7 +191,9 @@ To bake repetition into a spec (per-test, in code — there is no
 ```ts
 import { SYNC_TEST_RUNS } from './helpers';
 
-async function myBody({ page, tmpPath }: { page; tmpPath: string }) { /* ... */ }
+async function myBody({ page, tmpPath }: { page; tmpPath: string }) {
+  /* ... */
+}
 
 for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
   const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
@@ -200,7 +208,7 @@ Each repetition is a distinct test case (not a retry) and all must pass.
 1. **Open with `openDocument` (exact path), not `page.filebrowser.open` /
    `page.notebook.openByPath`.** The file-browser navigation matches list items
    by **name prefix**, which breaks (`strict mode violation: resolved to N
-   elements`) when sibling temp dirs share a prefix — exactly what happens under
+elements`) when sibling temp dirs share a prefix — exactly what happens under
    `--repeat-each`. `docmanager:open` takes the exact path and is robust.
 2. **Use `tmpPath` + `uniqueToken()`.** Create files under galata's per-test
    `tmpPath` (auto-created, auto-deleted) and give them unique names so parallel
@@ -229,7 +237,7 @@ When the suite passes you may still see these in `[WebServer]` output — they'r
 teardown/eventing artifacts, unrelated to assertions:
 
 - `An exception occurred when saving JupyterYDoc … 'NoneType' object has no
-  attribute 'strip'` — a final teardown save racing galata's deletion of the
+attribute 'strip'` — a final teardown save racing galata's deletion of the
   `tmpPath` file (the path resolves to `None` because the file is already gone).
 - `Event listener Task-… failed for https://events.jupyter.org/…` — jupyter
   events emission noise.
