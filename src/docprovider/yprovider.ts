@@ -621,11 +621,21 @@ function hasDivergentHistory(
  * local/offline edits.
  *
  * When `divergent` is true, the client's history has diverged from the
- * server's (the server recreated its YRoom), so the local content must be
- * discarded to avoid duplication. We clear every shared type and apply the
- * server state within a single transaction, so the change lands atomically as
- * one net update. Local edits never synced to the server are intentionally
- * sacrificed (the persisted file is the source of truth).
+ * server's (the server recreated its YRoom). We clear the content of every
+ * top-level ordered shared type and apply the server state within a single
+ * transaction, so the client defers to the server's state in one atomic net
+ * update. Local edits never synced to the server are intentionally sacrificed
+ * (the persisted file is the source of truth).
+ *
+ * Key-based content (`Y.Map` entries, `Y.XmlElement` attributes) is left
+ * untouched — see `clearSharedType`. Deleting a key tombstones the client's
+ * item for it, and Yjs reads a key as the *rightmost* item or `undefined` if
+ * that item is deleted; it does not fall back to a live concurrent item. So if
+ * the client's clientID outranks the server's, the cleared key reads as
+ * ABSENT even though the server has a value — silently dropping e.g.
+ * `metadata`/`kernelspec` ~half the time. Leaving the key lets the server's
+ * value resolve via last-writer-wins, which keeps it present. (Maps don't
+ * duplicate, so they never needed clearing for correctness anyway.)
  *
  * `origin` is forwarded as the transaction origin so the resulting update is
  * attributed to the provider and not re-broadcast to the server as a separate
@@ -645,14 +655,46 @@ function applyServerUpdate(
 
   doc.transact(() => {
     for (const [, type] of doc.share) {
-      if (type instanceof Y.Text || type instanceof Y.Array) {
-        type.delete(0, type.length);
-      } else if (type instanceof Y.Map) {
-        for (const key of Array.from(type.keys())) {
-          type.delete(key);
-        }
-      }
+      clearSharedType(type);
     }
     Y.applyUpdate(doc, serverUpdate);
   }, origin);
+}
+
+/**
+ * Clears the ordered content of a top-level Yjs shared type so the server's
+ * state (applied next) replaces it. Considers every Yjs shared type:
+ *
+ *  - Ordered types — content is cleared:
+ *      - `Y.Array`, `Y.Text` (and `Y.XmlText`, which extends it): delete the
+ *        full index range.
+ *      - `Y.XmlElement` / `Y.XmlFragment` (`Y.XmlElement` extends
+ *        `Y.XmlFragment`): delete all child nodes.
+ *  - Key-based content — intentionally left intact:
+ *      - `Y.Map` entries (and `Y.XmlHook`, which extends `Y.Map`), and
+ *        `Y.XmlElement` attributes.
+ *    Deleting a key tombstones the client's item; if its clientID outranks the
+ *    server's concurrent item, Yjs returns the deleted item as the key's entry
+ *    and the key reads as absent — silently dropping it ~half the time. Leaving
+ *    it lets the server's value resolve via last-writer-wins (never absent).
+ *    Key-based types don't duplicate, so they never needed clearing anyway.
+ */
+function clearSharedType(type: Y.AbstractType<any>): void {
+  // Key-based: skip (clearing can drop the key entirely — see above).
+  if (type instanceof Y.Map) {
+    return;
+  }
+
+  // Ordered: clear the full sequence. `Y.Text` also covers `Y.XmlText`.
+  if (type instanceof Y.Array || type instanceof Y.Text) {
+    type.delete(0, type.length);
+    return;
+  }
+
+  // `Y.XmlElement` extends `Y.XmlFragment`. Clear child nodes only; element
+  // attributes are key-based and left intact for the reason above.
+  if (type instanceof Y.XmlFragment) {
+    type.delete(0, type.length);
+    return;
+  }
 }
