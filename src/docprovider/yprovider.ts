@@ -210,76 +210,79 @@ export class WebSocketProvider implements IDocumentProvider {
 
     // Override the sync message handler to prevent content duplication when
     // reconnecting to a server that recreated its YRoom (divergent CRDT
-    // history). Before applying SS2, we clear the YDoc on a staging copy and
-    // compute the net diff — which is zero when content is unchanged. This
-    // avoids cell widget destruction and scroll position resets.
+    // history).
+    //
+    // The handshake order is: the server sends its SS2 first, then its own SS1
+    // (see `handle_sync_step1` in `yroom.py`). But the server's state vector —
+    // which we need to detect divergence — only arrives in the SS1. So we must
+    // process these in reverse: buffer the SS2 update, and once the SS1 lands,
+    // determine whether the client's history has diverged from the server's,
+    // tombstone our updates to prevent content duplication in this case, and
+    // only after reply with our SS2.
     const messageSync = 0;
+
+    // Holds the server's SS2 update until its following SS1 arrives. Set on
+    // SS2, consumed on SS1, so it naturally resets each handshake.
+    let pendingServerUpdate: Uint8Array | null = null;
+
     this._yWebsocketProvider.messageHandlers[messageSync] = (
       encoder: encoding.Encoder,
       decoder: decoding.Decoder,
-      provider: any,
+      provider: YWebsocketProvider,
       emitSynced: boolean,
       _messageType: number
     ) => {
-      encoding.writeVarUint(encoder, messageSync);
       const subType = decoding.readVarUint(decoder);
 
-      if (subType === syncProtocol.messageYjsSyncStep2) {
-        const serverUpdate = decoding.readVarUint8Array(decoder);
-
-        // 1. Store original state vector of the real doc
-        const originalSV = Y.encodeStateVector(provider.doc);
-
-        // 2. Create staging doc and copy current state into it
-        const stagingDoc = new Y.Doc();
-        Y.applyUpdate(stagingDoc, Y.encodeStateAsUpdate(provider.doc));
-
-        // 3. Explicitly access shared types on staging (applyUpdate does not
-        //    populate doc.share)
-        for (const [key, type] of provider.doc.share) {
-          if (type instanceof Y.Text) {
-            stagingDoc.getText(key);
-          } else if (type instanceof Y.Array) {
-            stagingDoc.getArray(key);
-          } else if (type instanceof Y.Map) {
-            stagingDoc.getMap(key);
-          }
+      switch (subType) {
+        case syncProtocol.messageYjsSyncStep2: {
+          // Defer: we cannot evaluate divergence until the server's SS1 (which
+          // carries the server's state vector) arrives.
+          pendingServerUpdate = decoding.readVarUint8Array(decoder);
+          break;
         }
 
-        // 4. Clear everything in staging
-        stagingDoc.transact(() => {
-          for (const [, type] of stagingDoc.share) {
-            if (type instanceof Y.Text) {
-              type.delete(0, type.length);
-            } else if (type instanceof Y.Array) {
-              type.delete(0, type.length);
-            } else if (type instanceof Y.Map) {
-              for (const key of Array.from(type.keys())) {
-                type.delete(key);
-              }
-            }
+        case syncProtocol.messageYjsSyncStep1: {
+          // The SS1 payload is the server's state vector.
+          const serverStateVector = decoding.readVarUint8Array(decoder);
+
+          // Apply the buffered SS2 now that divergence can be evaluated.
+          const serverUpdate = pendingServerUpdate;
+          pendingServerUpdate = null;
+
+          if (!serverUpdate) {
+            // The server should always send SS2 before its SS1 in our
+            // architecture. Reaching here means that contract was violated. We
+            // can emit a warning and return early if this occurs -- the
+            // server's 5s handshake timeout will trigger a reconnection.
+            console.warn(
+              `[${this._path}] Received SyncStep1 with no preceding ` +
+                'SyncStep2; skipping server-state application for this handshake.'
+            );
+            break;
           }
-        });
 
-        // 5. Apply SS2 (server state) to staging
-        Y.applyUpdate(stagingDoc, serverUpdate);
+          // Apply the SS2 message received previously from the server,
+          // resolving the histories by tombstoning our YDoc items if divergent.
+          const divergent = hasDivergentHistory(
+            provider.doc,
+            serverStateVector
+          );
+          applyServerUpdate(provider.doc, serverUpdate, divergent, provider);
+          if (emitSynced && !provider.synced) {
+            provider.synced = true;
+          }
 
-        // 6. Compute net diff from original state to staging's final state
-        const netUpdate = Y.encodeStateAsUpdate(stagingDoc, originalSV);
-
-        // 7. Apply the single net update to the real doc
-        Y.applyUpdate(provider.doc, netUpdate);
-
-        // Cleanup
-        stagingDoc.destroy();
-
-        if (emitSynced && !provider.synced) {
-          provider.synced = true;
+          // Reply with the SS2 response to the server's SS1 message.
+          encoding.writeVarUint(encoder, messageSync);
+          syncProtocol.writeSyncStep2(encoder, provider.doc, serverStateVector);
+          break;
         }
-      } else if (subType === syncProtocol.messageYjsSyncStep1) {
-        syncProtocol.readSyncStep1(decoder, encoder, provider.doc);
-      } else if (subType === syncProtocol.messageYjsUpdate) {
-        syncProtocol.readUpdate(decoder, provider.doc, provider);
+
+        case syncProtocol.messageYjsUpdate: {
+          syncProtocol.readUpdate(decoder, provider.doc, provider);
+          break;
+        }
       }
     };
 
@@ -560,4 +563,74 @@ export namespace WebSocketProvider {
      */
     translator: TranslationBundle;
   }
+}
+
+/**
+ * Returns whether the client's history has diverged from the server's: i.e.
+ * the client's state vector contains a clientID the server's state vector does
+ * not recognize.
+ *
+ * Such a clientID can only originate from a previous server session (the
+ * current session loads its content from disk under a fresh clientID), so
+ * syncing without intervention would duplicate content. Note that `self` is
+ * intentionally NOT excluded: a single client that authored all content and
+ * then reconnected to a recreated server session holds that content solely
+ * under its own clientID, and the server has re-authored the equivalent
+ * content under a new ID — so failing to clear would duplicate it.
+ */
+function hasDivergentHistory(
+  doc: Y.Doc,
+  serverStateVector: Uint8Array
+): boolean {
+  const clientSV = Y.decodeStateVector(Y.encodeStateVector(doc));
+  const serverSV = Y.decodeStateVector(serverStateVector);
+  for (const clientId of clientSV.keys()) {
+    if (!serverSV.has(clientId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Applies the server's SS2 update to the doc.
+ *
+ * When `divergent` is false this is a plain `Y.applyUpdate`, preserving any
+ * local/offline edits.
+ *
+ * When `divergent` is true, the client's history has diverged from the
+ * server's (the server recreated its YRoom), so the local content must be
+ * discarded to avoid duplication. We clear every shared type and apply the
+ * server state within a single transaction, so the change lands atomically as
+ * one net update. Local edits never synced to the server are intentionally
+ * sacrificed (the persisted file is the source of truth).
+ *
+ * `origin` is forwarded as the transaction origin so the resulting update is
+ * attributed to the provider and not re-broadcast to the server as a separate
+ * update message; in the divergent case the tombstones reach the server via
+ * the SS2 reply instead.
+ */
+function applyServerUpdate(
+  doc: Y.Doc,
+  serverUpdate: Uint8Array,
+  divergent: boolean,
+  origin?: unknown
+): void {
+  if (!divergent) {
+    Y.applyUpdate(doc, serverUpdate, origin);
+    return;
+  }
+
+  doc.transact(() => {
+    for (const [, type] of doc.share) {
+      if (type instanceof Y.Text || type instanceof Y.Array) {
+        type.delete(0, type.length);
+      } else if (type instanceof Y.Map) {
+        for (const key of Array.from(type.keys())) {
+          type.delete(key);
+        }
+      }
+    }
+    Y.applyUpdate(doc, serverUpdate);
+  }, origin);
 }
