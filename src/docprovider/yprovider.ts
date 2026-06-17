@@ -15,6 +15,10 @@ import { Notification } from '@jupyterlab/apputils';
 import { DocumentChange, YDocument } from '@jupyter/ydoc';
 
 import { Awareness } from 'y-protocols/awareness';
+import * as syncProtocol from 'y-protocols/sync';
+import * as Y from 'yjs';
+import * as encoding from 'lib0/encoding';
+import * as decoding from 'lib0/decoding';
 import { WebsocketProvider as YWebsocketProvider } from 'y-websocket';
 import { requestAPI } from './requests';
 import { JupyterFrontEnd } from '@jupyterlab/application';
@@ -219,6 +223,84 @@ export class WebSocketProvider implements IDocumentProvider, IForkProvider {
         awareness: this.awareness
       }
     );
+
+    // Override the sync message handler to prevent content duplication when
+    // reconnecting to a server that recreated its YRoom (divergent CRDT
+    // history).
+    //
+    // The handshake order is: the server sends its SS2 first, then its own SS1
+    // (see `handle_sync_step1` in `yroom.py`). But the server's state vector —
+    // which we need to detect divergence — only arrives in the SS1. So we must
+    // process these in reverse: buffer the SS2 update, and once the SS1 lands,
+    // determine whether the client's history has diverged from the server's,
+    // tombstone our updates to prevent content duplication in this case, and
+    // only after reply with our SS2.
+    const messageSync = 0;
+
+    // Holds the server's SS2 update until its following SS1 arrives. Set on
+    // SS2, consumed on SS1, so it naturally resets each handshake.
+    let pendingServerUpdate: Uint8Array | null = null;
+
+    this._yWebsocketProvider.messageHandlers[messageSync] = (
+      encoder: encoding.Encoder,
+      decoder: decoding.Decoder,
+      provider: YWebsocketProvider,
+      emitSynced: boolean,
+      _messageType: number
+    ) => {
+      const subType = decoding.readVarUint(decoder);
+
+      switch (subType) {
+        case syncProtocol.messageYjsSyncStep2: {
+          // Defer: we cannot evaluate divergence until the server's SS1 (which
+          // carries the server's state vector) arrives.
+          pendingServerUpdate = decoding.readVarUint8Array(decoder);
+          break;
+        }
+
+        case syncProtocol.messageYjsSyncStep1: {
+          // The SS1 payload is the server's state vector.
+          const serverStateVector = decoding.readVarUint8Array(decoder);
+
+          // Apply the buffered SS2 now that divergence can be evaluated.
+          const serverUpdate = pendingServerUpdate;
+          pendingServerUpdate = null;
+
+          if (!serverUpdate) {
+            // The server should always send SS2 before its SS1 in our
+            // architecture. Reaching here means that contract was violated. We
+            // can emit a warning and return early if this occurs -- the
+            // server's 5s handshake timeout will trigger a reconnection.
+            console.warn(
+              `[${this._path}] Received SyncStep1 with no preceding ` +
+                'SyncStep2; skipping server-state application for this handshake.'
+            );
+            break;
+          }
+
+          // Apply the SS2 message received previously from the server,
+          // resolving the histories by tombstoning our YDoc items if divergent.
+          const divergent = hasDivergentHistory(
+            provider.doc,
+            serverStateVector
+          );
+          applyServerUpdate(provider.doc, serverUpdate, divergent, provider);
+          if (emitSynced && !provider.synced) {
+            provider.synced = true;
+          }
+
+          // Reply with the SS2 response to the server's SS1 message.
+          encoding.writeVarUint(encoder, messageSync);
+          syncProtocol.writeSyncStep2(encoder, provider.doc, serverStateVector);
+          break;
+        }
+
+        case syncProtocol.messageYjsUpdate: {
+          syncProtocol.readUpdate(decoder, provider.doc, provider);
+          break;
+        }
+      }
+    };
 
     this._yWebsocketProvider.on('sync', this._onSync);
     this._yWebsocketProvider.on('connection-close', this._onConnectionClosed);
@@ -502,5 +584,117 @@ export namespace WebSocketProvider {
      * The jupyterlab translator
      */
     translator: TranslationBundle;
+  }
+}
+
+/**
+ * Returns whether the client's history has diverged from the server's: i.e.
+ * the client's state vector contains a clientID the server's state vector does
+ * not recognize.
+ *
+ * Such a clientID can only originate from a previous server session (the
+ * current session loads its content from disk under a fresh clientID), so
+ * syncing without intervention would duplicate content. Note that `self` is
+ * intentionally NOT excluded: a single client that authored all content and
+ * then reconnected to a recreated server session holds that content solely
+ * under its own clientID, and the server has re-authored the equivalent
+ * content under a new ID — so failing to clear would duplicate it.
+ */
+function hasDivergentHistory(
+  doc: Y.Doc,
+  serverStateVector: Uint8Array
+): boolean {
+  const clientSV = Y.decodeStateVector(Y.encodeStateVector(doc));
+  const serverSV = Y.decodeStateVector(serverStateVector);
+  for (const clientId of clientSV.keys()) {
+    if (!serverSV.has(clientId)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Applies the server's SS2 update to the doc.
+ *
+ * When `divergent` is false this is a plain `Y.applyUpdate`, preserving any
+ * local/offline edits.
+ *
+ * When `divergent` is true, the client's history has diverged from the
+ * server's (the server recreated its YRoom). We clear the content of every
+ * top-level ordered shared type and apply the server state within a single
+ * transaction, so the client defers to the server's state in one atomic net
+ * update. Local edits never synced to the server are intentionally sacrificed
+ * (the persisted file is the source of truth).
+ *
+ * Key-based content (`Y.Map` entries, `Y.XmlElement` attributes) is left
+ * untouched — see `clearSharedType`. Deleting a key tombstones the client's
+ * item for it, and Yjs reads a key as the *rightmost* item or `undefined` if
+ * that item is deleted; it does not fall back to a live concurrent item. So if
+ * the client's clientID outranks the server's, the cleared key reads as
+ * ABSENT even though the server has a value — silently dropping e.g.
+ * `metadata`/`kernelspec` ~half the time. Leaving the key lets the server's
+ * value resolve via last-writer-wins, which keeps it present. (Maps don't
+ * duplicate, so they never needed clearing for correctness anyway.)
+ *
+ * `origin` is forwarded as the transaction origin so the resulting update is
+ * attributed to the provider and not re-broadcast to the server as a separate
+ * update message; in the divergent case the tombstones reach the server via
+ * the SS2 reply instead.
+ */
+function applyServerUpdate(
+  doc: Y.Doc,
+  serverUpdate: Uint8Array,
+  divergent: boolean,
+  origin?: unknown
+): void {
+  if (!divergent) {
+    Y.applyUpdate(doc, serverUpdate, origin);
+    return;
+  }
+
+  doc.transact(() => {
+    for (const [, type] of doc.share) {
+      clearSharedType(type);
+    }
+    Y.applyUpdate(doc, serverUpdate);
+  }, origin);
+}
+
+/**
+ * Clears the ordered content of a top-level Yjs shared type so the server's
+ * state (applied next) replaces it. Considers every Yjs shared type:
+ *
+ *  - Ordered types — content is cleared:
+ *      - `Y.Array`, `Y.Text` (and `Y.XmlText`, which extends it): delete the
+ *        full index range.
+ *      - `Y.XmlElement` / `Y.XmlFragment` (`Y.XmlElement` extends
+ *        `Y.XmlFragment`): delete all child nodes.
+ *  - Key-based content — intentionally left intact:
+ *      - `Y.Map` entries (and `Y.XmlHook`, which extends `Y.Map`), and
+ *        `Y.XmlElement` attributes.
+ *    Deleting a key tombstones the client's item; if its clientID outranks the
+ *    server's concurrent item, Yjs returns the deleted item as the key's entry
+ *    and the key reads as absent — silently dropping it ~half the time. Leaving
+ *    it lets the server's value resolve via last-writer-wins (never absent).
+ *    Key-based types don't duplicate, so they never needed clearing anyway.
+ */
+function clearSharedType(type: Y.AbstractType<any>): void {
+  // Key-based: skip (clearing can drop the key entirely — see above).
+  if (type instanceof Y.Map) {
+    return;
+  }
+
+  // Ordered: clear the full sequence. `Y.Text` also covers `Y.XmlText`.
+  if (type instanceof Y.Array || type instanceof Y.Text) {
+    type.delete(0, type.length);
+    return;
+  }
+
+  // `Y.XmlElement` extends `Y.XmlFragment`. Clear child nodes only; element
+  // attributes are key-based and left intact for the reason above.
+  if (type instanceof Y.XmlFragment) {
+    type.delete(0, type.length);
+    return;
   }
 }

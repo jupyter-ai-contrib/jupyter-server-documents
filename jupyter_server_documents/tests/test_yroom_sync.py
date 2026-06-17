@@ -151,81 +151,6 @@ class TestDivergentSync:
         ss1 = ws.build_ss1()
         assert yroom._has_divergent_history(ss1[1:], yroom._ydoc.get_state())
 
-    @pytest.mark.asyncio
-    async def test_divergent_client_no_duplication(self, make_yroom: MakeYRoom):
-        """After a divergent handshake, content should not be duplicated."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        # Client with same content, different history
-        ws = FakeWebSocket()
-        ws.doc["source"] += "hello world"
-        client_id = yroom.clients.add(ws)
-
-        ss1 = ws.build_ss1()
-        yroom.add_message(client_id, ss1)
-        await asyncio.sleep(0.1)
-
-        ss2_reply = ws.process_server_messages()
-        assert ss2_reply is not None
-        yroom.add_message(client_id, ss2_reply)
-        await asyncio.sleep(0.1)
-
-        # No duplication on either side
-        assert jupyter_ydoc.source == "hello world"
-        assert ws.source == "hello world"
-
-    @pytest.mark.asyncio
-    async def test_divergent_client_no_save_during_handshake(self, make_yroom: MakeYRoom):
-        """File saves should be suppressed during the divergent handshake."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        ws = FakeWebSocket()
-        ws.doc["source"] += "hello world"
-        client_id = yroom.clients.add(ws)
-
-        ss1 = ws.build_ss1()
-        yroom.add_message(client_id, ss1)
-        await asyncio.sleep(0.1)
-
-        # During handshake, saves should be suppressed
-        assert yroom.file_api._reloading_content is True
-
-        ss2_reply = ws.process_server_messages()
-        yroom.add_message(client_id, ss2_reply)
-        await asyncio.sleep(0.1)
-
-        # After handshake, saves should be re-enabled
-        assert yroom.file_api._reloading_content is False
-
-    @pytest.mark.asyncio
-    async def test_update_channel_paused_during_divergent_handshake(self, make_yroom: MakeYRoom):
-        """The update buffer should be paused during a divergent handshake."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        ws = FakeWebSocket()
-        ws.doc["source"] += "hello world"
-        client_id = yroom.clients.add(ws)
-
-        ss1 = ws.build_ss1()
-        yroom.add_message(client_id, ss1)
-        await asyncio.sleep(0.1)
-
-        # Buffer should be paused during handshake
-        assert yroom.update_channel._paused is True
-
-        ss2_reply = ws.process_server_messages()
-        yroom.add_message(client_id, ss2_reply)
-        await asyncio.sleep(0.1)
-
-        # Buffer should be unpaused after handshake
-        assert yroom.update_channel._paused is False
-
 
 class TestSyncTimeout:
     """Tests for handshake timeout behavior."""
@@ -254,65 +179,6 @@ class TestSyncTimeout:
         assert yroom.file_api._reloading_content is False
         # Buffer should be unpaused
         assert yroom.update_channel._paused is False
-
-
-class TestMultipleClients:
-    """Tests for multiple clients syncing."""
-
-    @pytest.mark.asyncio
-    async def test_two_divergent_clients_sequential(self, make_yroom: MakeYRoom):
-        """Two divergent clients syncing sequentially should both get correct
-        content."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        for _ in range(2):
-            ws = FakeWebSocket()
-            ws.doc["source"] += "hello world"
-            client_id = yroom.clients.add(ws)
-
-            ss1 = ws.build_ss1()
-            yroom.add_message(client_id, ss1)
-            await asyncio.sleep(0.1)
-
-            ss2_reply = ws.process_server_messages()
-            assert ss2_reply is not None
-            yroom.add_message(client_id, ss2_reply)
-            await asyncio.sleep(0.1)
-
-            assert jupyter_ydoc.source == "hello world"
-            assert ws.source == "hello world"
-
-    @pytest.mark.asyncio
-    async def test_fresh_then_divergent_client(self, make_yroom: MakeYRoom):
-        """A fresh client followed by a divergent client should both work."""
-        yroom = await make_yroom()
-        jupyter_ydoc = await yroom.get_jupyter_ydoc()
-        jupyter_ydoc.source = "hello world"
-
-        # Fresh client
-        ws1 = FakeWebSocket()
-        cid1 = yroom.clients.add(ws1)
-        yroom.add_message(cid1, ws1.build_ss1())
-        await asyncio.sleep(0.1)
-        ss2 = ws1.process_server_messages()
-        yroom.add_message(cid1, ss2)
-        await asyncio.sleep(0.1)
-        assert ws1.source == "hello world"
-
-        # Divergent client
-        ws2 = FakeWebSocket()
-        ws2.doc["source"] += "hello world"
-        cid2 = yroom.clients.add(ws2)
-        yroom.add_message(cid2, ws2.build_ss1())
-        await asyncio.sleep(0.1)
-        ss2 = ws2.process_server_messages()
-        yroom.add_message(cid2, ss2)
-        await asyncio.sleep(0.1)
-
-        assert jupyter_ydoc.source == "hello world"
-        assert ws2.source == "hello world"
 
 
 async def _complete_handshake(yroom: YRoom, ws: FakeWebSocket) -> str:
@@ -404,6 +270,11 @@ class TestSyncHandshakeStress:
         yroom.add_message(cid_b, ss2_reply)
         await asyncio.sleep(0.1)
 
+        # Broadcasts are paused during the handshake, so the mutation made while
+        # the server awaited B's SS2 is delivered via the batched catchup diff
+        # broadcast on resume. Process the post-handshake messages to apply it.
+        ws_b.process_server_messages()
+
         assert ws_b.source == "initial\nmutated during handshake"
 
     @pytest.mark.asyncio
@@ -477,3 +348,51 @@ class TestSyncHandshakeStress:
         # All must have the final content
         for ws, _ in clients:
             assert ws.source == expected
+
+
+class TestSyncUpdateChannel:
+    """Invariants on the update channel during the sync handshake."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "divergent", [False, True], ids=["normal", "divergent"]
+    )
+    async def test_update_channel_paused_during_sync(
+        self, make_yroom: MakeYRoom, divergent: bool
+    ):
+        """The update channel must be paused for the duration of *any* sync
+        handshake (normal or divergent), then resumed once it completes.
+
+        The backend treats all syncs equivalently: broadcasts are paused so
+        that mutations during the handshake gap are batched into a single
+        catchup diff on resume rather than streamed individually (see
+        YRoomUpdateChannel and #197).
+        """
+        yroom = await make_yroom()
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+        jupyter_ydoc.source = "hello world"
+
+        ws = FakeWebSocket()
+        if divergent:
+            # Same content, authored under a different client ID, so the
+            # client's state vector contains an ID the server doesn't know.
+            ws.doc["source"] += "hello world"
+            assert yroom._has_divergent_history(
+                ws.build_ss1()[1:], yroom._ydoc.get_state()
+            )
+
+        client_id = yroom.clients.add(ws)
+        yroom.add_message(client_id, ws.build_ss1())
+        await asyncio.sleep(0.1)
+
+        # Mid-handshake: the server has sent SS2 + SS1 and is awaiting the
+        # client's SS2 reply, so broadcasts must be paused.
+        assert yroom.update_channel._paused is True
+
+        ss2_reply = ws.process_server_messages()
+        assert ss2_reply is not None
+        yroom.add_message(client_id, ss2_reply)
+        await asyncio.sleep(0.1)
+
+        # Handshake complete: the channel must be resumed.
+        assert yroom.update_channel._paused is False

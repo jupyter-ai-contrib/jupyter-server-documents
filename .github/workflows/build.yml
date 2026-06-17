@@ -116,6 +116,14 @@ jobs:
         run: |
           set -eux
           python -m pip install "jupyterlab>=4.0.0,<5" jupyter_server_documents*.whl
+          # Optional deps exercised by the chat + router E2E tests
+          # (tests/chat-sync.spec.ts, tests/chat-router.spec.ts). jupyterlab-chat
+          # provides the .chat factory + YChat; jupyter-ai-router provides the
+          # MessageRouter the router test hooks. JSD ships config disabling the
+          # competing jupyter-collaboration server/docprovider stack, so chat
+          # coexists with JSD's own collaboration. `>=0.18.2` is the lowest
+          # jupyterlab-chat that is federation-compatible with JSD's frontend.
+          python -m pip install "jupyterlab-chat>=0.18.2" jupyter-ai-router
 
       - name: Install dependencies
         working-directory: ui-tests
