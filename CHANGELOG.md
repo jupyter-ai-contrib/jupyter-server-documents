@@ -2,6 +2,27 @@
 
 <!-- <START NEW CHANGELOG ENTRY> -->
 
+## 0.3.0b0
+
+([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.4...8208a87db3599e2995fb9946d941a6ba0b6a0cd2))
+
+### Enhancements made
+
+- Remove YRoom restart logic and adopt upstream docprovider [#251](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/251) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+- [Feature] Server-side cell execution via REST API [#248](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/248) ([@Zsailer](https://github.com/Zsailer), [@davidbrochart](https://github.com/davidbrochart), [@dlqqq](https://github.com/dlqqq), [@krassowski](https://github.com/krassowski))
+- Disable outputs service by default [#247](https://github.com/jupyter-ai-contrib/jupyter-server-documents/pull/247) ([@dlqqq](https://github.com/dlqqq), [@Zsailer](https://github.com/Zsailer))
+
+### Contributors to this release
+
+The following people contributed discussions, new ideas, code and documentation contributions, and review.
+See [our definition of contributors](https://github-activity.readthedocs.io/en/latest/use/#how-does-this-tool-define-contributions-in-the-reports).
+
+([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-06-11&to=2026-06-17&type=c))
+
+@davidbrochart ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adavidbrochart+updated%3A2026-06-11..2026-06-17&type=Issues)) | @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-06-11..2026-06-17&type=Issues)) | @krassowski ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Akrassowski+updated%3A2026-06-11..2026-06-17&type=Issues)) | @Zsailer ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3AZsailer+updated%3A2026-06-11..2026-06-17&type=Issues))
+
+<!-- <END NEW CHANGELOG ENTRY> -->
+
 ## 0.2.4
 
 ([Full Changelog](https://github.com/jupyter-ai-contrib/jupyter-server-documents/compare/v0.2.3...39c6f391b80ce14451861c1312722cba48e9c857))
@@ -18,8 +39,6 @@ See [our definition of contributors](https://github-activity.readthedocs.io/en/l
 ([GitHub contributors page for this release](https://github.com/jupyter-ai-contrib/jupyter-server-documents/graphs/contributors?from=2026-06-10&to=2026-06-11&type=c))
 
 @dlqqq ([activity](https://github.com/search?q=repo%3Ajupyter-ai-contrib%2Fjupyter-server-documents+involves%3Adlqqq+updated%3A2026-06-10..2026-06-11&type=Issues))
-
-<!-- <END NEW CHANGELOG ENTRY> -->
 
 ## 0.2.3
 
