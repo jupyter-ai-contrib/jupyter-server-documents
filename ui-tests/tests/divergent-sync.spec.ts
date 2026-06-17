@@ -8,7 +8,6 @@ import {
   openedDocPath,
   recreateRoom,
   sourceText,
-  SYNC_TEST_RUNS,
   typeInFileEditor,
   uniqueToken,
   waitForRoom,
@@ -151,14 +150,11 @@ async function notebookNoDuplication({
   await assertNoDuplicationAfterRecreate(page, path, sentinel);
 }
 
-for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
-  const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(
-    `text file: no content duplication after the server recreates the room${suffix}`,
-    textFileNoDuplication
-  );
-  test(
-    `notebook: no content duplication after the server recreates the room${suffix}`,
-    notebookNoDuplication
-  );
-}
+test(
+  'text file: no content duplication after the server recreates the room',
+  textFileNoDuplication
+);
+test(
+  'notebook: no content duplication after the server recreates the room',
+  notebookNoDuplication
+);

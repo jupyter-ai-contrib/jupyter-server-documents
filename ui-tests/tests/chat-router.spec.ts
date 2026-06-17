@@ -8,7 +8,6 @@ import {
   recreateRoom,
   sendChatMessage,
   sourceText,
-  SYNC_TEST_RUNS,
   uniqueToken,
   waitForRoom,
   waitForServerContent
@@ -64,25 +63,34 @@ async function setupRouterChat(
 // ---------------------------------------------------------------------------
 // Each sent message fires the router exactly once.
 // ---------------------------------------------------------------------------
-async function eachMessageFiresOnce({ page, tmpPath }: Fixtures): Promise<void> {
+async function eachMessageFiresOnce({
+  page,
+  tmpPath
+}: Fixtures): Promise<void> {
   const { path, sentinel } = await setupRouterChat(page, tmpPath);
   const first = `${sentinel}-A`;
   const second = `${sentinel}-B`;
 
   await sendChatMessage(page, first);
   await expect
-    .poll(async () => fireCount((await getRouterFires(page, path)).fires, first), {
-      timeout: 30000,
-      message: 'router did not fire for the first message'
-    })
+    .poll(
+      async () => fireCount((await getRouterFires(page, path)).fires, first),
+      {
+        timeout: 30000,
+        message: 'router did not fire for the first message'
+      }
+    )
     .toBe(1);
 
   await sendChatMessage(page, second);
   await expect
-    .poll(async () => fireCount((await getRouterFires(page, path)).fires, second), {
-      timeout: 30000,
-      message: 'router did not fire for the second message'
-    })
+    .poll(
+      async () => fireCount((await getRouterFires(page, path)).fires, second),
+      {
+        timeout: 30000,
+        message: 'router did not fire for the second message'
+      }
+    )
     .toBe(1);
 
   // Each message fired exactly once — no duplicate routing.
@@ -140,9 +148,7 @@ async function reconnectionDoesNotRefire({
   // (re)connection time are skipped. Give any spurious fire a chance to land,
   // then assert the count is still exactly one.
   await page.waitForTimeout(1500);
-  expect(
-    fireCount((await getRouterFires(page, path)).fires, sentinel)
-  ).toBe(1);
+  expect(fireCount((await getRouterFires(page, path)).fires, sentinel)).toBe(1);
 
   // The router is still live after reconnect: a new message fires exactly once.
   // Use a token that does NOT contain `sentinel` as a substring, so the
@@ -150,22 +156,23 @@ async function reconnectionDoesNotRefire({
   const after = sentinel.replace('SENTINEL', 'AFTERMSG');
   await sendChatMessage(page, after);
   await expect
-    .poll(async () => fireCount((await getRouterFires(page, path)).fires, after), {
-      timeout: 30000,
-      message: 'router did not fire for the post-reconnect message'
-    })
+    .poll(
+      async () => fireCount((await getRouterFires(page, path)).fires, after),
+      {
+        timeout: 30000,
+        message: 'router did not fire for the post-reconnect message'
+      }
+    )
     .toBe(1);
   // ...and the original message is still only counted once.
-  expect(
-    fireCount((await getRouterFires(page, path)).fires, sentinel)
-  ).toBe(1);
+  expect(fireCount((await getRouterFires(page, path)).fires, sentinel)).toBe(1);
 }
 
-for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
-  const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(`router: each chat message fires the router exactly once${suffix}`, eachMessageFiresOnce);
-  test(
-    `router: reconnection alone does not re-fire the router${suffix}`,
-    reconnectionDoesNotRefire
-  );
-}
+test(
+  'router: each chat message fires the router exactly once',
+  eachMessageFiresOnce
+);
+test(
+  'router: reconnection alone does not re-fire the router',
+  reconnectionDoesNotRefire
+);

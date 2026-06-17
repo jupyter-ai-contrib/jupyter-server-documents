@@ -9,6 +9,10 @@ const PORT = 8899;
 
 module.exports = {
   ...baseConfig,
+  // Repeat every test to surface flakiness in the timing-sensitive
+  // reconnect / divergent-sync tests. Defaults to 3 on CI, 1 locally; override
+  // with JSD_TEST_REPEATS, or pass `--repeat-each=N` for ad-hoc flake hunting.
+  repeatEach: Number(process.env.JSD_TEST_REPEATS ?? (process.env.CI ? 3 : 1)),
   use: { ...baseConfig.use, baseURL: `http://localhost:${PORT}` },
   webServer: {
     command: `jlpm start --port=${PORT}`,
