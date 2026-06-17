@@ -4,13 +4,5 @@
   "description": "@jupyter-ai-contrib/server-documents settings.",
   "type": "object",
   "properties": {},
-  "additionalProperties": false,
-  "jupyter.lab.toolbars": {
-    "Notebook": [
-      {
-        "name": "executionProgress",
-        "disabled": true
-      }
-    ]
-  }
+  "additionalProperties": false
 }

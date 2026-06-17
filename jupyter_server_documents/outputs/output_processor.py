@@ -1,225 +1,142 @@
-import asyncio
-
 from pycrdt import Map
 
-from traitlets import Unicode, Bool, Set
+from traitlets import Bool, Set
 from traitlets.config import LoggingConfigurable
-from jupyter_server_documents.kernels.message_cache import KernelMessageCache
+
 
 class OutputProcessor(LoggingConfigurable):
-    
-    _file_id = Unicode(default_value=None, allow_none=True)
-    _pending_clear_output_cells = Set(default_value=set())
+    """
+    Writes kernel output messages into a live pycrdt YDoc cell.
+
+    All methods take a direct `ycell` reference (pycrdt.Map) and write
+    synchronously.  There is no async work — the old async lookup chain
+    (session → file_id → room → find_cell) is gone because the caller
+    already has ycell, file_id, and cell_id.
+
+    Writing synchronously also eliminates the race condition where a
+    create_task from a previous execution could run after the cell was
+    cleared for re-execution, appending stale outputs.
+    """
+
+    _pending_clear_output_cells: Set = Set(default_value=set())
 
     use_outputs_service = Bool(
         default_value=True,
-        help="Should outputs be routed to the outputs service to minimize the in memory ydoc size."
+        help="Route outputs through the outputs service to minimise in-memory YDoc size.",
     ).tag(config=True)
 
     @property
-    def settings(self):
-        """A shortcut for the Tornado web app settings."""
-        #      self.KernelClient.KernelManager.AsyncMultiKernelManager.ServerApp
-        return self.parent.parent.parent.parent.web_app.settings
-
-    @property
-    def kernel_client(self):
-        """A shortcut to the kernel client this output processor is attached to."""
-        return self.parent
-
-    @property
     def outputs_manager(self):
-        """A shortcut for the OutputsManager instance."""
-        return self.settings["outputs_manager"]
-    
-    @property
-    def session_manager(self):
-        """A shortcut for the kernel session manager."""
-        return self.settings["session_manager"]
+        return self.parent.parent.parent.parent.web_app.settings["outputs_manager"]
 
-    @property
-    def file_id_manager(self):
-        """A shortcut for the file id manager."""
-        return self.settings["file_id_manager"]
-    
-    @property
-    def yroom_manager(self):
-        """A shortcut for the jupyter server ydoc manager."""
-        return self.settings["yroom_manager"]
+    # ── Public API ─────────────────────────────────────────────────────────────
 
-    async def _get_file_info(self):
-        """Get file_id and path by looking it up from the kernel session.
-
-        Always fetches fresh from the session manager to handle file renames.
-
-        Returns:
-            tuple: (file_id, path) if found, (None, None) otherwise
+    def process_output(
+        self,
+        msg_type: str,
+        ycell,
+        file_id: str | None,
+        cell_id: str,
+        content: dict,
+    ) -> None:
         """
-        try:
-            kernel_session = await self.session_manager.get_session(
-                kernel_id=self.parent.parent.kernel_id
-            )
-            path = kernel_session["path"]
-            file_id = self.file_id_manager.get_id(path)
-            if file_id is None:
-                self.log.error(f"Could not find file_id for path: {path}")
-                return None, None
-            return file_id, path
-        except Exception as e:
-            self.log.warning(f"Failed to look up file_id: {e}")
-            return None, None
+        Write an output message into the YDoc cell synchronously.
 
-    async def get_jupyter_ydoc(self, file_id):
-        room_id = f"json:notebook:{file_id}"
-        room = self.yroom_manager.get_room(room_id)
-        if room is None:
-            self.log.error(f"YRoom not found: {room_id}")
-            return
-        ydoc = await room.get_jupyter_ydoc()
-
-        return ydoc
-
-    async def _clear_ydoc_outputs(self, cell_id):
-        """Clears the outputs of a cell in ydoc"""
-        
-        if not self._file_id:
-            return
-        
-        notebook = await self.get_jupyter_ydoc(self._file_id)
-        cell_index, target_cell = notebook.find_cell(cell_id)
-        if target_cell is not None:
-            target_cell["outputs"].clear()
-            self.log.info(f"Cleared outputs for {self._file_id=}, {cell_index=}")
-
-    async def clear_cell_outputs(self, cell_id):
-        """Clears all outputs for a cell on disk and in ydoc."""
-
-        # Get file_id and path from kernel session (handles renames)
-        file_id, path = await self._get_file_info()
-        if file_id is None:
-            return
-
-        # Cache the file_id for subsequent operations
-        self._file_id = file_id
-
-        await self._clear_ydoc_outputs(cell_id)
-        self._pending_clear_output_cells.discard(cell_id)
-
-        if self.use_outputs_service:
-            self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
-            
-
-    def process_output(self, msg_type: str, cell_id: str, content: dict):
-        """Process outgoing messages from the kernel.
-        
-        This returns the input dmsg if no the message should be sent to
-        clients, or None if it should not be sent.
-
-        The dmsg is a deserialized message generated by calling:
-
-        > self.kernel_client.session.deserialize(dmsg, content=False)
-
-        The content has not been deserialized yet as we need to verify we
-        should process it.
+        Synchronous execution prevents the race where a stale task from a
+        previous execution appends outputs after the cell has been cleared.
         """
         if msg_type == "clear_output":
-            asyncio.create_task(self.clear_output_task(cell_id, content))
+            self._handle_clear_output(ycell, file_id, cell_id, content)
         else:
-            asyncio.create_task(self.output_task(msg_type, cell_id, content))
-        
-        return None # Don't allow the original message to propagate to the frontend
+            self._write_output(msg_type, ycell, file_id, cell_id, content)
 
-    async def clear_output_task(self, cell_id, content):
-        """A courotine to handle clear_output messages"""
+    # ── Internal ───────────────────────────────────────────────────────────────
 
+    def _handle_clear_output(self, ycell, file_id: str | None, cell_id: str, content: dict):
         wait = content.get("wait", False)
         if wait:
             self._pending_clear_output_cells.add(cell_id)
         else:
-            await self._clear_ydoc_outputs(cell_id)
+            self._clear_ycell_outputs(ycell, file_id, cell_id)
 
-    async def output_task(self, msg_type, cell_id, content):
-        """A coroutine to handle output messages."""
-
-        # Check for pending clear_output before processing output
+    def _write_output(
+        self,
+        msg_type: str,
+        ycell,
+        file_id: str | None,
+        cell_id: str,
+        content: dict,
+    ):
+        # Flush any pending clear before appending new output
         if cell_id in self._pending_clear_output_cells:
-            await self._clear_ydoc_outputs(cell_id)
+            self._clear_ycell_outputs(ycell, file_id, cell_id)
             self._pending_clear_output_cells.discard(cell_id)
 
-        # Get file_id and path from kernel session (handles renames)
-        file_id, path = await self._get_file_info()
-        if file_id is None:
-            self.log.warning(
-                f"No file ID found when processing output for cell: {cell_id}. Continuing."
-            )
-            return
-
-        # Cache the file_id for subsequent operations
-        self._file_id = file_id
-
         display_id = content.get("transient", {}).get("display_id")
-        # Convert from the message spec to the nbformat output structure
-        if self.use_outputs_service: 
+
+        if self.use_outputs_service and file_id:
             output = self.transform_output(msg_type, content, ydoc=False)
             output = self.outputs_manager.write(
                 file_id=file_id,
                 cell_id=cell_id,
                 output=output,
-                display_id=display_id
+                display_id=display_id,
             )
         else:
-            output = self.transform_output(msg_type, content, ydoc=True)
+            output = self.transform_output(msg_type, content, ydoc=False)
 
-        notebook = await self.get_jupyter_ydoc(file_id)
-        if not notebook:
+        if output is None:
             return
-        
-        # Write the outputs to the ydoc cell.
-        _, target_cell = notebook.find_cell(cell_id)
-        if target_cell is not None and output is not None:
-            output_index = self.outputs_manager.get_output_index(display_id) if display_id else None
-            if output_index is not None and output_index < len(target_cell["outputs"]):
-                target_cell["outputs"][output_index] = output
-            else:
-                if output_index is not None:
-                    self.log.warning(
-                        f"Stale output index {output_index} for display_id '{display_id}' "
-                        f"(outputs length: {len(target_cell['outputs'])}), appending instead."
-                    )
-                target_cell["outputs"].append(output)
-            self.log.debug(f"Wrote output to ydoc: {path} {cell_id} {output}")
 
-    
-    def transform_output(self, msg_type, content, ydoc=False):
-        """Transform output from IOPub messages to the nbformat specification."""
-        if ydoc:
-            factory = Map
+        output_index = (
+            self.outputs_manager.get_output_index(display_id)
+            if display_id and self.use_outputs_service else None
+        )
+        outputs = ycell["outputs"]
+        if output_index is not None and output_index < len(outputs):
+            outputs[output_index] = output
         else:
-            factory = lambda x: x
+            if output_index is not None:
+                self.log.warning(
+                    f"Stale output index {output_index} for display_id {display_id!r} "
+                    f"(outputs length: {len(outputs)}), appending instead."
+                )
+            outputs.append(output)
+
+    def _clear_ycell_outputs(self, ycell, file_id: str | None, cell_id: str):
+        del ycell["outputs"][:]
+        if self.use_outputs_service and file_id:
+            self.outputs_manager.clear(file_id=file_id, cell_id=cell_id)
+
+    # ── Output transformation ──────────────────────────────────────────────────
+
+    def transform_output(self, msg_type: str, content: dict, ydoc: bool = False):
+        """Convert an iopub message content dict to nbformat output structure."""
+        factory = Map if ydoc else (lambda x: x)
         if msg_type == "stream":
-            output = factory({
+            return factory({
                 "output_type": "stream",
                 "text": content["text"],
-                "name": content["name"]
+                "name": content["name"],
             })
-        elif msg_type == "display_data" or msg_type == "update_display_data":
-            output = factory({
+        if msg_type in ("display_data", "update_display_data"):
+            return factory({
                 "output_type": "display_data",
                 "data": content["data"],
-                "metadata": content["metadata"]
+                "metadata": content["metadata"],
             })
-        elif msg_type == "execute_result":
-            output = factory({
+        if msg_type == "execute_result":
+            return factory({
                 "output_type": "execute_result",
                 "data": content["data"],
                 "metadata": content["metadata"],
-                "execution_count": content["execution_count"]
+                "execution_count": content["execution_count"],
             })
-        elif msg_type == "error":
-            output = factory({
+        if msg_type == "error":
+            return factory({
                 "output_type": "error",
                 "traceback": content["traceback"],
                 "ename": content["ename"],
-                "evalue": content["evalue"]
+                "evalue": content["evalue"],
             })
-        return output
+        return None

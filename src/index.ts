@@ -1,54 +1,22 @@
 import {
-  ILabShell,
   JupyterFrontEnd,
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
-import { Title, Widget } from '@lumino/widgets';
-
-import {
-  INotebookTracker,
-  NotebookPanel,
-  INotebookModel
-} from '@jupyterlab/notebook';
-import { IStatusBar } from '@jupyterlab/statusbar';
-import { IDisposable } from '@lumino/disposable';
-import { ITranslator, nullTranslator } from '@jupyterlab/translation';
-import { DocumentRegistry } from '@jupyterlab/docregistry';
-import {
-  IKernelStatusModel,
-  ISessionContext,
-  ISessionContextDialogs,
-  SessionContextDialogs
-} from '@jupyterlab/apputils';
-import { KeyboardEvent } from 'react';
-import { IToolbarWidgetRegistry } from '@jupyterlab/apputils';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
-import { AwarenessExecutionIndicator } from './executionindicator';
-
+import { PageConfig, URLExt } from '@jupyterlab/coreutils';
+import { ServerConnection } from '@jupyterlab/services';
+import { Notification } from '@jupyterlab/apputils';
+import { disableSavePlugin } from './disablesave';
+import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
 import {
   rtcContentProvider,
-  yfile,
   ynotebook,
   ychat,
-  logger
+  rtcGlobalAwarenessPlugin
 } from './docprovider';
-
-import { IStateDB, StateDB } from '@jupyterlab/statedb';
-import { IGlobalAwareness } from '@jupyter/collaborative-drive';
-import * as Y from 'yjs';
-import { Awareness } from 'y-protocols/awareness';
-import { IAwareness } from '@jupyter/ydoc';
-
-import { ServerConnection } from '@jupyterlab/services';
-import { WebSocketAwarenessProvider } from './docprovider/awareness';
-import { URLExt } from '@jupyterlab/coreutils';
-import { AwarenessKernelStatus } from './kernelstatus';
-
-import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
-import { notebookFactoryPlugin } from './notebook-factory';
-import { disableSavePlugin } from './disablesave';
 import { outputsServicePlugin } from './outputs';
+import { murmur2 } from './murmur2';
 
 /**
  * Initialization data for the @jupyter-ai-contrib/server-documents extension.
@@ -86,237 +54,176 @@ export const plugin: JupyterFrontEndPlugin<void> = {
 };
 
 /**
- * Jupyter plugin creating a global awareness for RTC.
- */
-export const rtcGlobalAwarenessPlugin: JupyterFrontEndPlugin<IAwareness> = {
-  id: '@jupyter-ai-contrib/server-documents:rtc-global-awareness',
-  description: 'Add global awareness to share working document of users.',
-  requires: [IStateDB],
-  provides: IGlobalAwareness,
-  activate: (app: JupyterFrontEnd, state: StateDB): IAwareness => {
-    const { user } = app.serviceManager;
-
-    const ydoc = new Y.Doc();
-    const awareness = new Awareness(ydoc);
-
-    // TODO: Uncomment once global awareness is working
-    const server = ServerConnection.makeSettings();
-    const url = URLExt.join(server.wsUrl, 'api/collaboration/room');
-
-    new WebSocketAwarenessProvider({
-      url: url,
-      roomID: 'JupyterLab:globalAwareness',
-      awareness: awareness,
-      user: user
-    });
-
-    state.changed.connect(async () => {
-      const data: any = await state.toJSON();
-      const current: string = data['layout-restorer:data']?.main?.current || '';
-
-      // For example matches `notebook:Untitled.ipynb` or `editor:untitled.txt`,
-      // but not when in launcher or terminal.
-      if (current.match(/^\w+:.+/)) {
-        awareness.setLocalStateField('current', current);
-      } else {
-        awareness.setLocalStateField('current', null);
-      }
-    });
-
-    return awareness;
-  }
-};
-
-class AwarenessExecutionIndicatorIcon
-  implements DocumentRegistry.IWidgetExtension<NotebookPanel, INotebookModel>
-{
-  createNew(panel: NotebookPanel): IDisposable {
-    const item = new AwarenessExecutionIndicator();
-    const nb = panel.content;
-    item.model.attachNotebook({ content: nb });
-    panel.toolbar.insertAfter('kernelName', 'awarenessExecutionProgress', item);
-    return item;
-  }
-}
-
-/**
- * A plugin that provides a execution indicator item to the status bar.
- */
-export const executionIndicator: JupyterFrontEndPlugin<void> = {
-  id: '@jupyter-ai-contrib/server-documents:awareness-execution-indicator',
-  description: 'Adds a notebook execution status widget.',
-  autoStart: true,
-  requires: [INotebookTracker, ILabShell, ITranslator, IToolbarWidgetRegistry],
-  optional: [IStatusBar, ISettingRegistry],
-  activate: (
-    app: JupyterFrontEnd,
-    notebookTracker: INotebookTracker,
-    labShell: ILabShell,
-    translator: ITranslator,
-    statusBar: IStatusBar | null,
-    settingRegistry: ISettingRegistry | null,
-    toolbarRegistry: IToolbarWidgetRegistry
-  ) => {
-    console.log(
-      'JupyterLab extension activated: Awareness Execution Indicator'
-    );
-    app.docRegistry.addWidgetExtension(
-      'Notebook',
-      new AwarenessExecutionIndicatorIcon()
-    );
-  }
-};
-
-/**
- * A plugin that provides a kernel status item to the status bar.
- */
-export const kernelStatus: JupyterFrontEndPlugin<IKernelStatusModel> = {
-  id: '@jupyter-ai-contrib/server-documents:awareness-kernel-status',
-  description: 'Provides the kernel status indicator model.',
-  autoStart: true,
-  requires: [IStatusBar],
-  provides: IKernelStatusModel,
-  optional: [ISessionContextDialogs, ITranslator, ILabShell],
-  activate: (
-    app: JupyterFrontEnd,
-    statusBar: IStatusBar,
-    sessionDialogs_: ISessionContextDialogs | null,
-    translator_: ITranslator | null,
-    labShell: ILabShell | null
-  ): IKernelStatusModel => {
-    console.log(
-      'JupyterLab extension activated: Awareness Kernel Status Indicator'
-    );
-    const translator = translator_ ?? nullTranslator;
-    const sessionDialogs =
-      sessionDialogs_ ?? new SessionContextDialogs({ translator });
-    // When the status item is clicked, launch the kernel
-    // selection dialog for the current session.
-    const changeKernel = async () => {
-      if (!item.model.sessionContext) {
-        return;
-      }
-      await sessionDialogs.selectKernel(item.model.sessionContext);
-    };
-
-    const changeKernelOnKeyDown = async (
-      event: KeyboardEvent<HTMLImageElement>
-    ) => {
-      if (
-        event.key === 'Enter' ||
-        event.key === 'Spacebar' ||
-        event.key === ' '
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        return changeKernel();
-      }
-    };
-
-    // Create the status item.
-    const item = new AwarenessKernelStatus(
-      { onClick: changeKernel, onKeyDown: changeKernelOnKeyDown },
-      translator
-    );
-
-    const providers = new Set<(w: Widget | null) => ISessionContext | null>();
-
-    const addSessionProvider = (
-      provider: (w: Widget | null) => ISessionContext | null
-    ): void => {
-      providers.add(provider);
-
-      if (app.shell.currentWidget) {
-        updateSession(app.shell, {
-          newValue: app.shell.currentWidget,
-          oldValue: null
-        });
-      }
-    };
-
-    function updateSession(
-      shell: JupyterFrontEnd.IShell,
-      changes: ILabShell.IChangedArgs
-    ) {
-      const { oldValue, newValue } = changes;
-
-      // Clean up after the old value if it exists,
-      // listen for changes to the title of the activity
-      if (oldValue) {
-        oldValue.title.changed.disconnect(onTitleChanged);
-      }
-
-      item.model.attachDocument(newValue);
-      item.model.sessionContext =
-        [...providers]
-          .map(provider => provider(changes.newValue))
-          .filter(session => session !== null)[0] ?? null;
-
-      if (newValue && item.model.sessionContext) {
-        onTitleChanged(newValue.title);
-        newValue.title.changed.connect(onTitleChanged);
-      }
-    }
-
-    // When the title of the active widget changes, update the label
-    // of the hover text.
-    const onTitleChanged = (title: Title<Widget>) => {
-      item.model!.activityName = title.label;
-    };
-
-    if (labShell) {
-      labShell.currentChanged.connect(updateSession);
-    }
-
-    statusBar.registerStatusItem(kernelStatus.id, {
-      priority: 1,
-      item,
-      align: 'left',
-      rank: 1,
-      isActive: () => true
-    });
-
-    return { addSessionProvider };
-  }
-};
-
-/**
- * Notebook cell executor plugin, provided by JupyterLab by default. Re-provided
- * to ensure compatibility with `jupyter_collaboration`.
+ * Notebook cell executor plugin.
  *
- * The `@jupyter/docprovider-extension` disables this plugin to override it, but
- * we disable that labextension, leaving `INotebookCellExecutor` un-implemented.
- * This plugin fixes that issue by re-providing this plugin with `autoStart:
- * false`, which specifies that this plugin only gets activated if no other
- * implementation exists, e.g. only when `jupyter_collaboration` is installed.
+ * When serverSideExecution is enabled (set by the Python extension), runs
+ * cells via POST /api/kernels/{id}/execute so outputs route through the
+ * server-side YDoc rather than coming back over the kernel WebSocket.
+ *
+ * Falls back to the default WebSocket-based runCell when the flag is not set.
+ * autoStart: false means this only activates when no other implementation
+ * of INotebookCellExecutor has been provided.
  */
-export const backupCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
+export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecutor> =
   {
-    id: '@jupyter-ai-contrib/server-documents:backup-cell-executor',
+    id: '@jupyter-ai-contrib/server-documents:server-cell-executor',
     description:
-      'Provides a backup default implementation of the notebook cell executor.',
+      'Provides notebook cell executor; uses server-side execution when enabled.',
     autoStart: false,
     provides: INotebookCellExecutor,
-    activate: (): INotebookCellExecutor => {
-      return Object.freeze({ runCell });
+    activate: (app: JupyterFrontEnd): INotebookCellExecutor => {
+      if (PageConfig.getOption('serverSideExecution') !== 'true') {
+        return Object.freeze({ runCell });
+      }
+
+      const serverSettings = app.serviceManager.serverSettings;
+      // Track the last request_id per document so successive runCell calls
+      // can chain previous_request_id without touching any notebook internals.
+      const lastRequestIdByDoc = new Map<string, string>();
+      return {
+        async runCell({
+          cell,
+          notebook,
+          onCellExecuted,
+          onCellExecutionScheduled,
+          sessionContext,
+          sessionDialogs,
+          translator
+        }) {
+          if (cell.model.type !== 'code') {
+            if (cell.model.type === 'markdown') {
+              (cell as any).rendered = true;
+              cell.inputHidden = false;
+            }
+            onCellExecuted({ cell, success: true });
+            return true;
+          }
+
+          if (!sessionContext) {
+            return true;
+          }
+
+          if (sessionContext.hasNoKernel) {
+            const shouldSelect = await sessionContext.startKernel();
+            if (shouldSelect && sessionDialogs) {
+              await sessionDialogs.selectKernel(sessionContext);
+            }
+          }
+
+          if (sessionContext.hasNoKernel) {
+            return true;
+          }
+
+          const kernelId = sessionContext?.session?.kernel?.id;
+          const apiURL = URLExt.join(
+            serverSettings.baseUrl,
+            `api/kernels/${kernelId}/execute`
+          );
+          const cellId = cell.model.sharedModel.getId();
+          // Prefer document_id from the shared model state — this is the
+          // room name set by the WebSocket provider (same key used by
+          // jupyter-server-nbmodel).  Falls back to path so the server can
+          // resolve it via file_id_manager if document_id is not yet set.
+          const documentId = notebook.sharedModel.getState('document_id') as
+            | string
+            | undefined;
+          const path = sessionContext?.session?.path ?? '';
+
+          // Compute MurmurHash2 of the cell source so the server can detect
+          // if another user's edit arrived after this user pressed Run.
+          // Uses seed 0 to match the hash format sent to the server.
+          // MurmurHash2 is synchronous and works in non-secure (HTTP) contexts,
+          // consistent with its use in @jupyterlab/debugger.
+          const source = cell.model.sharedModel.getSource();
+          const sourceHash = String(murmur2(source, 0));
+
+          // Include the client ID so the server can attribute who executed
+          // the cell and scope the ordering chain per-client.  Each browser tab
+          // gets a unique client ID from the collaborative drive's awareness.
+          const clientId = String(
+            notebook.sharedModel.awareness?.clientID ?? ''
+          );
+
+          // Generate a unique ID for this request and chain it to the
+          // previous one so the server can enforce FIFO order even when
+          // network jitter causes requests to arrive out of sequence.
+          // The chain is keyed per document+client so that two users running
+          // cells simultaneously don't block each other.
+          const docKey = `${documentId ?? path}:${clientId}`;
+          const requestId = crypto.randomUUID();
+          const previousRequestId = lastRequestIdByDoc.get(docKey);
+          lastRequestIdByDoc.set(docKey, requestId);
+
+          if (!documentId) {
+            // document_id not yet in shared model state — fall back to path.
+            // The server resolves it via file_id_manager.
+            console.warn('[JSD] document_id not set; falling back to path');
+          }
+
+          onCellExecutionScheduled({ cell });
+          try {
+            const response = await ServerConnection.makeRequest(
+              apiURL,
+              {
+                method: 'POST',
+                body: JSON.stringify({
+                  document_id: documentId ?? path,
+                  cells: [{ cell_id: cellId, source_hash: sourceHash }],
+                  client_id: clientId || undefined,
+                  request_id: requestId,
+                  ...(previousRequestId
+                    ? { previous_request_id: previousRequestId }
+                    : {})
+                })
+              },
+              serverSettings
+            );
+            if (response.status === 409) {
+              // Source mismatch — another user edited the cell after this user
+              // pressed Run. Show a visible warning so the user knows to re-run.
+              // Clear the ordering chain: this request was never enqueued on the
+              // server so the next run must not reference it as a predecessor.
+              lastRequestIdByDoc.delete(docKey);
+              Notification.warning(
+                'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
+                { autoClose: 5000 }
+              );
+              onCellExecuted({ cell, success: false });
+              return false;
+            }
+            if (!response.ok) {
+              // Any other failure (408, 500, etc.) also breaks the chain —
+              // the request was never successfully enqueued.
+              lastRequestIdByDoc.delete(docKey);
+            }
+            onCellExecuted({ cell, success: response.ok });
+            return response.ok;
+          } catch (error) {
+            onCellExecuted({ cell, success: false });
+            if (!cell.isDisposed) {
+              throw error;
+            }
+            return false;
+          }
+        }
+      };
     }
   };
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
-  rtcContentProvider,
-  yfile,
-  ynotebook,
-  logger,
-  rtcGlobalAwarenessPlugin,
   plugin,
-  executionIndicator,
-  kernelStatus,
-  notebookFactoryPlugin,
-  codemirrorYjsPlugin,
-  backupCellExecutorPlugin,
+  serverCellExecutorPlugin,
   disableSavePlugin,
+  codemirrorYjsPlugin,
+  // Provide our own collaborative content provider so notebooks connect to
+  // our YRoom WebSocket directly, without requiring jupyter-collaboration's
+  // Python server extension or its contentProviderRegistry machinery.
+  rtcContentProvider,
+  ynotebook,
   ychat,
-  // not enabled by default
+  // Override jupyter-collaboration's global awareness to ensure it connects
+  // to our own backend. See #249 and dlqqq's review comment on #248.
+  rtcGlobalAwarenessPlugin,
   outputsServicePlugin
 ];
 

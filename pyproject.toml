@@ -29,7 +29,7 @@ classifiers = [
 dependencies = [
     # 2.4.0 activates collaboration plugins that expect the default
     # docprovider extension, which server-documents replaces.
-    "jupyter-collaboration-ui>=2.0.2,<3",
+    "jupyter-collaboration-ui>=2.0.2,<2.4.0",
     "jupyter_server>=2.4.0,<3",
     "jupyter_server_fileid>=0.9.0,<0.10.0",
     "jupyter_ydoc>=3.0.0,<4.0.0",
@@ -42,12 +42,14 @@ dynamic = ["version", "description", "authors", "urls", "keywords"]
 [project.optional-dependencies]
 test = [
     "coverage",
+    "ipykernel",
     "pytest",
     # pytest-asyncio <1.1.0 incorrectly resolves async fixtures to async
     # generators instead of the yielded object.
     "pytest-asyncio>=1.1.0",
     "pytest-cov",
     "pytest-jupyter[server]>=0.6.0",
+    "pytest-timeout",
 ]
 
 [tool.hatch.version]

@@ -19,11 +19,13 @@ from .yroom_update_channel import YRoomUpdateChannel
 if TYPE_CHECKING:
     import logging
     from typing import Callable, Coroutine, Literal, Tuple, Any
+    from jupyter_client.asynchronous.client import AsyncKernelClient
     from .yroom_manager import YRoomManager
     from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
     from jupyter_server.services.contents.manager import ContentsManager
     from pycrdt import TransactionEvent, Subscription
     from ..outputs.manager import OutputsManager
+
 
 class YRoom(LoggingConfigurable):
     """
@@ -320,7 +322,7 @@ class YRoom(LoggingConfigurable):
     
 
     @property
-    def outputs_manager(self) -> OutputsManager | None:
+    def outputs_manager(self) -> OutputsManager:
         return self.parent.outputs_manager
     
 
@@ -1016,15 +1018,9 @@ class YRoom(LoggingConfigurable):
         # alive indefinitely.
         if topic == "change":
             self._update_activity("_on_awareness_update")
-        self.log.debug(f"awareness update, topic={topic}, changes={changes}, changes[1]={changes[1]}, meta={self._awareness.meta}, ydoc.clientid={self._ydoc.client_id}, roomId={self.room_id}")
         updated_clients = [v for value in changes[0].values() for v in value]
-        self.log.debug(f"awareness update, updated_clients={updated_clients}")
         state = self._awareness.encode_awareness_update(updated_clients)
         message = pycrdt.create_awareness_message(state)
-        # !r ensures binary messages show as `b'...'`  instead of being decoded
-        # into jargon in log statements.
-        # https://docs.python.org/3/library/string.html#format-string-syntax
-        self.log.debug(f"awareness update, message={message!r}")
         self._broadcast_message(message, "AwarenessUpdate")
     
 
@@ -1056,7 +1052,6 @@ class YRoom(LoggingConfigurable):
         """
         self.stop(close_code=4002, immediately=True)
     
-
     def stop(self, close_code: int = 1001, immediately: bool = False, restarting: bool = False) -> None:
         """
         Stops the YRoom. This method:
