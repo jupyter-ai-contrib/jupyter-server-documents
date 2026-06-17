@@ -182,7 +182,6 @@ Import everything from `./helpers`.
 
 | Export                                        | Purpose                                                                                                                   |
 | --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `SYNC_TEST_RUNS`                              | How many times to register each repeatable test. `JSD_SYNC_TEST_RUNS` env override → else `5` on CI → else `1`.           |
 | `EMPTY_NOTEBOOK`                              | JSON string of a minimal 1-empty-code-cell notebook for `uploadContent`.                                                  |
 | `uniqueToken()`                               | `Date.now()-rand` token; use it for both file names and content sentinels.                                                |
 | `IRoomInfo` / `sourceText(room)`              | Room shape; `sourceText` normalizes `source` (string or notebook object) to a searchable string (`''` if room is `null`). |
@@ -245,26 +244,26 @@ For a notebook, upload `EMPTY_NOTEBOOK`, `openDocument`, then
 `await dismissKernelDialogIfPresent(page)` before editing with
 `page.notebook.setCell(...)` / `appendToCell(...)`.
 
-### Repeating a test N times (every run must pass)
+### Repeating tests (flakiness detection)
 
-To bake repetition into a spec (per-test, in code — there is no
-`test.repeat()`), register the test body in a loop. Reuse the shared
-`SYNC_TEST_RUNS` constant so behavior is consistent and CI-aware:
+Repetition is global, via Playwright's `repeatEach` set in
+`playwright.config.js`: every test runs N times and **all** repetitions must
+pass (this is not a retry — `retries` is 0). N resolves from
+`JSD_TEST_REPEATS`, else `3` on CI, else `1` locally. So a new spec needs no
+special wiring — just write plain `test('...', body)` and it's repeated
+automatically on CI.
 
 ```ts
-import { SYNC_TEST_RUNS } from './helpers';
-
-async function myBody({ page, tmpPath }: { page; tmpPath: string }) {
-  /* ... */
-}
-
-for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
-  const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(`my new test${suffix}`, myBody);
-}
+test('my new test', myBody); // repeated per `repeatEach`; nothing else needed
 ```
 
-Each repetition is a distinct test case (not a retry) and all must pass.
+For ad-hoc flake hunting, override the count without touching config:
+
+```bash
+JSD_TEST_REPEATS=20 jlpm playwright test tests/divergent-sync.spec.ts
+# or Playwright's flag, which overrides repeatEach:
+jlpm playwright test -g "no content duplication" --repeat-each=20
+```
 
 ## Gotchas / conventions (read before writing tests)
 
@@ -310,6 +309,6 @@ attribute 'strip'` — a final teardown save racing galata's deletion of the
 ## CI
 
 The repo's integration-tests job runs `jlpm playwright test`; specs under
-`ui-tests/tests/` are picked up automatically (no extra wiring). `SYNC_TEST_RUNS`
-defaults to `5` on CI (set `JSD_SYNC_TEST_RUNS` to override). `test-results/` and
-`playwright-report/` are git-ignored.
+`ui-tests/tests/` are picked up automatically (no extra wiring). Every test is
+repeated `repeatEach` times — `3` on CI (set `JSD_TEST_REPEATS` to override).
+`test-results/` and `playwright-report/` are git-ignored.
