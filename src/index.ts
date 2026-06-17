@@ -7,14 +7,8 @@ import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
 import { Notification } from '@jupyterlab/apputils';
+import { jsdDocumentProviderFactory } from './docprovider';
 import { disableSavePlugin } from './disablesave';
-import { codemirrorYjsPlugin } from './codemirror-binding/plugin';
-import {
-  rtcContentProvider,
-  ynotebook,
-  ychat,
-  rtcGlobalAwarenessPlugin
-} from './docprovider';
 import { outputsServicePlugin } from './outputs';
 import { murmur2 } from './murmur2';
 
@@ -214,16 +208,8 @@ const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
   serverCellExecutorPlugin,
   disableSavePlugin,
-  codemirrorYjsPlugin,
-  // Provide our own collaborative content provider so notebooks connect to
-  // our YRoom WebSocket directly, without requiring jupyter-collaboration's
-  // Python server extension or its contentProviderRegistry machinery.
-  rtcContentProvider,
-  ynotebook,
-  ychat,
-  // Override jupyter-collaboration's global awareness to ensure it connects
-  // to our own backend. See #249 and dlqqq's review comment on #248.
-  rtcGlobalAwarenessPlugin,
+  jsdDocumentProviderFactory,
+  // not enabled by default
   outputsServicePlugin
 ];
 
