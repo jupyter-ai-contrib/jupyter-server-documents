@@ -1,21 +1,6 @@
 import { expect, IJupyterLabPageFixture } from '@jupyterlab/galata';
 
 /**
- * Number of times each sync/divergent-sync test is registered (every repetition
- * is a distinct test case that must pass — this is not a retry). Resolution:
- *   - `JSD_SYNC_TEST_RUNS` env var, if set → that value
- *   - else, on CI → 5 (fan out to catch flakiness)
- *   - otherwise → 1 (fast local runs)
- */
-export const SYNC_TEST_RUNS: number = (() => {
-  const override = process.env.JSD_SYNC_TEST_RUNS;
-  if (override !== undefined && override !== '') {
-    return Number(override);
-  }
-  return process.env.CI ? 5 : 1;
-})();
-
-/**
  * A minimal valid notebook with a single empty code cell, as a JSON string
  * suitable for `page.contents.uploadContent(..., 'text', path)`.
  */

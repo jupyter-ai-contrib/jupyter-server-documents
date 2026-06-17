@@ -72,12 +72,12 @@ uv add "jupyterlab-chat>=0.18.2" jupyter-ai-router
   `settings["jupyter-ai"]["router"]`) that routes chat messages to observers.
 
 **Version matching matters.** JSD bundles `jupyterlab-chat` as a shared
-singleton in its prebuilt frontend (currently 0.18.2). The *installed*
+singleton in its prebuilt frontend (currently 0.18.2). The _installed_
 `jupyterlab-chat` labextension must be module-federation-compatible with that
 bundled version, or its plugins fail to activate and **the entire lab boot
 hangs** (every ui-test then times out on the splash screen). `>=0.18.2` is the
 floor; newer (e.g. 0.22.x) is compatible. Do **not** install an older
-`jupyterlab-chat` (e.g. 0.12.x) — it is *not* federation-compatible with the
+`jupyterlab-chat` (e.g. 0.12.x) — it is _not_ federation-compatible with the
 0.18.2 frontend. Note `jupyterlab-chat` pulls in the full `jupyter-collaboration`
 stack transitively; JSD ships config that disables the competing
 `jupyter_server_ydoc` server extension and `@jupyter/docprovider-extension`
@@ -180,28 +180,28 @@ GC defaults make the offline approach safe: `YRoom.inactivity_timeout=60s`,
 
 Import everything from `./helpers`.
 
-| Export                                    | Purpose                                                                                                                   |
-| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `SYNC_TEST_RUNS`                          | How many times to register each repeatable test. `JSD_SYNC_TEST_RUNS` env override → else `5` on CI → else `1`.           |
-| `EMPTY_NOTEBOOK`                          | JSON string of a minimal 1-empty-code-cell notebook for `uploadContent`.                                                  |
-| `uniqueToken()`                           | `Date.now()-rand` token; use it for both file names and content sentinels.                                                |
-| `IRoomInfo` / `sourceText(room)`          | Room shape; `sourceText` normalizes `source` (string or notebook object) to a searchable string (`''` if room is `null`). |
-| `getRoomInfo(page, path)`                 | Single room or `null` (404). Throws on other HTTP errors.                                                                 |
-| `recreateRoom(page, path)`                | Forces server room recreation; returns freed old `client_id`s.                                                            |
-| `openDocument(page, path)`                | Opens a doc by **exact path** via the `docmanager:open` command.                                                          |
-| `getDocPath(page, fileName)`              | Real server path of an open widget whose path ends with `fileName` (or `null`).                                           |
-| `openedDocPath(page, fileName)`           | Polls until the widget is open, returns its real path.                                                                    |
-| `getDocText(page, path)`                  | Client-side document content as a normalized string (file source or notebook JSON).                                       |
-| `typeInFileEditor(page, text)`            | Real keystrokes into the file editor (appends at end of line).                                                            |
-| `appendToCell(page, idx, text)`           | Real keystrokes appended to a notebook cell.                                                                              |
-| `waitForRoom(page, path)`                 | Polls until a room exists (also verifies the test extension loaded).                                                      |
-| `waitForServerContent(page, path, token)` | Polls until the server's copy contains `token` (i.e. the edit synced up).                                                 |
-| `dismissKernelDialogIfPresent(page)`      | Dismisses the "Select Kernel" dialog (picks "No Kernel").                                                                 |
-| `chatInstalled(page)` | Whether `jupyterlab-chat` is installed (`hasCommand('jupyterlab-chat:open')`); use to `test.skip`. |
-| `openChat(page, path)` | Opens a `.chat` doc by exact path and waits for the chat input. |
-| `sendChatMessage(page, content)` | Types `content` into the chat input and sends it (real keystrokes). |
-| `renderedMessageCount(page, sentinel)` | Count of rendered chat messages containing `sentinel` (1=ok, 2=dup, 0=loss). |
-| `getRouterFires(page, path)` / `IRouterFires` | jupyter-ai-router fire record for the file's room: `{ fires, count, hooked }`. |
+| Export                                        | Purpose                                                                                                                   |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `SYNC_TEST_RUNS`                              | How many times to register each repeatable test. `JSD_SYNC_TEST_RUNS` env override → else `5` on CI → else `1`.           |
+| `EMPTY_NOTEBOOK`                              | JSON string of a minimal 1-empty-code-cell notebook for `uploadContent`.                                                  |
+| `uniqueToken()`                               | `Date.now()-rand` token; use it for both file names and content sentinels.                                                |
+| `IRoomInfo` / `sourceText(room)`              | Room shape; `sourceText` normalizes `source` (string or notebook object) to a searchable string (`''` if room is `null`). |
+| `getRoomInfo(page, path)`                     | Single room or `null` (404). Throws on other HTTP errors.                                                                 |
+| `recreateRoom(page, path)`                    | Forces server room recreation; returns freed old `client_id`s.                                                            |
+| `openDocument(page, path)`                    | Opens a doc by **exact path** via the `docmanager:open` command.                                                          |
+| `getDocPath(page, fileName)`                  | Real server path of an open widget whose path ends with `fileName` (or `null`).                                           |
+| `openedDocPath(page, fileName)`               | Polls until the widget is open, returns its real path.                                                                    |
+| `getDocText(page, path)`                      | Client-side document content as a normalized string (file source or notebook JSON).                                       |
+| `typeInFileEditor(page, text)`                | Real keystrokes into the file editor (appends at end of line).                                                            |
+| `appendToCell(page, idx, text)`               | Real keystrokes appended to a notebook cell.                                                                              |
+| `waitForRoom(page, path)`                     | Polls until a room exists (also verifies the test extension loaded).                                                      |
+| `waitForServerContent(page, path, token)`     | Polls until the server's copy contains `token` (i.e. the edit synced up).                                                 |
+| `dismissKernelDialogIfPresent(page)`          | Dismisses the "Select Kernel" dialog (picks "No Kernel").                                                                 |
+| `chatInstalled(page)`                         | Whether `jupyterlab-chat` is installed (`hasCommand('jupyterlab-chat:open')`); use to `test.skip`.                        |
+| `openChat(page, path)`                        | Opens a `.chat` doc by exact path and waits for the chat input.                                                           |
+| `sendChatMessage(page, content)`              | Types `content` into the chat input and sends it (real keystrokes).                                                       |
+| `renderedMessageCount(page, sentinel)`        | Count of rendered chat messages containing `sentinel` (1=ok, 2=dup, 0=loss).                                              |
+| `getRouterFires(page, path)` / `IRouterFires` | jupyter-ai-router fire record for the file's room: `{ fires, count, hooked }`.                                            |
 
 ## Recipe: add a new UI test
 

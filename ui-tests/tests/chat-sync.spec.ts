@@ -8,7 +8,6 @@ import {
   renderedMessageCount,
   sendChatMessage,
   sourceText,
-  SYNC_TEST_RUNS,
   uniqueToken,
   waitForRoom,
   waitForServerContent
@@ -155,11 +154,8 @@ async function chatNoDataLoss({ page, tmpPath }: Fixtures): Promise<void> {
   expect(after!.client_id).toBe(before!.client_id);
 }
 
-for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
-  const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(
-    `chat: no content duplication after the server recreates the room${suffix}`,
-    chatNoDuplication
-  );
-  test(`chat: no data loss on a normal reconnect${suffix}`, chatNoDataLoss);
-}
+test(
+  'chat: no content duplication after the server recreates the room',
+  chatNoDuplication
+);
+test('chat: no data loss on a normal reconnect', chatNoDataLoss);

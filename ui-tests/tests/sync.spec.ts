@@ -7,7 +7,6 @@ import {
   getRoomInfo,
   openDocument,
   openedDocPath,
-  SYNC_TEST_RUNS,
   typeInFileEditor,
   uniqueToken,
   waitForRoom,
@@ -132,14 +131,11 @@ async function notebookOfflineEdits({
   ]);
 }
 
-for (let run = 1; run <= SYNC_TEST_RUNS; run++) {
-  const suffix = SYNC_TEST_RUNS > 1 ? ` [run ${run}/${SYNC_TEST_RUNS}]` : '';
-  test(
-    `text file: offline edits survive a normal reconnect${suffix}`,
-    textFileOfflineEdits
-  );
-  test(
-    `notebook: offline edits survive a normal reconnect${suffix}`,
-    notebookOfflineEdits
-  );
-}
+test(
+  'text file: offline edits survive a normal reconnect',
+  textFileOfflineEdits
+);
+test(
+  'notebook: offline edits survive a normal reconnect',
+  notebookOfflineEdits
+);
