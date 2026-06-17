@@ -7,9 +7,7 @@ import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
 import { Notification } from '@jupyterlab/apputils';
-import { AwarenessExecutionIndicator } from './executionindicator';
 import { jsdDocumentProviderFactory } from './docprovider';
-import { AwarenessKernelStatus } from './kernelstatus';
 import { disableSavePlugin } from './disablesave';
 import { outputsServicePlugin } from './outputs';
 import { murmur2 } from './murmur2';
@@ -48,20 +46,6 @@ export const plugin: JupyterFrontEndPlugin<void> = {
     }
   }
 };
-
-
-class AwarenessExecutionIndicatorIcon implements DocumentRegistry.IWidgetExtension<
-  NotebookPanel,
-  INotebookModel
-> {
-  createNew(panel: NotebookPanel): IDisposable {
-    const item = new AwarenessExecutionIndicator();
-    const nb = panel.content;
-    item.model.attachNotebook({ content: nb });
-    panel.toolbar.insertAfter('kernelName', 'awarenessExecutionProgress', item);
-    return item;
-  }
-}
 
 /**
  * Notebook cell executor plugin.
@@ -222,8 +206,6 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
 
 const plugins: JupyterFrontEndPlugin<unknown>[] = [
   plugin,
-  executionIndicator,
-  kernelStatus,
   serverCellExecutorPlugin,
   disableSavePlugin,
   jsdDocumentProviderFactory,
