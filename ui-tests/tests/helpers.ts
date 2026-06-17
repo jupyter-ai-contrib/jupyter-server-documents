@@ -317,3 +317,116 @@ export async function dismissKernelDialogIfPresent(
     .waitFor({ state: 'hidden', timeout: 10000 })
     .catch(() => undefined);
 }
+
+// ---------------------------------------------------------------------------
+// jupyterlab-chat fixtures
+//
+// These cover the optional `jupyterlab-chat` dependency. Selectors/commands are
+// adapted from jupyterlab/jupyter-chat's own `ui-tests/tests/test-utils.ts`.
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether `jupyterlab-chat` is installed in the running app. Suites that need
+ * chat should `test.skip(!(await chatInstalled(page)), ...)` so they pass
+ * cleanly in environments where chat isn't installed.
+ */
+export async function chatInstalled(
+  page: IJupyterLabPageFixture
+): Promise<boolean> {
+  return page.evaluate(() =>
+    (window as any).jupyterapp.commands.hasCommand('jupyterlab-chat:open')
+  );
+}
+
+/**
+ * Opens a `.chat` document (in the main area) by its exact path, then waits
+ * until the chat input is mounted and ready to interact with.
+ */
+export async function openChat(
+  page: IJupyterLabPageFixture,
+  path: string
+): Promise<void> {
+  await page.evaluate(async filepath => {
+    await (window as any).jupyterapp.commands.execute('jupyterlab-chat:open', {
+      filepath
+    });
+  }, path);
+  await page
+    .locator('.jp-chat-input-container')
+    .first()
+    .waitFor({ state: 'visible', timeout: 30000 });
+}
+
+/**
+ * Types `content` into the chat input and sends it via the send button (real
+ * keystrokes, exercising the input → YChat path).
+ */
+export async function sendChatMessage(
+  page: IJupyterLabPageFixture,
+  content: string
+): Promise<void> {
+  const input = page
+    .locator('.jp-chat-input-container')
+    .getByRole('combobox')
+    .first();
+  await input.click();
+  await input.pressSequentially(content);
+  await page
+    .locator('.jp-chat-input-container .jp-chat-send-button')
+    .first()
+    .click();
+}
+
+/**
+ * Number of rendered chat messages whose body contains `sentinel` — the
+ * client-side, user-visible source of truth (`getDocText` doesn't apply to
+ * chat). `1` = correct, `2`+ = duplication, `0` = loss.
+ */
+export async function renderedMessageCount(
+  page: IJupyterLabPageFixture,
+  sentinel: string
+): Promise<number> {
+  return page
+    .locator('.jp-chat-messages-container .jp-chat-message', {
+      hasText: sentinel
+    })
+    .count();
+}
+
+/**
+ * Result of the test-only `/jsd-test/router-fires` endpoint: the bodies of all
+ * messages the jupyter-ai-router routed for the file's room, and whether the
+ * router observer was attached (i.e. jupyter-ai-router is installed).
+ */
+export interface IRouterFires {
+  fires: string[];
+  count: number;
+  hooked: boolean;
+}
+
+/**
+ * Returns the jupyter-ai-router fire record for the document at `path` — every
+ * message body the router routed, in order. Used to assert each message fires
+ * the router exactly once and that a reconnection does not re-fire it.
+ */
+export async function getRouterFires(
+  page: IJupyterLabPageFixture,
+  path: string
+): Promise<IRouterFires> {
+  return page.evaluate(async (p: string) => {
+    const settings = (window as any).jupyterapp.serviceManager.serverSettings;
+    const xsrf = document.cookie.match(/\b_xsrf=([^;]+)/)?.[1] ?? '';
+    const headers: Record<string, string> = { 'X-XSRFToken': xsrf };
+    if (settings.token) {
+      headers['Authorization'] = `token ${settings.token}`;
+    }
+    const res = await fetch(
+      settings.baseUrl + `jsd-test/router-fires?path=${encodeURIComponent(p)}`,
+      { headers }
+    );
+    if (!res.ok) {
+      throw new Error(`router-fires -> HTTP ${res.status}`);
+    }
+    return res.json();
+  }, path);
+}

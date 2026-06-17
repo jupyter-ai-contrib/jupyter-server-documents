@@ -49,8 +49,39 @@ ui-tests/
     ├── helpers.ts                  # shared fixtures/utilities (import from here)
     ├── jupyter_server_documents.spec.ts  # extension-activation smoke test
     ├── sync.spec.ts                # normal (non-divergent) reconnect: edits preserved
-    └── divergent-sync.spec.ts      # divergent reconnect: no duplication / no loss
+    ├── divergent-sync.spec.ts      # divergent reconnect: no duplication / no loss
+    ├── chat-sync.spec.ts           # jupyterlab-chat: no dup (divergent) / no loss (normal)
+    └── chat-router.spec.ts         # jupyter-ai-router: each msg fires once; reconnect doesn't re-fire
 ```
+
+## Optional dependencies (chat + router tests)
+
+`chat-sync.spec.ts` and `chat-router.spec.ts` exercise two optional packages.
+They `test.skip` cleanly when the package isn't installed, so the suite stays
+green without them — but to run them locally you need:
+
+```bash
+# from the workspace root (uv-managed)
+uv add "jupyterlab-chat>=0.18.2" jupyter-ai-router
+# CI installs the same via pip in the integration-tests job.
+```
+
+- **`jupyterlab-chat`** provides the `.chat` document factory + the `YChat`
+  shared model (messages live in a top-level `Y.Array` named `messages`).
+- **`jupyter-ai-router`** provides the `MessageRouter` (at
+  `settings["jupyter-ai"]["router"]`) that routes chat messages to observers.
+
+**Version matching matters.** JSD bundles `jupyterlab-chat` as a shared
+singleton in its prebuilt frontend (currently 0.18.2). The *installed*
+`jupyterlab-chat` labextension must be module-federation-compatible with that
+bundled version, or its plugins fail to activate and **the entire lab boot
+hangs** (every ui-test then times out on the splash screen). `>=0.18.2` is the
+floor; newer (e.g. 0.22.x) is compatible. Do **not** install an older
+`jupyterlab-chat` (e.g. 0.12.x) — it is *not* federation-compatible with the
+0.18.2 frontend. Note `jupyterlab-chat` pulls in the full `jupyter-collaboration`
+stack transitively; JSD ships config that disables the competing
+`jupyter_server_ydoc` server extension and `@jupyter/docprovider-extension`
+labextension, so JSD remains the sole collaboration provider.
 
 ## How the test server runs
 
@@ -98,6 +129,24 @@ Both endpoints are strictly **scoped by file path → file id**, so they only ev
 touch the document under test, never another test's room or the shared
 `JupyterLab:globalAwareness` room.
 
+### Router hook (`/jsd-test/router-fires`)
+
+For the `jupyter-ai-router` test, `jsd_test_ext.py` also attaches an observer to
+the router's `MessageRouter` and records every routed message body per room:
+
+- `GET /jsd-test/router-fires?path=<path>` → `{ fires: string[], count, hooked }`.
+  `fires` is the ordered list of message bodies the router routed for the file's
+  room; `hooked` is whether the router observer attached (i.e.
+  `jupyter-ai-router` is installed — tests skip when it's `false`).
+
+The hook is registered lazily (`IOLoop.add_callback` → poll
+`settings["jupyter-ai"]["router"]`), because the `jupyter_ai_router` server
+extension may load after this one. It calls `router.observe_chat_init(...)` and,
+per room, `router.observe_chat_msg(room_id, recorder)`. The router only routes
+messages newer than its connection time, so messages reloaded from disk on a
+reconnect are **not** re-routed — which is exactly what `chat-router.spec.ts`
+asserts.
+
 ## What the tests exercise (and where the fix lives)
 
 - The client-side fix is in `src/docprovider/yprovider.ts`
@@ -114,6 +163,15 @@ touch the document under test, never another test's room or the shared
   `page.context().setOffline(true)` (no room recreation), edit offline,
   reconnect, and assert all edits survive and `client_id` is **unchanged**
   (proving it was a same-session, non-divergent reconnect).
+- `chat-sync.spec.ts` (needs `jupyterlab-chat`): the same no-duplication
+  (divergent recreate) and no-data-loss (offline reconnect) guarantees, but for
+  a `.chat` document. Chat content is read from the rendered message DOM
+  (`.jp-chat-messages-container .jp-chat-message`) since `getDocText` doesn't
+  apply to chat.
+- `chat-router.spec.ts` (needs `jupyterlab-chat` + `jupyter-ai-router`): asserts
+  each sent message fires the router **exactly once**, and that a reconnection
+  (room recreation + disk reload) does **not** re-fire the router — while a new
+  message after reconnect still fires once. Reads `/jsd-test/router-fires`.
 
 GC defaults make the offline approach safe: `YRoom.inactivity_timeout=60s`,
 `YRoomManager.auto_free_interval=300s`, so a ~1s offline blip never GCs the room.
@@ -139,6 +197,11 @@ Import everything from `./helpers`.
 | `waitForRoom(page, path)`                 | Polls until a room exists (also verifies the test extension loaded).                                                      |
 | `waitForServerContent(page, path, token)` | Polls until the server's copy contains `token` (i.e. the edit synced up).                                                 |
 | `dismissKernelDialogIfPresent(page)`      | Dismisses the "Select Kernel" dialog (picks "No Kernel").                                                                 |
+| `chatInstalled(page)` | Whether `jupyterlab-chat` is installed (`hasCommand('jupyterlab-chat:open')`); use to `test.skip`. |
+| `openChat(page, path)` | Opens a `.chat` doc by exact path and waits for the chat input. |
+| `sendChatMessage(page, content)` | Types `content` into the chat input and sends it (real keystrokes). |
+| `renderedMessageCount(page, sentinel)` | Count of rendered chat messages containing `sentinel` (1=ok, 2=dup, 0=loss). |
+| `getRouterFires(page, path)` / `IRouterFires` | jupyter-ai-router fire record for the file's room: `{ fires, count, hooked }`. |
 
 ## Recipe: add a new UI test
 

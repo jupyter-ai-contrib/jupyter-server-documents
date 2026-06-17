@@ -24,6 +24,7 @@ import json
 import tornado
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
+from tornado.ioloop import IOLoop
 
 
 def _rooms_for_path(settings, path):
@@ -44,6 +45,79 @@ def _rooms_for_path(settings, path):
         for room in manager.list_document_rooms()
         if room.room_id.endswith(f":{fid}")
     ]
+
+
+# ---------------------------------------------------------------------------
+# jupyter-ai-router observer hook
+#
+# Records every chat message routed by jupyter-ai-router's MessageRouter, keyed
+# by room id, so the chat-router E2E test can assert each message fires the
+# router exactly once and that a reconnection (room recreation) does not re-fire
+# it. The router lives at ``settings["jupyter-ai"]["router"]`` and is created by
+# the ``jupyter_ai_router`` server extension, which may load after this one — so
+# registration is deferred until the router appears.
+# ---------------------------------------------------------------------------
+
+# room_id -> list of routed message bodies (in fire order).
+_ROUTER_FIRES: dict[str, list[str]] = {}
+
+# Whether the jupyter-ai-router observer was successfully attached (i.e. the
+# router is installed). Surfaced by the endpoint so tests can skip when absent.
+_ROUTER_HOOKED = False
+
+
+def _attach_router_observer(router, log) -> None:
+    """Attach a message observer to every chat room the router connects."""
+    global _ROUTER_HOOKED
+
+    def _record(room_id, message):
+        _ROUTER_FIRES.setdefault(room_id, []).append(getattr(message, "body", ""))
+
+    def _on_chat_init(room_id, _ychat):
+        # Re-registered on every (re)connect: the router clears a room's message
+        # observers on disconnect, so this never double-counts.
+        router.observe_chat_msg(room_id, _record)
+
+    router.observe_chat_init(_on_chat_init)
+
+    # Cover any chats that connected before this hook registered (defensive;
+    # in the tests chats are opened well after startup).
+    for room_id in list(getattr(router, "active_chats", {}).keys()):
+        router.observe_chat_msg(room_id, _record)
+
+    _ROUTER_HOOKED = True
+    log.info("jsd_test_ext: attached jupyter-ai-router message observer")
+
+
+async def _register_router_hook(web_app, log) -> None:
+    """Wait for the jupyter-ai-router to appear in settings, then hook it."""
+    import asyncio
+
+    for _ in range(300):  # poll up to ~30s
+        router = web_app.settings.get("jupyter-ai", {}).get("router")
+        if router is not None:
+            _attach_router_observer(router, log)
+            return
+        await asyncio.sleep(0.1)
+    log.warning(
+        "jsd_test_ext: jupyter-ai-router not found; "
+        "/jsd-test/router-fires will report no fires"
+    )
+
+
+class _RouterFiresHandler(APIHandler):
+    @tornado.web.authenticated
+    async def get(self):
+        path = self.get_argument("path")
+        fid = self.settings["file_id_manager"].get_id(path)
+        fires: list[str] = []
+        if fid is not None:
+            for room_id, bodies in _ROUTER_FIRES.items():
+                if room_id.endswith(f":{fid}"):
+                    fires.extend(bodies)
+        self.finish(
+            json.dumps({"fires": fires, "count": len(fires), "hooked": _ROUTER_HOOKED})
+        )
 
 
 class _RoomInfoHandler(APIHandler):
@@ -108,6 +182,12 @@ def _load_jupyter_server_extension(server_app):
                 url_path_join(base_url, "jsd-test", "recreate-room"),
                 _RecreateRoomHandler,
             ),
+            (
+                url_path_join(base_url, "jsd-test", "router-fires"),
+                _RouterFiresHandler,
+            ),
         ],
     )
+    # Hook the jupyter-ai-router once it's available (it may load after us).
+    IOLoop.current().add_callback(_register_router_hook, web_app, server_app.log)
     server_app.log.info("jsd_test_ext (E2E test extension) loaded")
