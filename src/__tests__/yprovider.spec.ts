@@ -30,6 +30,7 @@ jest.mock('y-websocket', () => ({
     maxBackoffTime = 2500;
     connect = jest.fn();
     disconnect = jest.fn();
+    messageHandlers: any[] = [];
     private _listeners = new Map<string, Set<(payload: any) => void>>();
 
     constructor(_url: string, roomname: string) {
