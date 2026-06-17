@@ -135,6 +135,7 @@
         "schemaDir": "schema",
         "disabledExtensions": [
             "@jupyter/docprovider-extension:websocket-provider-document-factory",
+            "@jupyter/docprovider-extension:notebook-cell-executor",
             "@jupyter/docprovider-extension:statusBarTimeline",
             "@jupyter/docprovider-extension:forkManager"
         ],
