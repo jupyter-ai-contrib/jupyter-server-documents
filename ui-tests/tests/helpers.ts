@@ -303,6 +303,132 @@ export async function dismissKernelDialogIfPresent(
     .catch(() => undefined);
 }
 
+/**
+ * Accepts the "Select Kernel" dialog by choosing the given kernel (default
+ * `python3`), so the opened document gets a live kernel to execute against.
+ * Unlike {@link dismissKernelDialogIfPresent} this *requires* the dialog and a
+ * real kernel — used by tests that actually run code. No-op if no dialog
+ * appears (a kernel may already be attached).
+ */
+export async function acceptKernelDialog(
+  page: IJupyterLabPageFixture,
+  kernelName = 'python3'
+): Promise<void> {
+  const dialog = page.locator('.jp-Dialog');
+  try {
+    await dialog.waitFor({ state: 'visible', timeout: 10000 });
+  } catch {
+    return; // no dialog appeared
+  }
+  const combobox = dialog.getByRole('combobox');
+  if (await combobox.count()) {
+    // Option values mirror galata's createNew: `{"name":"<kernel>"}`.
+    await combobox
+      .selectOption(`{"name":"${kernelName}"}`)
+      .catch(() => undefined);
+  }
+  await dialog.locator('.jp-mod-accept').click();
+  await dialog
+    .waitFor({ state: 'hidden', timeout: 10000 })
+    .catch(() => undefined);
+}
+
+// ---------------------------------------------------------------------------
+// Code console fixtures
+//
+// Cover the "New Console for Notebook" flow (the `notebook:create-console`
+// command). A console created for a notebook shares the notebook's kernel; the
+// test executes a cell in it and asserts the output renders (regression guard
+// for jupyter-ai-contrib/jupyter-server-documents#250).
+// ---------------------------------------------------------------------------
+
+/**
+ * Creates a code console for the currently active notebook by executing the
+ * `notebook:create-console` command (the "New Console for Notebook" menu item),
+ * then waits until the console prompt cell is mounted and ready.
+ */
+export async function createConsoleForNotebook(
+  page: IJupyterLabPageFixture
+): Promise<void> {
+  await page.evaluate(async () => {
+    await (window as any).jupyterapp.commands.execute(
+      'notebook:create-console'
+    );
+  });
+  // The prompt (input) cell of a code console; present once the console panel
+  // is attached.
+  await page
+    .locator('.jp-CodeConsole .jp-CodeConsole-promptCell')
+    .first()
+    .waitFor({ state: 'visible', timeout: 30000 });
+
+  // Wait until the console's session has a *connected* kernel before we
+  // execute. The prompt cell mounts before the kernel is wired up, so executing
+  // too early silently drops the request (it never reaches a kernel → no
+  // output, a startup race that flaked under parallel load).
+  await page.waitForFunction(
+    () => {
+      const app = (window as any).jupyterapp;
+      for (const widget of app.shell.widgets('main')) {
+        const sc =
+          (widget as any).sessionContext ??
+          (widget as any).console?.sessionContext;
+        if (sc && typeof sc.kernelDisplayStatus === 'string') {
+          // A console panel: require a live kernel that has settled to idle.
+          return (
+            !sc.hasNoKernel &&
+            (sc.kernelDisplayStatus === 'idle' ||
+              sc.kernelDisplayStatus === 'busy')
+          );
+        }
+      }
+      return false;
+    },
+    undefined,
+    { timeout: 30000 }
+  );
+}
+
+/**
+ * Types `code` into the active console's prompt (real keystrokes → the
+ * editor → CRDT path), confirms the editor holds it, then executes via the
+ * `console:run-forced` command. Using the command instead of a `Shift+Enter`
+ * keypress avoids a focus race under parallel load, where the keypress could
+ * fire before the prompt held focus and silently drop the execution.
+ */
+export async function runInConsole(
+  page: IJupyterLabPageFixture,
+  code: string
+): Promise<void> {
+  const prompt = page
+    .locator('.jp-CodeConsole .jp-CodeConsole-promptCell .cm-content')
+    .first();
+  await prompt.click();
+  await prompt.pressSequentially(code);
+  // Ensure the keystrokes actually landed in the editor before executing.
+  await expect(prompt).toContainText(code, { timeout: 30000 });
+  await page.evaluate(async () => {
+    await (window as any).jupyterapp.commands.execute('console:run-forced');
+  });
+}
+
+/**
+ * Number of executed (non-prompt) console cells whose rendered output contains
+ * `text`. `0` means the output never rendered — the symptom of issue #250.
+ * Executed cells live in `.jp-CodeConsole-content`; the prompt cell is excluded
+ * so an echoed input never counts as output.
+ */
+export async function consoleOutputCount(
+  page: IJupyterLabPageFixture,
+  text: string
+): Promise<number> {
+  return page
+    .locator('.jp-CodeConsole-content .jp-OutputArea-output', {
+      hasText: text
+    })
+    .count();
+}
+
 // ---------------------------------------------------------------------------
 // jupyterlab-chat fixtures
 //
