@@ -15,6 +15,7 @@ from ..websockets import YjsClientGroup
 from .yroom_file_api import YRoomFileAPI
 from .yroom_events_api import YRoomEventsAPI
 from .yroom_update_channel import YRoomUpdateChannel
+from .yroom_utils import drain_observer_removals
 
 if TYPE_CHECKING:
     import logging
@@ -213,6 +214,13 @@ class YRoom(LoggingConfigurable):
     stopping. See `self.until_saved` documentation for more info.
     """
 
+    _stop_task: asyncio.Task | None
+    """
+    The task that finishes room teardown after `stop()`: it awaits any async
+    `on_stop` callbacks and then drains observer removals. Awaited by
+    `until_saved`. See `self._finalize_stop()` for more info.
+    """
+
     show_gc_debug: bool
     """
     Whether to show garbage collection debug logs. Set to
@@ -241,6 +249,7 @@ class YRoom(LoggingConfigurable):
         self._pending_ss2_future: asyncio.Future[bytes] | None = None
         self._pending_ss2_client_id: str | None = None
         self._save_task = None
+        self._stop_task = None
         self._last_activity = time.monotonic()
         self.show_gc_debug = self.parent.show_gc_debug
 
@@ -994,7 +1003,7 @@ class YRoom(LoggingConfigurable):
         See `stop()` for more info.
         """
         self.stop(close_code=4002, immediately=True)
-    
+
 
     def stop(self, close_code: int = 1001, immediately: bool = False) -> None:
         """
@@ -1073,36 +1082,78 @@ class YRoom(LoggingConfigurable):
                     self.file_api.save(prev_jupyter_ydoc)
                 )
 
-        # Fire `on_stop` callbacks
+        # Fire `on_stop` callbacks. Sync callbacks run immediately; coroutines
+        # returned by async callbacks are collected so they can be awaited (in
+        # `_finalize_stop()`) *before* observer removals are drained. Consumers
+        # commonly unsubscribe their observers from a stop callback, so the drain
+        # must happen only after every callback has finished.
+        stop_coros: list[Any] = []
         for on_stop in self._on_stop_callbacks:
             try:
                 result = on_stop()
                 if asyncio.iscoroutine(result):
-                    asyncio.create_task(result)
+                    stop_coros.append(result)
             except Exception:
                 self.log.exception("Exception raised by on_stop() callback:")
                 continue
 
+        # Finish teardown asynchronously: await any async stop callbacks, then
+        # release observer callbacks so the room and its YDoc can be garbage
+        # collected (works around deferred observer removal in pycrdt >= 0.14 /
+        # yrs >= 0.27). Scheduled as a task and awaited by `until_saved`, so
+        # callers that `await room.until_saved` observe a fully drained room.
+        self._stop_task = asyncio.create_task(self._finalize_stop(stop_coros))
+
         self._stopped = True
         self.log.info(f"Stopped YRoom '{self.room_id}'.")
+
+    async def _finalize_stop(self, stop_coros: list[Any]) -> None:
+        """
+        Completes room teardown after `stop()`: awaits any async `on_stop`
+        callbacks, then drains observer removals. See `stop()` for why the drain
+        must run after the callbacks.
+        """
+        if stop_coros:
+            # `return_exceptions=True`: a failing callback must not prevent the
+            # drain (best-effort teardown).
+            results = await asyncio.gather(*stop_coros, return_exceptions=True)
+            for result in results:
+                if isinstance(result, Exception):
+                    self.log.exception(
+                        "Exception raised by on_stop() callback:",
+                        exc_info=result,
+                    )
+
+        # The drain performs a content-neutral write+revert on every shared type,
+        # completing synchronously (no `await` between the transactions), so the
+        # transient mutation is never observed by clients or the pending save task.
+        try:
+            drain_observer_removals(self._ydoc)
+        except Exception:
+            self.log.exception("Exception while draining observer removals:")
     
 
     @property
     def until_saved(self) -> Coroutine[Any, Any, None]:
         """
-        Returns an Awaitable that resolves when the save is complete after the
-        room was stopped with `immediately=False`.
+        Returns an Awaitable that resolves when the room has finished stopping:
+        the final save (if `immediately=False`) is complete, all `on_stop`
+        callbacks have run, and observer removals have been drained.
 
         If the server is shutting down, this property must be awaited by
         `YRoomManager`. Otherwise, the `ContentsManager` will shut down before
         the final save completes, resulting in an empty file.
         """
         return self._until_saved()
-    
+
 
     async def _until_saved(self) -> None:
         if self._save_task:
             await self._save_task
+        # Also wait for async stop callbacks + the observer-removal drain, so a
+        # room that has been awaited is fully torn down (and collectable).
+        if self._stop_task:
+            await self._stop_task
     
 
     @property

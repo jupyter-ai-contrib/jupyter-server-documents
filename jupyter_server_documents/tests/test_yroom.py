@@ -77,3 +77,4 @@ class TestYRoomInactivity():
         room.set_cell_awareness_state("cell-1", "busy")
         await asyncio.sleep(0.6)
         assert room.inactive is False
+
