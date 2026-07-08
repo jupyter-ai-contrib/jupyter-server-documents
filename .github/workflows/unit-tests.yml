@@ -38,7 +38,7 @@ jobs:
           # jupyterlab-chat that supports Jupyter YDoc v4 and removes its
           # observers on unobserve() (jupyterlab/jupyter-chat#462 + #463,
           # released in >=0.23.0a2); pre-releases are enabled explicitly.
-          python -m pip install --pre "jupyterlab-chat>=0.23.0a1"
+          python -m pip install --pre "jupyterlab-chat>=0.23.0a2"
 
       - name: Run tests
         run: pytest -vv -r ap --cov jupyter_server_documents
