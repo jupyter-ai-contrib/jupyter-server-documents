@@ -15,6 +15,9 @@ jobs:
     name: 'Python ${{ matrix.python-version }}'
     runs-on: ubuntu-latest
     strategy:
+      # Run every Python version even if one fails, so a failure on one version
+      # doesn't mask the results on the others.
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
 
@@ -28,7 +31,14 @@ jobs:
           python_version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: python -m pip install -e .[test]
+        run: |
+          python -m pip install -e .[test]
+          # Install jupyterlab-chat so the YChat garbage-collection tests
+          # (test_yroom_gc.py) run instead of being skipped. Requires a
+          # jupyterlab-chat that supports Jupyter YDoc v4 and removes its
+          # observers on unobserve() (jupyterlab/jupyter-chat#462 + #463,
+          # released in >=0.23.0a2); pre-releases are enabled explicitly.
+          python -m pip install --pre "jupyterlab-chat>=0.23.0a2"
 
       - name: Run tests
         run: pytest -vv -r ap --cov jupyter_server_documents

@@ -22,7 +22,7 @@ jobs:
         uses: jupyterlab/maintainer-tools/.github/actions/base-setup@v1
 
       - name: Install dependencies
-        run: python -m pip install -U "jupyterlab>=4.0.0,<4.6"
+        run: python -m pip install -U "jupyterlab>=4.0.0,<5"
 
       - name: Lint the extension
         run: |
@@ -82,7 +82,7 @@ jobs:
           sudo rm -rf $(which node)
           sudo rm -rf $(which node)
 
-          pip install "jupyterlab>=4.0.0,<4.6" jupyter_server_documents*.whl
+          pip install "jupyterlab>=4.0.0,<5" jupyter_server_documents*.whl
 
 
           jupyter server extension list
@@ -115,11 +115,7 @@ jobs:
       - name: Install the extension
         run: |
           set -eux
-          # Pin jupyterlab <4.6: JupyterLab 4.6 bundles @jupyter/ydoc v4, but
-          # JSD's frontend (and its jupyter-collaboration/docprovider deps) are
-          # built against @jupyter/ydoc v3, so 4.6 breaks the extension (see
-          # #265 / #262). Drop this ceiling once JSD is upgraded to ydoc v4.
-          python -m pip install "jupyterlab>=4.0.0,<4.6" jupyter_server_documents*.whl
+          python -m pip install "jupyterlab>=4.0.0,<5" jupyter_server_documents*.whl
           # Optional deps exercised by the chat + router E2E tests
           # (tests/chat-sync.spec.ts, tests/chat-router.spec.ts). jupyterlab-chat
           # provides the .chat factory + YChat; jupyter-ai-router provides the
