@@ -1,40 +1,86 @@
 """Garbage-collection tests for `YRoom` teardown.
 
-These verify that when a room stops, observer callbacks registered by *consumers*
-of the room -- and the objects those callbacks capture -- are released, so the
-consumer, the room, and the underlying `YDoc` can be garbage collected.
+`pycrdt` >= 0.14 / `yrs` >= 0.27 defers observer removal: dropping a subscription
+only queues the callback for removal, and the queue is drained lazily on the next
+observe/transaction. On an idle room being torn down that drain never happens, so
+observer callbacks -- which are bound methods that capture the object they belong
+to -- keep that object (and transitively the `YRoom` and its `YDoc`) alive. `YRoom`
+works around this by draining observer removals on `stop()` (see
+`yroom_utils.drain_observer_removals`).
 
-This matters because `pycrdt` >= 0.14 / `yrs` >= 0.27 defers observer removal, so
-without `YRoom`'s teardown drain (see `yroom_utils.drain_observer_removals`) an
-observing consumer would keep the whole room alive after `stop()`. See the
-companion `test_yroom_utils.py` for direct tests of the drain itself.
+These tests verify three distinct things can be garbage collected after a room is
+stopped and dropped, each in its own suite so a future regression names its own
+cause:
 
-Matrix: 3 observer levels x 2 stop modes.
+- `TestYRoomConsumerGC`     -- observer callbacks registered by *consumers* of the
+                               room (at the doc / root / nested shared-type level).
+- `TestYRoomGC`            -- the `YRoom` itself, for every shared model.
+- `TestYRoomSharedModelGC`  -- the Jupyter YDoc *shared model* (the
+                               `jupyter_ydoc.YBaseDoc` subclass, e.g. `YFile`,
+                               `YNotebook`, `YChat`) the room wraps.
 
-Levels:
-  - doc      : consumer observes the `Doc` directly (`ydoc.observe`).
-  - root     : consumer observes a root shared type (`ydoc.get("source", Text)`).
-  - nested   : consumer observes a shared type nested inside another.
-
-Stop modes:
-  - immediately=False : graceful stop (drains queue, schedules a final save).
-  - immediately=True  : forced stop (drops pending updates, no save).
+Stop modes exercised: `immediately=False` (graceful: drains the queue, schedules a
+final save) and `immediately=True` (forced: drops pending updates, no save).
 """
 
 from __future__ import annotations
 
 import asyncio
 import gc
-import uuid
+import importlib.util
 import weakref
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pycrdt
 import pytest
 
 if TYPE_CHECKING:
-    from ...conftest import MakeYRoomManager
+    from ...conftest import MakeYRoom
+
+
+# Shared models to test. "chat" is provided by the optional `jupyterlab_chat`
+# package; its parametrization is skipped when that package is not installed.
+_HAS_JUPYTERLAB_CHAT = importlib.util.find_spec("jupyterlab_chat") is not None
+
+_SHARED_MODEL_PARAMS = [
+    pytest.param("file", id="file"),
+    pytest.param("notebook", id="notebook"),
+    pytest.param(
+        "chat",
+        id="chat",
+        marks=pytest.mark.skipif(
+            not _HAS_JUPYTERLAB_CHAT,
+            reason="jupyterlab_chat is not installed",
+        ),
+    ),
+]
+
+_STOP_MODE_PARAMS = [
+    pytest.param(False, id="graceful"),
+    pytest.param(True, id="immediate"),
+]
+
+
+async def _stop_and_release(manager, room, *, immediately: bool) -> None:
+    """Stop `room`, drop the manager's reference to it, and let background teardown
+    tasks run -- mirroring `YRoomManager.delete_room` -- so the room becomes
+    collectable. The caller must hold no other references to `room` afterward.
+    """
+    room_id = room.room_id
+    room.stop(immediately=immediately)
+    await room.until_saved
+    # Mirror `YRoomManager.delete_room`: drop the manager's reference.
+    manager._rooms_by_id.pop(room_id, None)
+
+
+async def _collect() -> None:
+    # `stop()` schedules background tasks (awareness stop, message-queue drain)
+    # that transiently hold the room until the event loop runs them. Yield first,
+    # then collect a few times (releasing a Rust-side ref can free a Python object
+    # on the following pass).
+    await asyncio.sleep(0)
+    for _ in range(3):
+        gc.collect()
 
 
 class _Consumer:
@@ -46,16 +92,6 @@ class _Consumer:
 
     def on_change(self, *args) -> None:
         self.events += 1
-
-
-async def _make_document_room(manager, tmp_path: Path):
-    path = tmp_path / f"{uuid.uuid4()}.txt"
-    path.touch()
-    file_id = manager.fileid_manager.index(str(path))
-    room_id = f"text:file:{file_id}"
-    room = manager.create_room(room_id, inactivity_timeout=1)
-    await room.file_api.until_content_loaded
-    return room
 
 
 def _observe(ydoc: pycrdt.Doc, level: str, consumer: _Consumer):
@@ -79,29 +115,25 @@ def _observe(ydoc: pycrdt.Doc, level: str, consumer: _Consumer):
 
 
 class TestYRoomConsumerGC:
-    """A consumer that observes a room and unobserves it is fully released once
-    the room stops.
+    """A consumer that observes a room and unobserves it is fully released once the
+    room stops.
 
     A well-behaved consumer unregisters its observer before the room is torn down.
-    Because ``yrs`` >= 0.27 defers observer removal, that ``unobserve()`` alone
-    does not release the callback -- it only takes effect when the room's teardown
-    drain flushes the pending-removal queue. These tests assert that, after the
-    consumer unobserves and the room stops, the consumer and the ``YDoc`` are
-    garbage collected -- at every observer level and for both stop modes.
+    Because ``yrs`` >= 0.27 defers observer removal, that ``unobserve()`` alone does
+    not release the callback -- it only takes effect when the room's teardown drain
+    flushes the pending-removal queue. These tests assert that, after the consumer
+    unobserves and the room stops, the consumer and the ``YDoc`` are collected -- at
+    every observer level and for both stop modes.
     """
 
     @pytest.mark.parametrize("level", ["doc", "root", "nested"])
-    @pytest.mark.parametrize("immediately", [False, True], ids=["graceful", "immediate"])
+    @pytest.mark.parametrize("immediately", _STOP_MODE_PARAMS)
     @pytest.mark.asyncio
     async def test_consumer_is_freed_after_stop(
-        self,
-        make_yroom_manager: MakeYRoomManager,
-        tmp_path: Path,
-        level: str,
-        immediately: bool,
+        self, make_yroom: MakeYRoom, level: str, immediately: bool
     ):
-        manager = make_yroom_manager(auto_free_interval=1)
-        room = await _make_document_room(manager, tmp_path)
+        room = await make_yroom()
+        manager = room.parent
         ydoc = await room.get_ydoc()
 
         consumer = _Consumer()
@@ -112,21 +144,10 @@ class TestYRoomConsumerGC:
         # A well-behaved consumer unregisters its observer (deferred by yrs).
         target.unobserve(sub)
 
-        room_id = room.room_id
         del consumer, ydoc, target, sub
-        room.stop(immediately=immediately)
-        await room.until_saved
-        # Mirror `YRoomManager.delete_room`: drop the manager's reference so the
-        # room is no longer retained after it has stopped.
-        manager._rooms_by_id.pop(room_id, None)
+        await _stop_and_release(manager, room, immediately=immediately)
         del room
-
-        # `stop()` schedules background tasks (e.g. `awareness.stop()`, draining the
-        # message-queue processor) that transiently hold the room until the event
-        # loop runs them. Yield so they complete before checking collectability.
-        await asyncio.sleep(0)
-        for _ in range(3):
-            gc.collect()
+        await _collect()
 
         assert consumer_ref() is None, (
             f"consumer observing at {level!r} level was not freed after "
@@ -135,4 +156,68 @@ class TestYRoomConsumerGC:
         assert doc_ref() is None, (
             f"YDoc was not freed after stop(immediately={immediately}) with a "
             f"{level!r}-level observer"
+        )
+
+
+class TestYRoomGC:
+    """The `YRoom` itself is garbage collected after it is stopped and dropped.
+
+    This is the behavior a room's "freed" log message tracks. It must hold for
+    every shared model, since the model's own internal observers (registered in
+    its ``__init__``) would otherwise keep the room alive under deferred removal.
+    """
+
+    @pytest.mark.parametrize("file_type", _SHARED_MODEL_PARAMS)
+    @pytest.mark.parametrize("immediately", _STOP_MODE_PARAMS)
+    @pytest.mark.asyncio
+    async def test_room_is_freed_after_stop(
+        self, make_yroom: MakeYRoom, file_type: str, immediately: bool
+    ):
+        room = await make_yroom(file_type=file_type)
+        manager = room.parent
+        # Ensure the shared model is created/loaded, as it is in real usage.
+        await room.get_jupyter_ydoc()
+
+        room_ref = weakref.ref(room)
+
+        await _stop_and_release(manager, room, immediately=immediately)
+        del room
+        await _collect()
+
+        assert room_ref() is None, (
+            f"YRoom for a {file_type!r} document was not garbage collected after "
+            f"stop(immediately={immediately})"
+        )
+
+
+class TestYRoomSharedModelGC:
+    """The Jupyter YDoc shared model (`YFile` / `YNotebook` / `YChat`, ...) is
+    garbage collected after the room is stopped and dropped.
+
+    Models inheriting from `jupyter_ydoc.YBaseDoc` register observers on their own
+    shared types. If a model does not remove those on ``unobserve()``, the bound
+    methods keep the model alive under deferred removal -- a leak this suite
+    catches directly (independent of whether the `YRoom` is freed).
+    """
+
+    @pytest.mark.parametrize("file_type", _SHARED_MODEL_PARAMS)
+    @pytest.mark.parametrize("immediately", _STOP_MODE_PARAMS)
+    @pytest.mark.asyncio
+    async def test_shared_model_is_freed_after_stop(
+        self, make_yroom: MakeYRoom, file_type: str, immediately: bool
+    ):
+        room = await make_yroom(file_type=file_type)
+        manager = room.parent
+        jupyter_ydoc = await room.get_jupyter_ydoc()
+
+        model_ref = weakref.ref(jupyter_ydoc)
+
+        del jupyter_ydoc
+        await _stop_and_release(manager, room, immediately=immediately)
+        del room
+        await _collect()
+
+        assert model_ref() is None, (
+            f"the shared model for a {file_type!r} document was not garbage "
+            f"collected after stop(immediately={immediately})"
         )

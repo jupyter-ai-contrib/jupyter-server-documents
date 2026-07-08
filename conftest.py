@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import uuid
+import weakref
 from traitlets.config import Config, LoggingConfigurable
 from jupyter_server.services.contents.filemanager import AsyncFileContentsManager
 from typing import TYPE_CHECKING
@@ -53,8 +54,14 @@ def jp_server_config(jp_server_config, tmp_path):
 
 class MockServerDocsApp(LoggingConfigurable):
     """Mock `ServerDocsApp` class for testing purposes."""
-    
+
     serverapp: ServerApp
+
+    # Mirror `ServerDocsApp` with the outputs service disabled (the default): the
+    # attribute exists and is `None`. `YRoomManager.outputs_manager` checks for the
+    # attribute's presence, so without this a notebook room's content load raises
+    # "Outputs manager is not available".
+    outputs_manager = None
 
     def __init__(self, *args, serverapp: ServerApp, **kwargs):
         super().__init__(*args, **kwargs)
@@ -109,45 +116,81 @@ def make_yroom_manager(mock_server_docs_app: MockServerDocsApp) -> MakeYRoomMana
 async def make_yroom(make_yroom_manager: MakeYRoomManager, make_room_file: MakeRoomFile):
     """
     Factory fixture that returns a configured `YRoom` instance.
-    Accepts optional kwargs passed to the `YRoom` constructor (e.g.
-    `inactivity_timeout`).
+
+    Accepts:
+      - `file_type`: one of `"file"` (default), `"notebook"`, or `"chat"`, passed
+        through to `make_room_file` to select the document type.
+      - any other kwargs are passed to the `YRoom` constructor (e.g.
+        `inactivity_timeout`).
     """
     manager = make_yroom_manager()
-    rooms: list[YRoom] = []
+    # Track rooms weakly so this fixture never pins a room alive -- GC tests rely on
+    # dropping their own reference and asserting the room is collected.
+    rooms: weakref.WeakSet[YRoom] = weakref.WeakSet()
 
-    async def _make_yroom(**kwargs) -> YRoom:
-        room_id = make_room_file()
-        room = YRoom(parent=manager, room_id=room_id, **kwargs)
+    async def _make_yroom(file_type: str = "file", **kwargs) -> YRoom:
+        room_id = make_room_file(file_type=file_type)
+        # Use the manager's factory so the correct room class is chosen per file
+        # type (e.g. `YNotebookRoom` for notebooks) and the room is registered in
+        # the manager, matching real usage.
+        room = manager.create_room(room_id, **kwargs)
         await room.file_api.until_content_loaded
-        rooms.append(room)
+        rooms.add(room)
         return room
 
     yield _make_yroom
 
-    for room in rooms:
-        room.stop(immediately=True)
+    # Best-effort cleanup of any rooms still alive (and not already stopped).
+    for room in list(rooms):
+        if not room.stopped:
+            room.stop(immediately=True)
+
+
+# Per-file-type parameters for `make_room_file` / `make_yroom`. Each entry maps a
+# `file_type` to the file extension, the room ID's `{file_format}:{file_type}`
+# prefix (see `YRoom` room ID docs), and the initial on-disk content the
+# corresponding Jupyter YDoc expects to load.
+_ROOM_FILE_TYPES = {
+    "file": {"ext": "txt", "prefix": "text:file", "content": ""},
+    "notebook": {
+        "ext": "ipynb",
+        "prefix": "json:notebook",
+        "content": '{"cells": [], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}',
+    },
+    "chat": {"ext": "chat", "prefix": "text:chat", "content": "{}"},
+}
 
 
 @pytest.fixture
 def make_room_file(tmp_path: Path, make_yroom_manager: MakeYRoomManager, request: pytest.FixtureRequest) -> MakeRoomFile:
     """
-    Factory fixture that creates a text file and returns its room ID.
+    Factory fixture that creates a document file and returns its room ID.
 
-    Accepts an optional `filename` argument, defaulting to a UUID-based `.txt`
-    filename. The file is created under `tmp_path` and cleaned up after the
-    test.
+    Accepts:
+      - `file_type`: one of `"file"` (default), `"notebook"`, or `"chat"`. Selects
+        the file extension, room ID prefix, and initial content.
+      - `filename`: an optional explicit filename (overrides the generated one).
+
+    The file is created under `tmp_path` and cleaned up after the test.
     """
     manager = make_yroom_manager()
     created_files: list[Path] = []
 
-    def _make_room_file(filename: str | None = None) -> str:
+    def _make_room_file(file_type: str = "file", filename: str | None = None) -> str:
+        try:
+            spec = _ROOM_FILE_TYPES[file_type]
+        except KeyError:
+            raise ValueError(
+                f"unknown file_type {file_type!r}; "
+                f"expected one of {sorted(_ROOM_FILE_TYPES)}"
+            )
         if filename is None:
-            filename = f"{uuid.uuid4()}.txt"
+            filename = f"{uuid.uuid4()}.{spec['ext']}"
         path = tmp_path / filename
-        path.touch()
+        path.write_text(spec["content"])
         created_files.append(path)
         file_id = manager.fileid_manager.index(str(path))
-        return f"text:file:{file_id}"
+        return f"{spec['prefix']}:{file_id}"
 
     def _cleanup():
         for path in created_files:
