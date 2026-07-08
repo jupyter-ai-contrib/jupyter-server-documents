@@ -15,6 +15,9 @@ jobs:
     name: 'Python ${{ matrix.python-version }}'
     runs-on: ubuntu-latest
     strategy:
+      # Run every Python version even if one fails, so a failure on one version
+      # doesn't mask the results on the others.
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
 
