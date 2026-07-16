@@ -134,11 +134,8 @@ class YjsClientGroup:
         """
         Gets a client from its ID.
         """
-        if client_id in self.desynced: 
-            client = self.desynced[client_id]
-        if client_id in self.synced:
-            client = self.synced[client_id]
-        if client.websocket and client.websocket.ws_connection:
+        client = self.synced.get(client_id) or self.desynced.get(client_id)
+        if client and client.websocket and client.websocket.ws_connection:
             return client
         error_message = f"The client_id '{client_id}' is not found in client group in room '{self.room_id}'"
         self.log.error(error_message)

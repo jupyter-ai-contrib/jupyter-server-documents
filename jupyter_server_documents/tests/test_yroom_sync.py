@@ -396,3 +396,40 @@ class TestSyncUpdateChannel:
 
         # Handshake complete: the channel must be resumed.
         assert yroom.update_channel._paused is False
+
+
+class TestQueuePoisoning:
+    """Regression tests for #271: a message that raises while being handled
+    must not halt the room's message queue for everyone else."""
+
+    @pytest.mark.asyncio
+    async def test_stale_client_update_does_not_poison_queue(
+        self, make_yroom: MakeYRoom
+    ):
+        """A SyncUpdate from an unknown/disconnected client raises in the
+        handler, but the queue task must keep processing later messages so a
+        fresh client can still complete its handshake."""
+        yroom = await make_yroom()
+
+        # A stale SyncUpdate frame referencing a client_id the room never knew
+        # about (e.g. left behind by a client that disconnected abruptly). This
+        # reaches handle_sync_update -> _should_ignore_update -> clients.get(),
+        # which raises because the client is absent.
+        stale_update = bytes(
+            [YMessageType.SYNC, YSyncMessageSubtype.SYNC_UPDATE]
+        ) + b"\x00"
+        yroom.add_message("ghost-client", stale_update)
+        await asyncio.sleep(0.1)
+
+        # The queue must have survived: a fresh client can still sync.
+        ws = FakeWebSocket()
+        client_id = yroom.clients.add(ws)
+        yroom.add_message(client_id, ws.build_ss1())
+        await asyncio.sleep(0.1)
+
+        ss2_reply = ws.process_server_messages()
+        assert ss2_reply is not None
+        yroom.add_message(client_id, ss2_reply)
+        await asyncio.sleep(0.1)
+
+        assert yroom.clients.get(client_id).synced
