@@ -77,6 +77,17 @@ class FakeWebSocket:
                     ss2_reply = reply
         return ss2_reply
 
+    def awareness_states(self) -> dict[int, dict]:
+        """Decode every AwarenessUpdate the server sent to this client and
+        return the resulting merged awareness states, keyed by client ID."""
+        awareness = pycrdt.Awareness(Doc())
+        for msg in self.messages:
+            if len(msg) < 2 or msg[0] != YMessageType.AWARENESS:
+                continue
+            payload = pycrdt.read_message(msg[1:])
+            awareness.apply_awareness_update(payload, origin=self)
+        return awareness.states
+
     @property
     def source(self) -> str:
         return str(self.doc["source"])
@@ -396,3 +407,103 @@ class TestSyncUpdateChannel:
 
         # Handshake complete: the channel must be resumed.
         assert yroom.update_channel._paused is False
+
+
+def _seed_room_awareness(yroom: YRoom, **state) -> int:
+    """Publish an awareness slot into the room from a simulated *other*
+    client (e.g. a persona) and return that client's awareness ID.
+
+    This mirrors how a peer publishes awareness before a new client connects:
+    the peer encodes its local state and the room applies it via
+    `handle_awareness_update`.
+    """
+    peer = pycrdt.Awareness(Doc())
+    for field, value in state.items():
+        peer.set_local_state_field(field, value)
+    update = peer.encode_awareness_update([peer.client_id])
+    yroom.handle_awareness_update("peer", pycrdt.create_awareness_message(update))
+    return peer.client_id
+
+
+class TestAwarenessOnConnect:
+    """A newly-synced client must receive the room's *current* awareness state
+    as part of the handshake, not only via later change deltas.
+
+    Regression test for jupyter-ai-contrib/jupyter-server-documents#279: awareness
+    published before a client connects (e.g. a persona) would only reach that
+    client when a subsequent delta happened to re-touch the slot, causing
+    seconds-long delays before personas appeared on refresh.
+    """
+
+    @pytest.mark.asyncio
+    async def test_client_receives_existing_awareness_on_connect(
+        self, make_yroom: MakeYRoom
+    ):
+        """A slot published *before* the client connects must be delivered by
+        the handshake alone -- with no further awareness mutation."""
+        yroom = await make_yroom()
+        peer_id = _seed_room_awareness(yroom, name="Jupyternaut", type="persona")
+
+        ws = FakeWebSocket()
+        await _complete_handshake(yroom, ws)
+
+        # The handshake alone (no later delta) must have delivered the slot.
+        states = ws.awareness_states()
+        assert peer_id in states
+        assert states[peer_id] == {"name": "Jupyternaut", "type": "persona"}
+
+    @pytest.mark.asyncio
+    async def test_awareness_snapshot_only_to_new_client(
+        self, make_yroom: MakeYRoom
+    ):
+        """The snapshot must go *only* to the newly-synced client, not be
+        re-broadcast to peers already in the room."""
+        yroom = await make_yroom()
+
+        # An existing, already-synced client.
+        ws_a = FakeWebSocket()
+        await _complete_handshake(yroom, ws_a)
+
+        _seed_room_awareness(yroom, name="Jupyternaut", type="persona")
+
+        # Snapshot A's message count *after* the seed delta broadcast, right
+        # before B connects. Any growth beyond this during B's handshake would
+        # be a spurious room-wide re-broadcast of the connect snapshot.
+        a_msgs_before_b = len(ws_a.messages)
+
+        # A second client connects and completes the handshake.
+        ws_b = FakeWebSocket()
+        await _complete_handshake(yroom, ws_b)
+
+        # The new client received the snapshot...
+        assert any(
+            len(m) >= 2 and m[0] == YMessageType.AWARENESS for m in ws_b.messages
+        )
+        # ...but the existing client received nothing extra from B's handshake.
+        assert len(ws_a.messages) == a_msgs_before_b
+
+    @pytest.mark.asyncio
+    async def test_awareness_snapshot_sent_after_sync_step2(
+        self, make_yroom: MakeYRoom
+    ):
+        """The snapshot must be sent *after* mark_synced, i.e. after the SS2
+        reply that marks the client synced -- never before. Verify by message
+        ordering: the AwarenessUpdate follows the first SYNC message."""
+        yroom = await make_yroom()
+        _seed_room_awareness(yroom, name="Jupyternaut", type="persona")
+
+        ws = FakeWebSocket()
+        await _complete_handshake(yroom, ws)
+
+        first_sync_idx = next(
+            i for i, m in enumerate(ws.messages)
+            if len(m) >= 2 and m[0] == YMessageType.SYNC
+        )
+        awareness_idxs = [
+            i for i, m in enumerate(ws.messages)
+            if len(m) >= 2 and m[0] == YMessageType.AWARENESS
+        ]
+        assert awareness_idxs, "client never received an AwarenessUpdate"
+        # Every awareness snapshot arrives after the SS2 sync reply that ran
+        # mark_synced -- so a desynced client is never sent one.
+        assert min(awareness_idxs) > first_sync_idx
