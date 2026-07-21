@@ -167,6 +167,45 @@ class _RecreateRoomHandler(APIHandler):
         self.finish(json.dumps({"freed": freed}))
 
 
+class _SeedAwarenessHandler(APIHandler):
+    """Publish an awareness slot into a file's room from a simulated *peer*.
+
+    This mimics another participant (e.g. an AI persona) announcing its
+    presence via awareness. The state is applied through the room's normal
+    ``handle_awareness_update`` path, so it lands in the room's awareness map
+    exactly as a real peer's would -- letting the awareness-on-connect E2E seed
+    a slot while the browser is offline, then assert the browser receives it on
+    reconnect (jupyter-ai-contrib/jupyter-server-documents#279).
+
+    Returns the peer's awareness client id (as a string) so the test can target
+    that specific slot.
+    """
+
+    @tornado.web.authenticated
+    async def post(self):
+        import pycrdt
+
+        path = self.get_argument("path")
+        token = self.get_argument("token")
+        rooms = _rooms_for_path(self.settings, path)
+        if not rooms:
+            raise tornado.web.HTTPError(404, f"No open room for path '{path}'.")
+        room = rooms[0]
+
+        # Build an awareness update from a throwaway peer and apply it to the
+        # room. The peer never renews its clock, so no later delta re-touches
+        # this slot -- which is precisely why a client that connected afterwards
+        # would never learn it without the snapshot-on-connect fix.
+        peer = pycrdt.Awareness(pycrdt.Doc())
+        peer.set_local_state_field("persona", {"name": token, "id": token})
+        update = peer.encode_awareness_update([peer.client_id])
+        room.handle_awareness_update("seed-peer", pycrdt.create_awareness_message(update))
+
+        self.finish(
+            json.dumps({"room_id": room.room_id, "peer_client_id": str(peer.client_id)})
+        )
+
+
 def _jupyter_server_extension_points():
     return [{"module": "jsd_test_ext"}]
 
@@ -185,6 +224,10 @@ def _load_jupyter_server_extension(server_app):
             (
                 url_path_join(base_url, "jsd-test", "router-fires"),
                 _RouterFiresHandler,
+            ),
+            (
+                url_path_join(base_url, "jsd-test", "seed-awareness"),
+                _SeedAwarenessHandler,
             ),
         ],
     )

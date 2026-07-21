@@ -220,6 +220,46 @@ export async function openDocument(
 }
 
 /**
+ * Closes (disposes) the open document widget at the exact `path`, disconnecting
+ * its provider from the room. The server-side room stays alive well past this
+ * (inactivity GC is 60s), so a subsequent {@link openDocument} of the same path
+ * performs a *fresh* sync handshake against the same room — the connect path
+ * exercised by the awareness-on-connect test. Resolves once no widget for the
+ * path remains open.
+ */
+export async function closeDocument(
+  page: IJupyterLabPageFixture,
+  path: string
+): Promise<void> {
+  await page.evaluate((p: string) => {
+    const app = (window as any).jupyterapp;
+    for (const widget of app.shell.widgets('main')) {
+      if ((widget as any).context?.path === p) {
+        widget.close();
+      }
+    }
+  }, path);
+  // Closing may raise a "Save your changes?" dialog. With RTC the content is
+  // already on the server, so discard is safe — accept whatever dialog appears.
+  const dialog = page.locator('.jp-Dialog');
+  try {
+    await dialog.waitFor({ state: 'visible', timeout: 3000 });
+    await dialog.locator('.jp-mod-accept').first().click();
+  } catch {
+    // No dialog appeared — nothing to dismiss.
+  }
+  await expect
+    .poll(
+      async () => (await getDocPath(page, path.split('/').pop()!)) === null,
+      {
+        timeout: 30000,
+        message: 'document widget never closed'
+      }
+    )
+    .toBe(true);
+}
+
+/**
  * Resolves the open document's real server path, polling until the widget is
  * open. Galata stores files under a per-test temp dir, so the path differs from
  * the bare file name.
@@ -502,6 +542,66 @@ export async function renderedMessageCount(
       hasText: sentinel
     })
     .count();
+}
+
+/**
+ * Publishes an awareness slot into the file's room from a simulated *peer* (as
+ * an AI persona would), via the test-only `/jsd-test/seed-awareness` endpoint.
+ * The slot carries `token` and is never renewed, so no later change delta
+ * re-touches it — mirroring a persona that announced itself before a client
+ * connected. Returns the peer's awareness client id (as a string).
+ *
+ * Unlike the other `/jsd-test/*` helpers this issues the request from Node via
+ * Playwright's `page.request` (APIRequestContext), not from inside the browser.
+ * That matters because the awareness-on-connect test seeds *while the browser
+ * is offline* (`context().setOffline(true)`), which would block an in-page
+ * `fetch`; a Node-side request is unaffected. The test server disables auth and
+ * xsrf (see `jupyter_server_test_config.py`), so no headers are needed.
+ */
+export async function seedAwareness(
+  page: IJupyterLabPageFixture,
+  path: string,
+  token: string
+): Promise<string> {
+  const baseUrl: string = await page.evaluate(
+    () => (window as any).jupyterapp.serviceManager.serverSettings.baseUrl
+  );
+  const res = await page.request.post(
+    `${baseUrl}jsd-test/seed-awareness?path=${encodeURIComponent(path)}&token=${encodeURIComponent(token)}`
+  );
+  if (!res.ok()) {
+    throw new Error(`seed-awareness -> HTTP ${res.status()}`);
+  }
+  const result = (await res.json()) as { peer_client_id: string };
+  return result.peer_client_id;
+}
+
+/**
+ * Reads the client-side awareness states of the open document at `path`,
+ * straight from the provider's `Awareness` (the same object the frontend uses
+ * to render remote cursors / personas). Returns a plain map keyed by the peer
+ * awareness client id, or `null` if the document/provider isn't found. Robust
+ * to virtualized DOM since it reads the shared model, not the view.
+ */
+export async function getClientAwareness(
+  page: IJupyterLabPageFixture,
+  path: string
+): Promise<Record<string, unknown> | null> {
+  return page.evaluate((p: string) => {
+    const app = (window as any).jupyterapp;
+    for (const widget of app.shell.widgets('main')) {
+      const context = (widget as any).context;
+      if (context?.path === p && context.model?.sharedModel?.awareness) {
+        const states = context.model.sharedModel.awareness.getStates();
+        const out: Record<string, unknown> = {};
+        for (const [clientId, state] of states.entries()) {
+          out[String(clientId)] = state;
+        }
+        return out;
+      }
+    }
+    return null;
+  }, path);
 }
 
 /**

@@ -748,17 +748,6 @@ class YRoom(LoggingConfigurable):
             )
             raise
 
-        # Send SyncStep1 message to client
-        try:
-            sync_step1_message = pycrdt.create_sync_message(self._ydoc)
-            new_client.websocket.write_message(sync_step1_message, binary=True)
-        except Exception as e:
-            self.log.exception(
-                "An exception occurred when writing a SyncStep1 message "
-                f"to newly-synced client '{new_client.id}':"
-            )
-            raise
-
         # Send the room's *current* awareness state to this client only.
         #
         # Awareness is otherwise broadcast solely as change deltas (see
@@ -768,6 +757,12 @@ class YRoom(LoggingConfigurable):
         # (jupyter-ai-contrib/jupyter-server-documents#279). Encoding the full
         # current state here and writing it to this socket alone closes that gap
         # without re-broadcasting to peers that already have the state.
+        #
+        # This is sent right after the SS2 reply (which carries the current YDoc
+        # state) and before the SS1 request: both "here's the server's current
+        # state" messages travel together, and awareness reaches the client
+        # before we ask it for its own updates. It is still after `mark_synced`,
+        # so a desynced client mid-handshake is never sent a snapshot.
         try:
             client_ids = list(self._awareness.states.keys())
             if client_ids:
@@ -777,6 +772,17 @@ class YRoom(LoggingConfigurable):
         except Exception as e:
             self.log.exception(
                 "An exception occurred when writing the current awareness state "
+                f"to newly-synced client '{new_client.id}':"
+            )
+            raise
+
+        # Send SyncStep1 message to client
+        try:
+            sync_step1_message = pycrdt.create_sync_message(self._ydoc)
+            new_client.websocket.write_message(sync_step1_message, binary=True)
+        except Exception as e:
+            self.log.exception(
+                "An exception occurred when writing a SyncStep1 message "
                 f"to newly-synced client '{new_client.id}':"
             )
             raise
