@@ -59,7 +59,7 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
 
 
     async def prepare(self):
-        await super().prepare()
+        await super().prepare(_redirect_to_login=False)
 
         # Bind `room_id` attribute
         request_path: str = self.request.path
