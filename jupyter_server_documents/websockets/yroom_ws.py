@@ -1,12 +1,12 @@
 from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
-from tornado import web
 from typing import TYPE_CHECKING
 import asyncio
 from ..rooms import YRoomManager
 import logging
 from jupyter_server.base.handlers import JupyterHandler
+from jupyter_server.auth.decorator import ws_authenticated
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
