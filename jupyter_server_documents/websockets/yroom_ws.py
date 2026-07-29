@@ -54,6 +54,7 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
             raise web.HTTPError(403)
         return await super().get(*args, **kwargs)
 
+
     async def prepare(self):
         await super().prepare()
 
