@@ -45,11 +45,7 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
 
 
     def check_origin(self, origin):
-        # Bare Tornado's default check_origin enforces strict same-origin,
-        # which 403s every room websocket behind a reverse proxy that
-        # doesn't preserve the Host header (Origin != Host at the backend).
-        # Defer to authentication instead (see get() below), mirroring
-        # jupyter_server_ydoc.YDocWebSocketHandler.
+        # Mirroring jupyter_server_ydoc.YDocWebSocketHandler.
         return True
 
     async def get(self, *args, **kwargs):
@@ -59,8 +55,6 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
         return await super().get(*args, **kwargs)
 
     async def prepare(self):
-        # Run JupyterHandler's auth resolution so current_user is populated
-        # before get() checks it above.
         await super().prepare()
 
         # Bind `room_id` attribute
