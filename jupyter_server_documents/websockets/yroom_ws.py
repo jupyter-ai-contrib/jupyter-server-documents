@@ -5,13 +5,15 @@ from typing import TYPE_CHECKING
 import asyncio
 from ..rooms import YRoomManager
 import logging
+from jupyter_server.base.handlers import JupyterHandler
+from jupyter_server.auth.decorator import ws_authenticated
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
     from ..rooms import YRoom
 
-class YRoomWebsocket(WebSocketHandler):
+class YRoomWebsocket(WebSocketHandler, JupyterHandler):
     yroom: YRoom
     room_id: str
     client_id: str | None
@@ -42,7 +44,21 @@ class YRoomWebsocket(WebSocketHandler):
         return self.settings["contents_manager"]
 
 
-    def prepare(self):
+    def check_origin(self, origin):
+        # `WebSocketHandler` precedes `JupyterHandler` in the MRO, so `super()`
+        # would resolve to Tornado's strict same-origin check. Call
+        # `JupyterHandler`'s explicitly: it honors `allow_origin`/`allow_origin_pat`
+        # and skips the check for token-authenticated requests.
+        return JupyterHandler.check_origin(self, origin)
+
+    @ws_authenticated
+    async def get(self, *args, **kwargs):
+        return await super().get(*args, **kwargs)
+
+
+    async def prepare(self):
+        await super().prepare(_redirect_to_login=False)
+
         # Bind `room_id` attribute
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]
