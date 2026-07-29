@@ -45,8 +45,11 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
 
 
     def check_origin(self, origin):
-        # Mirroring jupyter_server_ydoc.YDocWebSocketHandler.
-        return True
+        # `WebSocketHandler` precedes `JupyterHandler` in the MRO, so `super()`
+        # would resolve to Tornado's strict same-origin check. Call
+        # `JupyterHandler`'s explicitly: it honors `allow_origin`/`allow_origin_pat`
+        # and skips the check for token-authenticated requests.
+        return JupyterHandler.check_origin(self, origin)
 
     async def get(self, *args, **kwargs):
         if self.current_user is None:
