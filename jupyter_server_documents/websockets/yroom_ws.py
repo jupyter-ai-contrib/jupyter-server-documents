@@ -51,10 +51,8 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
         # and skips the check for token-authenticated requests.
         return JupyterHandler.check_origin(self, origin)
 
+    @ws_authenticated
     async def get(self, *args, **kwargs):
-        if self.current_user is None:
-            self.log.warning("Couldn't authenticate WebSocket connection")
-            raise web.HTTPError(403)
         return await super().get(*args, **kwargs)
 
 
