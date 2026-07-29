@@ -1,17 +1,19 @@
 from __future__ import annotations
 from tornado.httpclient import HTTPError
 from tornado.websocket import WebSocketHandler
+from tornado import web
 from typing import TYPE_CHECKING
 import asyncio
 from ..rooms import YRoomManager
 import logging
+from jupyter_server.base.handlers import JupyterHandler
 
 if TYPE_CHECKING:
     from jupyter_server_fileid.manager import BaseFileIdManager
     from jupyter_server.services.contents.manager import AsyncContentsManager, ContentsManager
     from ..rooms import YRoom
 
-class YRoomWebsocket(WebSocketHandler):
+class YRoomWebsocket(WebSocketHandler, JupyterHandler):
     yroom: YRoom
     room_id: str
     client_id: str | None
@@ -42,7 +44,25 @@ class YRoomWebsocket(WebSocketHandler):
         return self.settings["contents_manager"]
 
 
-    def prepare(self):
+    def check_origin(self, origin):
+        # Bare Tornado's default check_origin enforces strict same-origin,
+        # which 403s every room websocket behind a reverse proxy that
+        # doesn't preserve the Host header (Origin != Host at the backend).
+        # Defer to authentication instead (see get() below), mirroring
+        # jupyter_server_ydoc.YDocWebSocketHandler.
+        return True
+
+    async def get(self, *args, **kwargs):
+        if self.current_user is None:
+            self.log.warning("Couldn't authenticate WebSocket connection")
+            raise web.HTTPError(403)
+        return await super().get(*args, **kwargs)
+
+    async def prepare(self):
+        # Run JupyterHandler's auth resolution so current_user is populated
+        # before get() checks it above.
+        await super().prepare()
+
         # Bind `room_id` attribute
         request_path: str = self.request.path
         self.room_id = request_path.strip("/").split("/")[-1]

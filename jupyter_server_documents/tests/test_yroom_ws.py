@@ -29,3 +29,16 @@ class TestYRoomWebsocket:
     def test_ping_timeout_not_greater_than_ping_interval(self, mock_server_docs_app):
         handler = self._make_handler(mock_server_docs_app)
         assert handler.ping_timeout <= handler.ping_interval
+
+    def test_check_origin_allows_any_origin(self, mock_server_docs_app):
+        """
+        check_origin() must always return True. Tornado's default
+        implementation enforces strict same-origin (Origin == Host), which
+        403s every room websocket behind a reverse proxy that doesn't
+        preserve the Host header. The actual security check is deferred to
+        authentication in get() instead, mirroring
+        jupyter_server_ydoc.YDocWebSocketHandler.
+        """
+        handler = self._make_handler(mock_server_docs_app)
+        assert handler.check_origin("https://an-entirely-different-origin.example.com") is True
+        assert handler.check_origin(None) is True
