@@ -622,21 +622,22 @@ class YRoomFileAPI(LoggingConfigurable):
             # Build arguments to `CM.save()`
             path = self.get_path()
             content = jupyter_ydoc.source
-            # Guard against truncating a notebook to an empty/uninitialized
-            # document. A notebook's source is a dict; a pristine or not-yet-
-            # loaded YNotebook has nbformat == 0 (real notebooks are >= 4), a
-            # state a user cannot reach by editing. Saving empty/uninitialized
-            # content would overwrite good on-disk content with a 0-byte or
-            # invalid notebook, so skip the save and warn instead.
-            if self.file_type == "notebook" and (
-                not content
-                or (isinstance(content, dict) and not content.get("nbformat"))
+            # Guard against truncating a notebook to a pristine/uninitialized
+            # document. A notebook's source is a dict, and a not-yet-loaded
+            # YNotebook has nbformat == 0 (real notebooks are >= 4) -- a state a
+            # user cannot reach by editing. Saving it would overwrite good
+            # on-disk content with an empty notebook, so skip and warn instead.
+            # We match only nbformat == 0 (not a missing key) so we never skip a
+            # save of content that could be real.
+            if (
+                self.file_type == "notebook"
+                and isinstance(content, dict)
+                and content.get("nbformat") == 0
             ):
-                nbformat_version = content.get("nbformat") if isinstance(content, dict) else None
                 self.log.warning(
-                    f"Refusing to save room '{self.room_id}': notebook content is empty "
-                    f"or uninitialized (nbformat={nbformat_version!r}). Skipping the save "
-                    "to avoid truncating the file on disk."
+                    f"Refusing to save room '{self.room_id}': notebook is empty or "
+                    "uninitialized (nbformat == 0). Skipping the save to avoid "
+                    "truncating the file on disk."
                 )
                 return
             file_format = self.file_format
