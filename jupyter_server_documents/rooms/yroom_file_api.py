@@ -404,6 +404,16 @@ class YRoomFileAPI(LoggingConfigurable):
             result in only a single save operation.
         """
         self._save_scheduled = True
+
+    @property
+    def has_unsaved_changes(self) -> bool:
+        """Whether the YDoc has changes not yet persisted to disk.
+
+        `True` when a save has been scheduled via `schedule_save()` but has not
+        yet completed successfully. `YRoom.stop()` uses this to skip a redundant
+        final save when the autosave loop has already persisted every change.
+        """
+        return self._save_scheduled
     
     async def _watch_file(self, jupyter_ydoc: YBaseDoc) -> None:
         """Background task that monitors the file and processes scheduled saves.
@@ -664,6 +674,9 @@ class YRoomFileAPI(LoggingConfigurable):
         except Exception as e:
             self.log.error("An exception occurred when saving JupyterYDoc.")
             self.log.exception(e)
+            # Re-arm the save flag so a failed save is retried and is not
+            # mistaken for "no unsaved changes" by `has_unsaved_changes`.
+            self._save_scheduled = True
     
 
     def stop(self) -> None:
