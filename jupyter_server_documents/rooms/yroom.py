@@ -1116,10 +1116,13 @@ class YRoom(LoggingConfigurable):
             # interruptible write that can corrupt the file if the server is
             # stopped uncleanly (e.g. a misconfigured environment).
             if not immediately and self.file_api.has_unsaved_changes:
+                self.log.info(f"Saving YRoom '{self.room_id}' on stop; it has unsaved changes.")
                 prev_jupyter_ydoc = self._jupyter_ydoc
                 self._save_task = asyncio.create_task(
                     self.file_api.save(prev_jupyter_ydoc)
                 )
+            elif not immediately:
+                self.log.info(f"Skipping redundant save-on-stop for YRoom '{self.room_id}'; no unsaved changes.")
 
         # Fire `on_stop` callbacks. Sync callbacks run immediately; coroutines
         # returned by async callbacks are collected so they can be awaited (in
