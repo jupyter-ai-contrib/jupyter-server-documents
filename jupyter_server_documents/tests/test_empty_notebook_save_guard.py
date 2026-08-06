@@ -1,8 +1,8 @@
-"""Tests for the empty/uninitialized-notebook save guard in `YRoomFileAPI.save()`.
+"""Tests for the empty-notebook save guard in `YRoomFileAPI.save()`.
 
-A notebook's YDoc source is a dict; a pristine or not-yet-loaded `YNotebook` has
-`nbformat == 0`. Saving that would overwrite good on-disk content with an empty
-notebook, so `save()` must skip the write (and warn) instead of truncating.
+If a notebook room's YDoc source is empty (an empty ``{}`` document), saving it
+would overwrite good on-disk content with a 0-byte / empty notebook. `save()`
+must skip the write (and warn) instead of truncating.
 """
 import logging
 
@@ -20,9 +20,9 @@ GOOD_NB = (
 )
 
 
-class _UninitializedNotebook:
-    """Stand-in for a pristine/unloaded YNotebook (nbformat == 0)."""
-    source = {"cells": [], "metadata": {}, "nbformat": 0, "nbformat_minor": 0}
+class _EmptyNotebook:
+    """Stand-in for an empty/unloaded YNotebook whose source is ``{}``."""
+    source = {}
     dirty = True
 
 
@@ -57,15 +57,14 @@ def _make_notebook_file_api(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_save_skips_empty_uninitialized_notebook(tmp_path, caplog):
+async def test_save_skips_empty_notebook(tmp_path, caplog):
     file_api, nb_path = _make_notebook_file_api(tmp_path)
 
     with caplog.at_level(logging.WARNING):
-        await file_api.save(_UninitializedNotebook())
+        await file_api.save(_EmptyNotebook())
 
     # The good on-disk notebook must be left untouched (not truncated).
     assert nb_path.read_text() == GOOD_NB
     assert any(
-        "uninitialized (nbformat == 0)" in r.getMessage()
-        for r in caplog.records
+        "notebook content is empty" in r.getMessage() for r in caplog.records
     )
