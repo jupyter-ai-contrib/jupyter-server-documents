@@ -622,6 +622,23 @@ class YRoomFileAPI(LoggingConfigurable):
             # Build arguments to `CM.save()`
             path = self.get_path()
             content = jupyter_ydoc.source
+            # Guard against truncating a notebook to an empty/uninitialized
+            # document. A notebook's source is a dict; a pristine or not-yet-
+            # loaded YNotebook has nbformat == 0 (real notebooks are >= 4), a
+            # state a user cannot reach by editing. Saving empty/uninitialized
+            # content would overwrite good on-disk content with a 0-byte or
+            # invalid notebook, so skip the save and warn instead.
+            if self.file_type == "notebook" and (
+                not content
+                or (isinstance(content, dict) and not content.get("nbformat"))
+            ):
+                nbformat_version = content.get("nbformat") if isinstance(content, dict) else None
+                self.log.warning(
+                    f"Refusing to save room '{self.room_id}': notebook content is empty "
+                    f"or uninitialized (nbformat={nbformat_version!r}). Skipping the save "
+                    "to avoid truncating the file on disk."
+                )
+                return
             file_format = self.file_format
             file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
 
