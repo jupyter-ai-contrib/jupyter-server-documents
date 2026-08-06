@@ -66,6 +66,6 @@ async def test_save_skips_empty_uninitialized_notebook(tmp_path, caplog):
     # The good on-disk notebook must be left untouched (not truncated).
     assert nb_path.read_text() == GOOD_NB
     assert any(
-        "notebook content is empty or uninitialized" in r.getMessage()
+        "uninitialized (nbformat == 0)" in r.getMessage()
         for r in caplog.records
     )
