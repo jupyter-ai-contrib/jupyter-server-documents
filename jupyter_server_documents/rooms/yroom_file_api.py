@@ -151,6 +151,10 @@ class YRoomFileAPI(LoggingConfigurable):
         self._last_modified = None
         self._stopped = False
         self._is_writable = True
+        # Initialized here (not only at the end of `_load_content`) so `stop()`
+        # is safe when a room is stopped before the initial content load has
+        # started the watch-file task. Otherwise `stop()` raises AttributeError.
+        self._watch_file_task = None
 
         # Initialize content-related primitives
         self._content_loading = False
