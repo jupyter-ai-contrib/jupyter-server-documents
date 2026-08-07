@@ -7,5 +7,5 @@ dependencies:
   - uv
   - jupyterlab
   - pip:
-      - jupyterlab>=4.4.0,<5.0.0
+      - jupyterlab>=4.4.0,<4.6.0
       - jupyter_collaboration~=4.0
