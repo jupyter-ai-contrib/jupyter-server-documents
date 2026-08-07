@@ -1099,6 +1099,11 @@ class YRoom(LoggingConfigurable):
                     msg_type = message[0]
                     if msg_type == YMessageType.SYNC and len(message) >= 2 and message[1] == YSyncMessageSubtype.SYNC_UPDATE:
                         self.handle_sync_update(client_id, message)
+                        # Observers were removed above, so applying this update
+                        # will not schedule a save on its own. Mark the room
+                        # dirty so the final save-on-close below is not skipped.
+                        if self.file_api:
+                            self.file_api.schedule_save()
                     elif msg_type == YMessageType.AWARENESS:
                         self.handle_awareness_update(client_id, message)
                 self._message_queue.task_done()
@@ -1110,11 +1115,20 @@ class YRoom(LoggingConfigurable):
         # previous content if `immediately=False`.
         if self.file_api and self._jupyter_ydoc:
             self.file_api.stop()
-            if not immediately:
+            # Only perform the final save-on-close when there are unsaved
+            # changes. The autosave loop persists edits as they happen, so this
+            # final save is usually redundant -- and every save truncates and
+            # rewrites the file. Skipping the redundant save removes an
+            # interruptible write that can corrupt the file if the server is
+            # stopped uncleanly (e.g. a misconfigured environment).
+            if not immediately and self.file_api.has_unsaved_changes:
+                self.log.info(f"Saving YRoom '{self.room_id}' on stop; it has unsaved changes.")
                 prev_jupyter_ydoc = self._jupyter_ydoc
                 self._save_task = asyncio.create_task(
                     self.file_api.save(prev_jupyter_ydoc)
                 )
+            elif not immediately:
+                self.log.info(f"Skipping redundant save-on-stop for YRoom '{self.room_id}'; no unsaved changes.")
 
         # Fire `on_stop` callbacks (skip if restarting)
         if not restarting:

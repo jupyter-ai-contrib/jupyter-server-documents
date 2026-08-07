@@ -404,6 +404,16 @@ class YRoomFileAPI(LoggingConfigurable):
             result in only a single save operation.
         """
         self._save_scheduled = True
+
+    @property
+    def has_unsaved_changes(self) -> bool:
+        """Whether the YDoc has changes not yet persisted to disk.
+
+        `True` when a save has been scheduled via `schedule_save()` but has not
+        yet completed successfully. `YRoom.stop()` uses this to skip a redundant
+        final save when the autosave loop has already persisted every change.
+        """
+        return self._save_scheduled
     
     async def _watch_file(self, jupyter_ydoc: YBaseDoc) -> None:
         """Background task that monitors the file and processes scheduled saves.
@@ -612,6 +622,17 @@ class YRoomFileAPI(LoggingConfigurable):
             # Build arguments to `CM.save()`
             path = self.get_path()
             content = jupyter_ydoc.source
+            # Guard against truncating a notebook: skip the save when the
+            # notebook content is empty (an empty `{}` document). Saving that
+            # would overwrite good on-disk content with a 0-byte / empty
+            # notebook. This only blocks the destructive save; an empty `{}`
+            # file is still openable.
+            if self.file_type == "notebook" and not content:
+                self.log.warning(
+                    f"Refusing to save room '{self.room_id}': notebook content is empty. "
+                    "Skipping the save to avoid truncating the file on disk."
+                )
+                return
             file_format = self.file_format
             file_type = self.file_type if self.file_type in SAVEABLE_FILE_TYPES else "file"
 
@@ -664,6 +685,9 @@ class YRoomFileAPI(LoggingConfigurable):
         except Exception as e:
             self.log.error("An exception occurred when saving JupyterYDoc.")
             self.log.exception(e)
+            # Re-arm the save flag so a failed save is retried and is not
+            # mistaken for "no unsaved changes" by `has_unsaved_changes`.
+            self._save_scheduled = True
     
 
     def stop(self) -> None:
