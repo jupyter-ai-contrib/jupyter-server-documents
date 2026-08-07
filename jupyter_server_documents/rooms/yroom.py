@@ -1067,8 +1067,16 @@ class YRoom(LoggingConfigurable):
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
         
-        # Stop awareness heartbeat
-        asyncio.create_task(self._awareness.stop())
+        # Stop awareness heartbeat. Guard against stopping a room that never
+        # finished starting (e.g. stopped during the initial load): awareness
+        # may not have been started, and `Awareness.stop()` raises "Awareness
+        # not started", which would surface as an unretrieved task exception.
+        async def _stop_awareness() -> None:
+            try:
+                await self._awareness.stop()
+            except RuntimeError:
+                pass
+        asyncio.create_task(_stop_awareness())
 
         # Remove all observers
         try:
