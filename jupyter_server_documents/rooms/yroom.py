@@ -554,12 +554,23 @@ class YRoom(LoggingConfigurable):
 
             # Otherwise, process & handle the new message
             client_id, message = queue_item
-            await self.handle_message(client_id, message)
-            
-            # Finally, inform the asyncio Queue that the task was complete
-            # This is required for `self._message_queue.join()` to unblock once
-            # queue is empty in `self.stop()`.
-            self._message_queue.task_done()
+            try:
+                await self.handle_message(client_id, message)
+            except Exception:
+                # A message that cannot be handled (e.g. one enqueued by a
+                # client that has since disconnected) must not terminate this
+                # background task; otherwise the room stops processing all
+                # future messages from every client.
+                self.log.exception(
+                    f"Error handling message from client '{client_id}' in "
+                    f"YRoom '{self.room_id}'. Skipping this message."
+                )
+            finally:
+                # Finally, inform the asyncio Queue that the task was complete
+                # This is required for `self._message_queue.join()` to unblock
+                # once queue is empty in `self.stop()`, including when handling
+                # the message raised an exception.
+                self._message_queue.task_done()
 
         self.log.debug(
             "Stopped `self._process_message_queue()` background task "
