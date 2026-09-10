@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from tornado.httputil import HTTPHeaders, HTTPServerRequest
 
@@ -74,3 +74,50 @@ class TestYRoomWebsocket:
         blocked.settings["allow_origin"] = "https://proxy.example.com"
         blocked.settings["identity_provider"] = idp
         assert blocked.check_origin("https://evil.example.com") is False
+
+    def _make_handler_with_yroom(self, mock_server_docs_app, events_api=None):
+        yroom = MagicMock()
+        yroom.clients.add.return_value = "client-1"
+        yroom.events_api = events_api
+
+        yroom_manager = MagicMock()
+        yroom_manager.get_room.return_value = yroom
+
+        current_user = MagicMock()
+        current_user.username = "alice"
+
+        handler = self._make_handler(mock_server_docs_app)
+        handler.settings["yroom_manager"] = yroom_manager
+        # Bypass Jupyter Server 2's async current_user machinery by caching directly.
+        handler._current_user = current_user
+        return handler, yroom
+
+    def test_open_emits_join_awareness_event(self, mock_server_docs_app):
+        events_api = MagicMock()
+        handler, _ = self._make_handler_with_yroom(mock_server_docs_app, events_api)
+        handler.room_id = "text:file:test-id"
+        handler.open()
+
+        events_api.emit_awareness_event.assert_called_once_with("alice", "join")
+
+    def test_on_close_emits_leave_awareness_event(self, mock_server_docs_app):
+        events_api = MagicMock()
+        handler, _ = self._make_handler_with_yroom(mock_server_docs_app, events_api)
+        handler.room_id = "text:file:test-id"
+        handler.open()
+        handler.on_close()
+
+        events_api.emit_awareness_event.assert_called_with("alice", "leave")
+
+    def test_open_skips_awareness_event_when_events_api_is_none(self, mock_server_docs_app):
+        handler, _ = self._make_handler_with_yroom(mock_server_docs_app, events_api=None)
+        handler.room_id = "JupyterLab:globalAwareness"
+        # Should not raise even when events_api is None
+        handler.open()
+
+    def test_on_close_skips_awareness_event_when_events_api_is_none(self, mock_server_docs_app):
+        handler, _ = self._make_handler_with_yroom(mock_server_docs_app, events_api=None)
+        handler.room_id = "JupyterLab:globalAwareness"
+        handler.open()
+        # Should not raise even when events_api is None
+        handler.on_close()
