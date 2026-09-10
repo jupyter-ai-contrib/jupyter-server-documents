@@ -4,7 +4,7 @@ from jupyter_server_fileid.manager import BaseFileIdManager  # type: ignore
 from traitlets.config import LoggingConfigurable
 from typing import TYPE_CHECKING
 
-from ..events import JSD_ROOM_EVENT_URI
+from ..events import JSD_AWARENESS_EVENT_URI, JSD_ROOM_EVENT_URI
 
 if TYPE_CHECKING:
     from .yroom import YRoom
@@ -45,11 +45,11 @@ class YRoomEventsAPI(LoggingConfigurable):
     @property
     def room_id(self) -> str:
         return self.parent.room_id
-    
+
     @property
     def event_logger(self) -> EventLogger:
         return self.parent.event_logger
-    
+
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self.parent.fileid_manager
@@ -81,11 +81,27 @@ class YRoomEventsAPI(LoggingConfigurable):
         except:
             self.log.exception("Exception occurred when emitting a room event.")
 
-    def emit_awareness_event(self):
+    def emit_awareness_event(
+        self,
+        username: str,
+        action: Literal["join", "leave"],
+        level: Optional[Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]] = "INFO"
+    ):
         """
-        TODO
+        Emit a room awareness event. Usually when a client join or leave a
+        collaborative room.
         """
-        pass
+        try:
+            event_data = {
+                "level": level,
+                "roomid": self.room_id,
+                "username": username,
+                "action": action
+            }
+
+            self.event_logger.emit(schema_id=JSD_AWARENESS_EVENT_URI, data=event_data)
+        except:
+            self.log.exception("Exception occurred when emitting an awareness event event.")
 
 
     def _get_path(self) -> str:

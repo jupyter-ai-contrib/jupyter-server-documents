@@ -33,16 +33,13 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
     def yroom_manager(self) -> YRoomManager:
         return self.settings["yroom_manager"]
 
-
     @property
     def fileid_manager(self) -> BaseFileIdManager:
         return self.settings["file_id_manager"]
-    
 
     @property
     def contents_manager(self) -> AsyncContentsManager | ContentsManager:
         return self.settings["contents_manager"]
-
 
     def check_origin(self, origin):
         # `WebSocketHandler` precedes `JupyterHandler` in the MRO, so `super()`
@@ -54,7 +51,6 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
     @ws_authenticated
     async def get(self, *args, **kwargs):
         return await super().get(*args, **kwargs)
-
 
     async def prepare(self):
         await super().prepare(_redirect_to_login=False)
@@ -74,7 +70,6 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
             self.log.debug("WS prepare: room_id=%r fileid=%r path=%r", self.room_id, fileid, path)
             if not path:
                 raise HTTPError(404, f"No file with ID '{fileid}'.")
-    
 
     def open(self, *_, **__):
         # Create the YRoom
@@ -90,6 +85,9 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
         if not self.client_id:
             self.close(code=1001)
             return
+        if self.yroom.events_api:
+            # events_api doesn't exist in GlobalAwareness room.
+            self.yroom.events_api.emit_awareness_event(self.current_user.username, "join")
 
 
     def on_message(self, message: bytes):
@@ -105,3 +103,6 @@ class YRoomWebsocket(WebSocketHandler, JupyterHandler):
         if self.client_id:
             self.log.info(f"Closed Websocket to client '{self.client_id}'.")
             self.yroom.clients.remove(self.client_id)
+            if self.yroom.events_api:
+                # events_api doesn't exist in GlobalAwareness room.
+                self.yroom.events_api.emit_awareness_event(self.current_user.username, "leave")
