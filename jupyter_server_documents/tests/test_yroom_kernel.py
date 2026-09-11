@@ -34,7 +34,9 @@ def make_yroom():
     room._execution_queue = None
     room._execution_worker_task = None
     room.output_processor = None
-    room._enqueued_events = {}
+    room._next_seq = {}
+    room._seq_generation = {}
+    room._seq_cv = asyncio.Condition()
     return room
 
 

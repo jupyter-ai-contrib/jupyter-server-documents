@@ -21,10 +21,6 @@ if TYPE_CHECKING:
     from ..outputs.output_processor import OutputProcessor
 
 
-# How long a request with previous_request_id will wait for its predecessor.
-_PREDECESSOR_TIMEOUT = 10.0
-
-
 def _source_hash(source: str) -> str:
     """MurmurHash2 of the UTF-8 encoded source, seeded with 0.
 
@@ -72,8 +68,21 @@ class SourceMismatchError(Exception):
         self.cell_id = cell_id
 
 
-class PredecessorTimeoutError(Exception):
-    """Timed out waiting for previous_request_id to be enqueued."""
+class SequenceOutOfRangeError(Exception):
+    """A request arrived with a sequence number below the expected next value.
+
+    Raised when the client either duplicated a request or somehow rewound
+    without signalling a session reset (``sequence == 0``).
+    """
+
+
+class SessionResetError(Exception):
+    """A pending sequence wait was abandoned because the client session was reset.
+
+    Signalled when the browser sent ``sequence == 0`` while the server was
+    already tracking a higher sequence for that ``client_id``, or when the
+    kernel was disconnected mid-wait.
+    """
 
 
 @dataclass
@@ -105,10 +114,14 @@ class YNotebookRoom(YRoom):
         self._execution_queue: asyncio.Queue | None = None
         self._execution_worker_task: asyncio.Task | None = None
         self.output_processor: OutputProcessor | None = None
-        # Per-request ordering: maps request_id → Event that is set once the
-        # request has been enqueued.  Lets a successor wait for its predecessor
-        # without blocking the event loop.
-        self._enqueued_events: dict[str, asyncio.Event] = {}
+        # Per-client sequence-based ordering for execute_cells.
+        # _next_seq[client_id] is the next sequence number expected to be
+        # enqueued for that client. _seq_generation[client_id] is bumped on
+        # session reset so orphaned waiters can abandon. _seq_cv coordinates
+        # all waiters.
+        self._next_seq: dict[str, int] = {}
+        self._seq_generation: dict[str, int] = {}
+        self._seq_cv: asyncio.Condition = asyncio.Condition()
 
     # ── Kernel client lifecycle ───────────────────────────────────────────────────
 
@@ -144,8 +157,17 @@ class YNotebookRoom(YRoom):
         # pyzmq asyncio recv cancellation issues inside asyncio Tasks.
         await self._fetch_kernel_info()
 
-    async def disconnect_kernel(self) -> None:
-        """Detach from the kernel. Cancels the execution worker and drains the queue."""
+    async def disconnect_kernel(self, *, reset_sequences: bool = True) -> None:
+        """Detach from the kernel. Cancels the execution worker and drains the queue.
+
+        Parameters
+        ----------
+        reset_sequences:
+            When True (default), per-client sequence state is cleared and
+            pending waiters are abandoned with :class:`SessionResetError`.
+            Pass False to preserve the counter (in-place restart, where the
+            kernel_id — and thus the caller's counter — is unchanged).
+        """
         if self._kernel_manager is not None:
             try:
                 self._kernel_manager.remove_restart_callback(self._on_kernel_restart, "restart")
@@ -180,15 +202,23 @@ class YNotebookRoom(YRoom):
 
         self._kernel_manager = None
         self._shell_confirmed = False
-        # Clear the request-ordering state so stale pre-disconnect events
-        # don't linger and consume memory across sessions.
-        self._enqueued_events.clear()
+        if reset_sequences:
+            # Clear per-client sequence state and abandon any in-flight waiters
+            # by bumping every client's generation counter. Waiters check
+            # generation on wake and raise SessionResetError if it changed.
+            async with self._seq_cv:
+                for client_id in list(self._seq_generation.keys()):
+                    self._seq_generation[client_id] = self._seq_generation[client_id] + 1
+                self._next_seq.clear()
+                self._seq_cv.notify_all()
 
     async def _on_kernel_restart(self) -> None:
         # Save the kernel manager before disconnect_kernel() nulls it out,
         # so we can pass it back to connect_kernel() below.
         km = self._kernel_manager
-        await self.disconnect_kernel()
+        # In-place restart keeps the same kernel_id, so the caller's per-kernel
+        # sequence counter is still valid — preserve it across the reconnect.
+        await self.disconnect_kernel(reset_sequences=False)
         if km is not None:
             await self.connect_kernel(km)
 
@@ -380,7 +410,8 @@ class YNotebookRoom(YRoom):
         cells: list,
         clear_outputs: bool = False,
         request_id: Optional[str] = None,
-        previous_request_id: Optional[str] = None,
+        client_id: Optional[str] = None,
+        sequence: Optional[int] = None,
     ) -> None:
         """Enqueue a batch of cells atomically and return immediately.
 
@@ -388,6 +419,23 @@ class YNotebookRoom(YRoom):
         returns, so no other request can interleave with the batch.  This
         makes "Run All" safe against concurrent single-cell requests from
         other users — see davidbrochart's comment in PR #248.
+
+        Cross-request ordering
+        ----------------------
+        ``execute_cells`` is invoked from an HTTP POST endpoint, so concurrent
+        requests can arrive in any order — HTTP/2 streams and independent
+        HTTP/1.1 connections make no ordering promise. To preserve the browser's
+        intended order, callers pass a ``(client_id, sequence)`` pair.
+        ``sequence`` is a monotonic counter per ``client_id``; the server
+        enqueues in sequence order, buffering out-of-order arrivals until their
+        predecessors show up. This is deterministic — there is no timeout
+        heuristic.
+
+        Session reset: a request with ``sequence == 0`` when the server has
+        already seen higher sequences for that client_id signals the browser has
+        restarted its counter (new tab, kernel swap, explicit reset). The server
+        clears state and abandons pending waiters for that client_id with
+        ``SessionResetError``.
 
         Args:
             cells: List of dicts with keys:
@@ -397,70 +445,134 @@ class YNotebookRoom(YRoom):
                   Returns 409 for the first cell whose source has diverged;
                   no cells are enqueued.
 
-            request_id: UUID for this batch.  Set after all cells are enqueued
-                so a chained successor waits for the whole batch, not just the
-                first cell.
-
-            previous_request_id: Wait for this predecessor batch to be fully
-                enqueued before enqueuing any cell in this batch.
+            request_id: UUID for this batch (opaque; used for logging only).
+            client_id: Identifies the browser tab; scopes ``sequence``.
+            sequence: Monotonic counter per ``client_id``, starting at 0.
         """
         if self._kernel_client is None:
             raise RuntimeError("YNotebookRoom is not connected to a kernel")
         if self._execution_queue is None:
             raise RuntimeError("YNotebookRoom execution worker is not running")
 
-        # Wait for predecessor batch to finish enqueuing.
-        if previous_request_id:
-            if previous_request_id not in self._enqueued_events:
-                self._enqueued_events[previous_request_id] = asyncio.Event()
-            event = self._enqueued_events[previous_request_id]
-            try:
-                await asyncio.wait_for(event.wait(), timeout=_PREDECESSOR_TIMEOUT)
-            except asyncio.TimeoutError:
-                self._enqueued_events.pop(previous_request_id, None)
-                raise PredecessorTimeoutError()
-            self._enqueued_events.pop(previous_request_id, None)
+        acquired_seq = False
+        if client_id is not None and sequence is not None:
+            await self._wait_for_seq_turn(client_id, sequence)
+            acquired_seq = True
 
-        ydoc = await self.get_jupyter_ydoc()
-        file_id = self.room_id.split(":", 2)[2]
+        try:
+            ydoc = await self.get_jupyter_ydoc()
+            file_id = self.room_id.split(":", 2)[2]
 
-        # Resolve and verify ALL cells before touching any state, so a hash
-        # mismatch leaves the notebook completely unchanged.
-        items = []
-        for entry in cells:
-            cell_id = entry.get("cell_id") or entry  # accept plain string too
-            if not isinstance(cell_id, str):
-                raise ValueError(f"Each cell entry must have a cell_id string, got {entry!r}")
-            source_hash = entry.get("source_hash") if isinstance(entry, dict) else None
-            if source_hash is None:
-                raise ValueError(f"source_hash is required for cell {cell_id!r}")
-            ycell = self._find_kernel_cell(ydoc, cell_id)
-            current_source = str(ycell.get("source", ""))
-            if _source_hash(current_source) != source_hash:
-                raise SourceMismatchError(cell_id)
-            items.append((cell_id, ycell))
+            # Resolve and verify ALL cells before touching any state, so a hash
+            # mismatch leaves the notebook completely unchanged.
+            items = []
+            for entry in cells:
+                cell_id = entry.get("cell_id") or entry  # accept plain string too
+                if not isinstance(cell_id, str):
+                    raise ValueError(f"Each cell entry must have a cell_id string, got {entry!r}")
+                source_hash = entry.get("source_hash") if isinstance(entry, dict) else None
+                if source_hash is None:
+                    raise ValueError(f"source_hash is required for cell {cell_id!r}")
+                ycell = self._find_kernel_cell(ydoc, cell_id)
+                current_source = str(ycell.get("source", ""))
+                if _source_hash(current_source) != source_hash:
+                    raise SourceMismatchError(cell_id)
+                items.append((cell_id, ycell))
 
-        # All checks passed — mark running and enqueue atomically.
-        for cell_id, ycell in items:
-            if clear_outputs:
-                del ycell["outputs"][:]
-            ycell["execution_state"] = "running"
-            await self._execution_queue.put(_ExecutionItem(
-                cell_id=cell_id,
-                ycell=ycell,
-                file_id=file_id,
-                clear_outputs=clear_outputs,
-            ))
+            # All checks passed — mark running and enqueue atomically.
+            for cell_id, ycell in items:
+                if clear_outputs:
+                    del ycell["outputs"][:]
+                ycell["execution_state"] = "running"
+                await self._execution_queue.put(_ExecutionItem(
+                    cell_id=cell_id,
+                    ycell=ycell,
+                    file_id=file_id,
+                    clear_outputs=clear_outputs,
+                ))
+        finally:
+            # Always advance the client's sequence, even on error: the sequence
+            # slot is "consumed" by having entered execute_cells. If we didn't
+            # advance on error, successive requests would wait forever for a
+            # sequence the server has decided to skip.
+            if acquired_seq:
+                await self._advance_seq(client_id)  # type: ignore[arg-type]
 
-        # Signal that the whole batch has been enqueued.
-        if request_id is not None:
-            existing = self._enqueued_events.get(request_id)
-            if existing is not None:
-                existing.set()
-            else:
-                done = asyncio.Event()
-                done.set()
-                self._enqueued_events[request_id] = done
+    async def _wait_for_seq_turn(self, client_id: str, sequence: int) -> None:
+        """Block until it is this ``(client_id, sequence)``'s turn to enqueue.
+
+        The wait only bounds *ordering* of concurrent POSTs — not execution — so
+        it should complete on the order of a network round-trip. If a
+        predecessor request is genuinely lost (client crash, network drop) the
+        waiter would otherwise block forever; we cap it and raise
+        ``SessionResetError`` on expiry. The frontend responds to the resulting
+        409 by clearing its counter and retrying with ``sequence=0``, which
+        drains any peers still stuck behind the same lost predecessor.
+
+        Signals a session reset if ``sequence == 0`` when the server already
+        holds higher state for this client. Raises ``SessionResetError`` if a
+        reset (or kernel disconnect) happens while waiting.
+        """
+        async with self._seq_cv:
+            self._seq_generation.setdefault(client_id, 0)
+            current = self._next_seq.get(client_id, 0)
+
+            # Session reset: browser sent sequence=0 while we're past it.
+            if sequence == 0 and current > 0:
+                self._next_seq[client_id] = 0
+                self._seq_generation[client_id] += 1
+                self._seq_cv.notify_all()
+                return
+
+            if sequence < current:
+                raise SequenceOutOfRangeError(
+                    f"sequence {sequence} is below expected {current} "
+                    f"for client_id {client_id!r}"
+                )
+
+            gen_at_start = self._seq_generation[client_id]
+            loop = asyncio.get_running_loop()
+            deadline = loop.time() + self._seq_wait_timeout()
+            while self._next_seq.get(client_id, 0) < sequence:
+                remaining = deadline - loop.time()
+                timed_out = remaining <= 0
+                if not timed_out:
+                    try:
+                        await asyncio.wait_for(self._seq_cv.wait(), timeout=remaining)
+                    except asyncio.TimeoutError:
+                        timed_out = True
+                if timed_out:
+                    # Bump generation + wake every peer waiting on this client_id
+                    # before raising, so peers stuck behind the same lost
+                    # predecessor don't each eat a full timeout in serial.
+                    self._seq_generation[client_id] += 1
+                    self._seq_cv.notify_all()
+                    raise SessionResetError(
+                        f"client_id {client_id!r} timed out waiting for "
+                        f"sequence {sequence} (predecessor never arrived)"
+                    )
+                if self._seq_generation.get(client_id, 0) != gen_at_start:
+                    raise SessionResetError(
+                        f"client_id {client_id!r} session was reset "
+                        f"while waiting for sequence {sequence}"
+                    )
+
+    async def _advance_seq(self, client_id: str) -> None:
+        """Bump ``_next_seq[client_id]`` and wake any waiters."""
+        async with self._seq_cv:
+            self._next_seq[client_id] = self._next_seq.get(client_id, 0) + 1
+            self._seq_cv.notify_all()
+
+    def _seq_wait_timeout(self) -> float:
+        """Max time a waiter blocks for its predecessor's POST to arrive.
+
+        Reads ``kernel_info_timeout`` off the multi_kernel_manager when
+        available (jupyter_server's "how long may a kernel be unresponsive"
+        knob); falls back to 60s in test / stub environments.
+        """
+        km = self._kernel_manager
+        mkm = getattr(km, "parent", None) if km is not None else None
+        return float(getattr(mkm, "kernel_info_timeout", 60.0))
 
     async def execute_cell(
         self,
@@ -468,14 +580,16 @@ class YNotebookRoom(YRoom):
         source_hash: str,
         clear_outputs: bool = False,
         request_id: Optional[str] = None,
-        previous_request_id: Optional[str] = None,
+        client_id: Optional[str] = None,
+        sequence: Optional[int] = None,
     ) -> None:
         """Convenience wrapper: enqueue a single cell via execute_cells()."""
         await self.execute_cells(
             [{"cell_id": cell_id, "source_hash": source_hash}],
             clear_outputs=clear_outputs,
             request_id=request_id,
-            previous_request_id=previous_request_id,
+            client_id=client_id,
+            sequence=sequence,
         )
 
     def _find_kernel_cell(self, ydoc, cell_id: str):
