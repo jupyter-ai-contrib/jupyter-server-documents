@@ -1,8 +1,11 @@
 from __future__ import annotations
 import asyncio
+import logging
 import pytest
 from unittest.mock import Mock
 from typing import TYPE_CHECKING
+
+from jupyter_server_documents.rooms.yroom import YRoom
 
 if TYPE_CHECKING:
     from ...conftest import MakeYRoom, MakeYRoomManager, MakeRoomFile
@@ -66,9 +69,6 @@ class TestYRoomMessageQueue():
         the background task and left the room unable to process any future
         message from any client.
         """
-        import logging
-        from jupyter_server_documents.rooms.yroom import YRoom
-
         handled: list[tuple[str, bytes]] = []
 
         class StubRoom:
