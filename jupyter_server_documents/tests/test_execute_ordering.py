@@ -364,6 +364,43 @@ class TestSequenceOrdering:
         with pytest.raises(SessionResetError):
             await waiter
 
+
+class TestAbortPendingExecutions:
+    """abort_pending_executions() drains queued cells on interrupt."""
+
+    @pytest.mark.asyncio
+    async def test_drains_queue_and_marks_idle(self):
+        room = make_room()
+        ydoc, _ = make_ydoc("x = 1")
+        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+
+        # Enqueue three cells.
+        for seq in range(3):
+            await room.execute_cell(
+                "cell-1",
+                source_hash=_source_hash("x = 1"),
+                client_id="tab-A",
+                sequence=seq,
+            )
+        assert room._execution_queue.qsize() == 3
+
+        aborted = room.abort_pending_executions()
+
+        assert aborted == 3
+        assert room._execution_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_no_op_when_no_queue(self):
+        room = make_room()
+        room._execution_queue = None
+        assert room.abort_pending_executions() == 0
+
+    @pytest.mark.asyncio
+    async def test_no_op_when_queue_empty(self):
+        room = make_room()
+        assert room.abort_pending_executions() == 0
+
+
 class TestSequencePreservedAcrossRestart:
     """Kernel restart-in-place preserves per-client sequence counters.
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import TYPE_CHECKING
 import asyncio
+import contextlib
 import time
 from datetime import datetime
 from jupyter_ydoc.ybasedoc import YBaseDoc
@@ -156,6 +157,10 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_loading = False
         self._content_load_event = asyncio.Event()
         self._content_lock = asyncio.Lock()
+        # Background tasks, created lazily once content load begins.
+        # Declared here so stop() can reference them directly.
+        self._load_content_task: asyncio.Task | None = None
+        self._watch_file_task: asyncio.Task | None = None
 
         # Initialize adaptive timing attributes
         self._adaptive_poll_interval = self.min_poll_interval
@@ -302,7 +307,14 @@ class YRoomFileAPI(LoggingConfigurable):
             return
 
         self._content_loading = True
-        asyncio.create_task(self._load_content(jupyter_ydoc))
+        # Track the load task so stop() can cancel it — otherwise a
+        # room stopped mid-load leaves the task running, and worse:
+        # _load_content spawns _watch_file_task on completion, so
+        # even after stop() sets _stopped=True we could still end up
+        # with a live watcher owned by a torn-down room.
+        self._load_content_task = asyncio.create_task(
+            self._load_content(jupyter_ydoc)
+        )
 
 
     async def _get_content(self, path: str) -> tuple[Any, datetime]:
@@ -384,6 +396,11 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_load_event.set()
         self._content_loading = False
         self.log.info(f"Loaded content for room ID '{self.room_id}'.")
+
+        # Don't spawn the file watcher if stop() ran mid-load — the
+        # room owning us has torn down and doesn't want more work.
+        if self._stopped:
+            return
 
         # Start _watch_file() task
         self._watch_file_task = asyncio.create_task(
@@ -701,8 +718,32 @@ class YRoomFileAPI(LoggingConfigurable):
             To save pending changes after stopping, call `await file_api.save(jupyter_ydoc)`
             before the FileAPI is destroyed.
         """
+        # ``_watch_file_task`` is created lazily once content finishes
+        # loading (see :meth:`_load_content`); rooms stopped before
+        # that runs leave it None.
         if self._watch_file_task:
             self._watch_file_task.cancel()
+        # ``_load_content_task`` runs the initial content fetch. If
+        # stop() fires before it completes, cancel — otherwise it will
+        # go on to spawn the file watcher after we're done tearing
+        # down. Also swallow any stored exception (asyncio otherwise
+        # logs "Task exception was never retrieved" for a task that
+        # raised before we got a chance to observe it).
+        load_task = self._load_content_task
+        if load_task is not None:
+            if not load_task.done():
+                load_task.cancel()
+            else:
+                with contextlib.suppress(BaseException):
+                    load_task.exception()
+        # Wake anyone blocked on ``until_content_loaded`` (in particular
+        # YRoom._process_message_queue, which waits for the event
+        # before processing anything). Without this the room's message
+        # queue task stays blocked on the event forever, and
+        # _finalize_stop's await on _msg_queue_task deadlocks server
+        # shutdown when a room is torn down mid-load.
+        self._content_load_event.set()
+        self._content_loading = False
         self._stopped = True
 
     @property

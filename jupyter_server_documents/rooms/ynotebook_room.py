@@ -11,14 +11,17 @@ Keeping kernel-related state and methods in a dedicated subclass means:
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
+import contextlib
+import inspect
 import struct
 from dataclasses import dataclass
 
 from .yroom import YRoom
+from ..kernel_readiness import DEFAULT_TIMEOUT_SECONDS, wait_for_kernel_ready
+from ..outputs import OutputProcessor
 
 if TYPE_CHECKING:
     from jupyter_client.asynchronous.client import AsyncKernelClient
-    from ..outputs.output_processor import OutputProcessor
 
 
 def _source_hash(source: str) -> str:
@@ -114,6 +117,10 @@ class YNotebookRoom(YRoom):
         self._execution_queue: asyncio.Queue | None = None
         self._execution_worker_task: asyncio.Task | None = None
         self.output_processor: OutputProcessor | None = None
+        # Tracks handle_kernel_restart() tasks spawned from
+        # _on_kernel_restart. See _on_kernel_restart for why detaching
+        # is necessary.
+        self._reattach_tasks: list[asyncio.Task] = []
         # Per-client sequence-based ordering for execute_cells.
         # _next_seq[client_id] is the next sequence number expected to be
         # enqueued for that client. _seq_generation[client_id] is bumped on
@@ -122,6 +129,16 @@ class YNotebookRoom(YRoom):
         self._next_seq: dict[str, int] = {}
         self._seq_generation: dict[str, int] = {}
         self._seq_cv: asyncio.Condition = asyncio.Condition()
+
+    @property
+    def connected_kernel_id(self):
+        """The id of the kernel this room is currently bound to, or ``None``.
+
+        The execute endpoint reads this to decide whether to (re)bind the room
+        to the kernel named in the request URL.
+        """
+        km = self._kernel_manager
+        return getattr(km, "kernel_id", None) if km is not None else None
 
     # ── Kernel client lifecycle ───────────────────────────────────────────────────
 
@@ -133,8 +150,6 @@ class YNotebookRoom(YRoom):
         identity collisions), waits for heartbeat, starts the execution
         queue + worker, then fetches kernel info.
         """
-        from ..outputs import OutputProcessor
-
         if self._kernel_client is not None:
             await self.disconnect_kernel()
 
@@ -142,20 +157,42 @@ class YNotebookRoom(YRoom):
         kernel_manager.add_restart_callback(self._on_kernel_restart, "restart")
         kernel_manager.add_restart_callback(self._on_kernel_dead, "dead")
 
-        await self._connect_client(kernel_manager)
+        try:
+            await self._connect_client(kernel_manager)
 
-        # Start queue + worker BEFORE fetching kernel_info so that execute_cell()
-        # can enqueue items immediately.  Items wait in the worker until
-        # _shell_confirmed is True (set by _fetch_kernel_info below).
-        if self._execution_worker_task is None or self._execution_worker_task.done():
-            self._execution_queue = asyncio.Queue()
-            self._execution_worker_task = asyncio.create_task(
-                self._execution_worker()
-            )
+            # Start queue + worker BEFORE fetching kernel_info so that execute_cell()
+            # can enqueue items immediately.  Items wait in the worker until
+            # _shell_confirmed is True (set by _fetch_kernel_info below).
+            if self._execution_worker_task is None or self._execution_worker_task.done():
+                self._execution_queue = asyncio.Queue()
+                self._execution_worker_task = asyncio.create_task(
+                    self._execution_worker()
+                )
 
-        # Fetch kernel_info in this coroutine (not the worker) to avoid
-        # pyzmq asyncio recv cancellation issues inside asyncio Tasks.
-        await self._fetch_kernel_info()
+            # Fetch kernel_info in this coroutine (not the worker) to avoid
+            # pyzmq asyncio recv cancellation issues inside asyncio Tasks.
+            await self._fetch_kernel_info()
+
+            # Disconnect from the kernel when the room is torn down (GC).
+            # add_stop_callback is idempotent, so re-registering on reconnect
+            # is harmless.
+            self.add_stop_callback(self.disconnect_kernel)
+        except BaseException:
+            # Any failure between add_restart_callback and successful
+            # completion must roll back the registration. Callers
+            # (e.g. session_manager.sync_managers) retry connect_kernel
+            # on every /api/sessions poll; without this rollback the
+            # bound-method callbacks accumulate on the kernel manager
+            # for the lifetime of the process, pinning the room.
+            with contextlib.suppress(Exception):
+                kernel_manager.remove_restart_callback(
+                    self._on_kernel_restart, "restart"
+                )
+                kernel_manager.remove_restart_callback(
+                    self._on_kernel_dead, "dead"
+                )
+            self._kernel_manager = None
+            raise
 
     async def disconnect_kernel(self, *, reset_sequences: bool = True) -> None:
         """Detach from the kernel. Cancels the execution worker and drains the queue.
@@ -163,10 +200,11 @@ class YNotebookRoom(YRoom):
         Parameters
         ----------
         reset_sequences:
-            When True (default), per-client sequence state is cleared and
-            pending waiters are abandoned with :class:`SessionResetError`.
-            Pass False to preserve the counter (in-place restart, where the
-            kernel_id — and thus the caller's counter — is unchanged).
+            When True (default), per-client sequence state is cleared
+            and pending waiters are abandoned with
+            :class:`SessionResetError`. Pass False to preserve the
+            counter (in-place restart, where the kernel_id — and thus
+            the caller's counter — is unchanged).
         """
         if self._kernel_manager is not None:
             try:
@@ -174,6 +212,16 @@ class YNotebookRoom(YRoom):
                 self._kernel_manager.remove_restart_callback(self._on_kernel_dead, "dead")
             except Exception:
                 pass
+
+        # Cancel any queued reattach tasks except the one currently
+        # running (that's this coroutine's own frame when the caller
+        # is handle_kernel_restart).
+        current = asyncio.current_task()
+        for task in list(self._reattach_tasks):
+            if task is current or task.done():
+                continue
+            task.cancel()
+        self._reattach_tasks = [t for t in self._reattach_tasks if not t.done()]
 
         # Cancel the worker BEFORE draining the queue.  If we drained first
         # the still-running worker could pick items off the queue between our
@@ -213,14 +261,31 @@ class YNotebookRoom(YRoom):
                 self._seq_cv.notify_all()
 
     async def _on_kernel_restart(self) -> None:
-        # Save the kernel manager before disconnect_kernel() nulls it out,
-        # so we can pass it back to connect_kernel() below.
+        # ``handle_kernel_restart`` calls ``disconnect_kernel`` which
+        # calls ``remove_restart_callback`` — mutating the callback set
+        # that jupyter_client's KernelRestarter is currently iterating.
+        # Detach to a background task so the current callback frame
+        # returns before we touch the set. Track the task so it doesn't
+        # get GC'd mid-flight and gets cancelled on room stop.
+        self._reattach_tasks = [
+            t for t in self._reattach_tasks if not t.done()
+        ]
+        self._reattach_tasks.append(
+            asyncio.create_task(self.handle_kernel_restart())
+        )
+
+    async def handle_kernel_restart(self) -> None:
+        """Re-attach this room to its kernel manager after a restart.
+
+        Disconnects and reconnects without resetting sequence state:
+        the kernel_id is unchanged, so callers' per-kernel sequence
+        counters remain valid.
+        """
         km = self._kernel_manager
-        # In-place restart keeps the same kernel_id, so the caller's per-kernel
-        # sequence counter is still valid — preserve it across the reconnect.
+        if km is None:
+            return
         await self.disconnect_kernel(reset_sequences=False)
-        if km is not None:
-            await self.connect_kernel(km)
+        await self.connect_kernel(km)
 
     async def _on_kernel_dead(self) -> None:
         await self.disconnect_kernel()
@@ -243,8 +308,22 @@ class YNotebookRoom(YRoom):
         the wrong socket.  Instantiating client_factory directly gives us an
         independent session and correct reply routing.
         """
-        from ..outputs import OutputProcessor
+        # Provisioners with use_pending_kernels=True may hand us a kernel
+        # manager whose ports have not yet been assigned. Wait for real
+        # ports before opening ZMQ; wait_for_kernel_ready polls the manager's
+        # connection info and fast-fails on any provisioner exception.
+        # Reuse the multi_kernel_manager's ``kernel_info_timeout`` trait
+        # (jupyter_server's existing knob for "how long before a kernel
+        # is presumed dead on start/restart") rather than adding our own.
+        mkm = getattr(kernel_manager, "parent", None)
+        timeout = getattr(mkm, "kernel_info_timeout", DEFAULT_TIMEOUT_SECONDS)
+        connection_info = await wait_for_kernel_ready(kernel_manager, timeout=timeout)
 
+        # Build the client from the kernel manager's ``client_factory`` trait
+        # (operators can override it to select a client class per transport).
+        # Deliberately NOT ``kernel_manager.client()`` — that clones the
+        # manager's Session, giving every client the same ZMQ DEALER identity
+        # and misrouting execute replies.
         client_class = kernel_manager.client_factory
         try:
             self._kernel_client = client_class(
@@ -252,55 +331,51 @@ class YNotebookRoom(YRoom):
                 config=getattr(kernel_manager, "config", None),
             )
         except Exception:
-            # parent might not be a Configurable (e.g. in tests)
+            # ``parent`` might not be a Configurable (e.g. in tests).
             self._kernel_client = client_class()
 
-        connection_info = kernel_manager.get_connection_info()
         self._kernel_client.load_connection_info(connection_info)
-        # start_channels() with default hb=True — we need heartbeat running
-        # so _async_is_alive() works for the liveness check below.
-        self._kernel_client.start_channels()
+        # Start channels WITHOUT the heartbeat channel. The heartbeat runs in
+        # its own thread whose reconnect loop recreates a REQ socket, which can
+        # raise ZMQError(ENOTSUP) if the client's zmq context is terminated on
+        # kernel shutdown. Readiness is confirmed by _fetch_kernel_info (a
+        # kernel_info round-trip, below) instead. start_channels is a coroutine
+        # on gateway clients and a plain method on local ZMQ; await when needed.
+        result = self._kernel_client.start_channels(hb=False)
+        if inspect.isawaitable(result):
+            await result
         self.output_processor = OutputProcessor(parent=self)
         self.output_processor.use_outputs_service = False
         self._shell_confirmed = False
 
-        # The heartbeat channel starts paused; unpause it before polling.
-        # Without this _async_is_alive() always returns False.
-        self._kernel_client.hb_channel.unpause()
-        deadline = asyncio.get_event_loop().time() + 30.0
-        while not await self._kernel_client._async_is_alive():
-            if asyncio.get_event_loop().time() > deadline:
-                raise RuntimeError(
-                    f"Kernel heartbeat timeout "
-                    f"(shell_port={connection_info.get('shell_port')})"
-                )
-            await asyncio.sleep(0.2)
-
     async def _fetch_kernel_info(self) -> None:
-        """Wait for the kernel to be fully ready (shell + iopub both confirmed).
+        """Confirm the kernel is up by exchanging a kernel_info round-trip.
 
-        _async_wait_for_ready() sends kernel_info_request, reads the shell reply,
-        AND confirms iopub is receiving messages before returning. This is all
-        we need — no second kernel_info call needed, which was leaving stale
-        iopub messages in the buffer and risking shell socket corruption via
-        the Python 3.12 + asyncio.wait_for + pyzmq cancellation bug.
-
-        IMPORTANT: this must be called from a regular coroutine context
-        (i.e. from connect_kernel), NOT from inside an asyncio.Task.  When
-        asyncio.wait_for cancels the inner coroutine inside a Task, pyzmq's
-        socket asyncio registration can be corrupted, causing all subsequent
-        recv calls on that socket to hang indefinitely.
+        Must be awaited from a regular coroutine, not from inside a
+        wrapping ``asyncio.Task`` — see note below. Raises on timeout.
         """
+        # ``asyncio.wait_for`` cancelling the inner recv corrupts
+        # pyzmq's socket registration under some Python/pyzmq combos
+        # if the enclosing task is later cancelled. Keep this on the
+        # calling coroutine's stack, not inside its own Task.
+        assert self._kernel_client is not None
+        self.log.info(
+            "YNotebookRoom._fetch_kernel_info start: room=%s client=%s",
+            self.room_id, type(self._kernel_client).__name__,
+        )
         try:
-            assert self._kernel_client is not None
             await asyncio.wait_for(
                 self._kernel_client._async_wait_for_ready(), timeout=30.0
             )
-        except Exception as e:
-            self.log.warning("_fetch_kernel_info: failed: %s", e)
-            return
-
+        except Exception:
+            self.log.exception(
+                "YNotebookRoom._fetch_kernel_info failed: room=%s", self.room_id,
+            )
+            raise
         self._shell_confirmed = True
+        self.log.info(
+            "YNotebookRoom._fetch_kernel_info done: room=%s", self.room_id,
+        )
 
     # ── Execution queue and worker ────────────────────────────────────────────────
 
@@ -342,9 +417,9 @@ class YNotebookRoom(YRoom):
     async def _run_item(self, item: _ExecutionItem) -> None:
         """Execute one queued cell.
 
-        Sends ``execute_request`` on the shell channel and awaits iopub messages
-        via the client's async channel API until we see ``status: idle`` for our
-        request.
+        Sends ``execute_request`` on the shell channel and awaits iopub
+        messages via the client's async channel API until we see
+        ``status: idle`` for our request.
         """
         ycell = item.ycell
 
@@ -445,20 +520,20 @@ class YNotebookRoom(YRoom):
 
         Cross-request ordering
         ----------------------
-        ``execute_cells`` is invoked from an HTTP POST endpoint, so concurrent
-        requests can arrive in any order — HTTP/2 streams and independent
-        HTTP/1.1 connections make no ordering promise. To preserve the browser's
-        intended order, callers pass a ``(client_id, sequence)`` pair.
-        ``sequence`` is a monotonic counter per ``client_id``; the server
-        enqueues in sequence order, buffering out-of-order arrivals until their
-        predecessors show up. This is deterministic — there is no timeout
-        heuristic.
+        ``execute_cells`` is invoked from an HTTP POST endpoint, so
+        concurrent requests can arrive in any order — HTTP/2 streams and
+        independent HTTP/1.1 connections make no ordering promise. To
+        preserve the browser's intended order, callers pass a
+        ``(client_id, sequence)`` pair. ``sequence`` is a monotonic counter
+        per ``client_id``; the server enqueues in sequence order, buffering
+        out-of-order arrivals until their predecessors show up. This is
+        deterministic — there is no timeout heuristic.
 
         Session reset: a request with ``sequence == 0`` when the server has
-        already seen higher sequences for that client_id signals the browser has
-        restarted its counter (new tab, kernel swap, explicit reset). The server
-        clears state and abandons pending waiters for that client_id with
-        ``SessionResetError``.
+        already seen higher sequences for that client_id signals the
+        browser has restarted its counter (new tab, kernel swap, explicit
+        reset). The server clears state and abandons any pending waiters
+        for that client_id with ``SessionResetError``.
 
         Args:
             cells: List of dicts with keys:
@@ -468,7 +543,9 @@ class YNotebookRoom(YRoom):
                   Returns 409 for the first cell whose source has diverged;
                   no cells are enqueued.
 
-            request_id: UUID for this batch (opaque; used for logging only).
+            request_id: UUID for this batch (opaque; used for logging /
+                tracing only).
+
             client_id: Identifies the browser tab; scopes ``sequence``.
             sequence: Monotonic counter per ``client_id``, starting at 0.
         """
@@ -514,29 +591,37 @@ class YNotebookRoom(YRoom):
                     clear_outputs=clear_outputs,
                 ))
         finally:
-            # Always advance the client's sequence, even on error: the sequence
-            # slot is "consumed" by having entered execute_cells. If we didn't
-            # advance on error, successive requests would wait forever for a
-            # sequence the server has decided to skip.
+            # Always advance the client's sequence, even on error: the
+            # sequence slot is "consumed" by having entered execute_cells.
+            # If we didn't advance on error, successive requests would
+            # wait forever for a sequence the server has decided to skip.
             if acquired_seq:
                 await self._advance_seq(client_id)  # type: ignore[arg-type]
 
     async def _wait_for_seq_turn(self, client_id: str, sequence: int) -> None:
         """Block until it is this ``(client_id, sequence)``'s turn to enqueue.
 
-        The wait only bounds *ordering* of concurrent POSTs — not execution — so
-        it should complete on the order of a network round-trip. If a
-        predecessor request is genuinely lost (client crash, network drop) the
-        waiter would otherwise block forever; we cap it and raise
-        ``SessionResetError`` on expiry. The frontend responds to the resulting
-        409 by clearing its counter and retrying with ``sequence=0``, which
-        drains any peers still stuck behind the same lost predecessor.
+        The wait only bounds *ordering* of concurrent POSTs — not
+        execution — so it should complete on the order of a network
+        round-trip. If a predecessor request is genuinely lost (client
+        crash, network drop, request dropped mid-flight) the waiter
+        would otherwise block forever; we cap it at
+        ``kernel_info_timeout`` (jupyter_server's "how long is a kernel
+        allowed to be unresponsive" knob) and raise
+        ``SessionResetError`` on expiry. The frontend responds to the
+        resulting 409 by clearing its counter and retrying with
+        ``sequence=0``, which drains any peers still stuck behind the
+        same lost predecessor.
 
-        Signals a session reset if ``sequence == 0`` when the server already
-        holds higher state for this client. Raises ``SessionResetError`` if a
-        reset (or kernel disconnect) happens while waiting.
+        Signals a session reset if ``sequence == 0`` when the server
+        already holds higher state for this client. Raises
+        ``SessionResetError`` if a reset (or kernel disconnect) happens
+        while waiting.
         """
         async with self._seq_cv:
+            # Register the client in _seq_generation so disconnect_kernel's
+            # bump loop reaches waiters here (otherwise a client that only
+            # appears in _next_seq would be skipped).
             self._seq_generation.setdefault(client_id, 0)
             current = self._next_seq.get(client_id, 0)
 
@@ -545,7 +630,7 @@ class YNotebookRoom(YRoom):
                 self._next_seq[client_id] = 0
                 self._seq_generation[client_id] += 1
                 self._seq_cv.notify_all()
-                return
+                return  # next_seq is now 0; caller can proceed.
 
             if sequence < current:
                 raise SequenceOutOfRangeError(
@@ -561,13 +646,16 @@ class YNotebookRoom(YRoom):
                 timed_out = remaining <= 0
                 if not timed_out:
                     try:
-                        await asyncio.wait_for(self._seq_cv.wait(), timeout=remaining)
+                        await asyncio.wait_for(
+                            self._seq_cv.wait(), timeout=remaining
+                        )
                     except asyncio.TimeoutError:
                         timed_out = True
                 if timed_out:
-                    # Bump generation + wake every peer waiting on this client_id
-                    # before raising, so peers stuck behind the same lost
-                    # predecessor don't each eat a full timeout in serial.
+                    # Bump generation + wake every peer waiting on this
+                    # client_id before raising. Otherwise each peer stuck
+                    # behind the same lost predecessor eats its own full
+                    # timeout in serial, extending the outage.
                     self._seq_generation[client_id] += 1
                     self._seq_cv.notify_all()
                     raise SessionResetError(
@@ -580,22 +668,54 @@ class YNotebookRoom(YRoom):
                         f"while waiting for sequence {sequence}"
                     )
 
+    def _seq_wait_timeout(self) -> float:
+        """Return the maximum time a waiter should block for its
+        predecessor's POST to arrive at the server.
+
+        Reads ``kernel_info_timeout`` off the multi_kernel_manager when
+        available (default 60s) — the same knob jupyter_server uses for
+        "how long is a kernel allowed to be unresponsive". Falls back
+        to :data:`DEFAULT_TIMEOUT_SECONDS` in test / stub environments
+        without a multi-kernel-manager parent.
+        """
+        km = self._kernel_manager
+        mkm = getattr(km, "parent", None) if km is not None else None
+        return float(getattr(mkm, "kernel_info_timeout", DEFAULT_TIMEOUT_SECONDS))
+
     async def _advance_seq(self, client_id: str) -> None:
         """Bump ``_next_seq[client_id]`` and wake any waiters."""
         async with self._seq_cv:
             self._next_seq[client_id] = self._next_seq.get(client_id, 0) + 1
             self._seq_cv.notify_all()
 
-    def _seq_wait_timeout(self) -> float:
-        """Max time a waiter blocks for its predecessor's POST to arrive.
+    def abort_pending_executions(self) -> int:
+        """Drop any cell executions queued behind the currently-running cell.
 
-        Reads ``kernel_info_timeout`` off the multi_kernel_manager when
-        available (jupyter_server's "how long may a kernel be unresponsive"
-        knob); falls back to 60s in test / stub environments.
+        Called on kernel interrupt so a "Run All" that has queued cells
+        1..N behind the running cell 0 doesn't keep executing 1..N after
+        the user aborted cell 0. The currently-running cell is handled
+        by the kernel's response to ``interrupt_request`` — this only
+        clears the queue.
+
+        Returns the number of aborted items (useful for logging).
+
+        Not async: the queue is an asyncio.Queue but ``get_nowait``
+        doesn't await, and we don't want callers to have to await this
+        (it's called from the kernel-action event listener, which is
+        already async but treats this as best-effort cleanup).
         """
-        km = self._kernel_manager
-        mkm = getattr(km, "parent", None) if km is not None else None
-        return float(getattr(mkm, "kernel_info_timeout", 60.0))
+        if self._execution_queue is None:
+            return 0
+        aborted = 0
+        while not self._execution_queue.empty():
+            try:
+                item = self._execution_queue.get_nowait()
+                item.ycell["execution_state"] = "idle"
+                self._execution_queue.task_done()
+                aborted += 1
+            except asyncio.QueueEmpty:
+                break
+        return aborted
 
     async def execute_cell(
         self,

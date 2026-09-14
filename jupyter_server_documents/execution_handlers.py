@@ -5,9 +5,9 @@ from tornado.escape import json_encode
 
 from .rooms.ynotebook_room import (
     YNotebookRoom,
-    SourceMismatchError,
     SequenceOutOfRangeError,
     SessionResetError,
+    SourceMismatchError,
 )
 
 
@@ -36,17 +36,28 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
         }
       ],
 
-      // Execution ordering (optional)
-      "client_id": "string",  // identifies the browser tab; scopes `sequence`
-      "sequence":  0,         // monotonic counter per client_id, starts at 0
-      "request_id":"string"   // opaque UUID for logging / tracing
+      // Execution ordering
+      "client_id":  "string",  // required for ordering — identifies the browser tab
+      "sequence":   0,         // required for ordering — monotonic counter per client_id, starts at 0
+      "request_id": "string"   // optional — opaque UUID for logging / tracing
     }
     ```
 
     All cells in ``cells`` are verified (hash check) and enqueued atomically
     before the response is sent, so no other request can interleave with the
-    batch.  This makes "Run All" and "Restart and Run All" safe regardless of
-    network timing.
+    batch.
+
+    ### Ordering semantics
+
+    Requests with the same ``client_id`` are enqueued strictly in order of
+    increasing ``sequence``. Out-of-order arrivals are buffered until their
+    predecessors arrive — no timeout, no heuristic. The server maintains
+    ``next_seq[client_id]`` and buffers any request whose ``sequence``
+    exceeds it.
+
+    A ``sequence`` of ``0`` while the server has already seen higher
+    sequences for that ``client_id`` is treated as a session reset: state
+    is cleared and any pending waiters are abandoned with a 409.
 
     The ``source_hash`` per cell is a MurmurHash2 (seed=0) decimal string of
     the cell source at the time the user pressed Run.  The server returns 409
@@ -55,9 +66,9 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
 
     ## Responses
     - ``200 null``  — accepted (fire-and-forget)
-    - ``400``       — bad request
+    - ``400``       — bad request (missing fields, sequence out of range, etc.)
     - ``409 {"error": "source_mismatch", "cell_id": "..."}`` — source diverged
-    - ``409``       — session reset (client should clear its counter and retry with sequence=0)
+    - ``409 {"error": "session_reset"}`` — a session reset abandoned this wait
     """
 
     @web.authenticated
@@ -88,6 +99,26 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
             raise web.HTTPError(400, f"No YRoom available for document: {document_id!r}")
         if not isinstance(yroom, YNotebookRoom):
             raise web.HTTPError(400, f"Room {document_id!r} is not a notebook room")
+
+        # Lazily bind the room to the kernel named in the URL. A Jupyter session
+        # traditionally establishes the document<->kernel mapping at
+        # session-create time, but the execute route already carries both ids,
+        # so we bind on demand here — and rebind if the document switched
+        # kernels. (A restart keeps the same kernel_id, so this does not fire on
+        # restart; that path is handled by the kernel_actions listener in the
+        # extension app.)
+        if yroom.connected_kernel_id != kernel_id:
+            try:
+                kernel_manager = self.kernel_manager.get_kernel(kernel_id)
+            except Exception as e:
+                raise web.HTTPError(404, f"Kernel {kernel_id!r} not found: {e}")
+            try:
+                await yroom.connect_kernel(kernel_manager)
+            except Exception as e:
+                raise web.HTTPError(
+                    500,
+                    f"Failed to connect document {document_id!r} to kernel {kernel_id!r}: {e}",
+                )
 
         try:
             await yroom.execute_cells(

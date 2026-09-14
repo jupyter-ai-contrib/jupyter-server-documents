@@ -191,6 +191,10 @@ class YRoomManager(LoggingConfigurable):
         """
         return room_id in self._rooms_by_id
 
+    def get_rooms(self) -> list:
+        """Return the currently-loaded `YRoom` instances."""
+        return list(self._rooms_by_id.values())
+
 
     async def delete_room(self, room_id: str) -> bool:
         """

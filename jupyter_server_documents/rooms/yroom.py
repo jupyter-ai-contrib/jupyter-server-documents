@@ -250,6 +250,15 @@ class YRoom(LoggingConfigurable):
         self._pending_ss2_client_id: str | None = None
         self._save_task = None
         self._stop_task = None
+        # Background tasks created later (message-queue worker in this
+        # __init__ body, awareness start/stop, the load-event emitter).
+        # Declared up front so teardown can reference them directly.
+        self._msg_queue_task: asyncio.Task | None = None
+        self._emit_load_task: asyncio.Task | None = None
+        self._awareness_start_task: asyncio.Task | None = None
+        self._awareness_stop_task: asyncio.Task | None = None
+        # Per-cell execution states, populated lazily as cells run.
+        self._cell_execution_states: dict[str, str] = {}
         self._last_activity = time.monotonic()
         self.show_gc_debug = self.parent.show_gc_debug
 
@@ -290,7 +299,11 @@ class YRoom(LoggingConfigurable):
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
-        asyncio.create_task(self._process_message_queue())
+        # Track the task on the room so nothing else holds it alive — an
+        # untracked create_task leaves the coroutines closure (which
+        # references ``self``) pinned in the loops task set, keeping the
+        # room from being garbage-collected long after ``stop()`` runs.
+        self._msg_queue_task = asyncio.create_task(self._process_message_queue())
 
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
@@ -305,7 +318,12 @@ class YRoom(LoggingConfigurable):
             async def emit_load_event():
                 await self.file_api.until_content_loaded
                 self.events_api.emit_room_event("load")
-            asyncio.create_task(emit_load_event())
+            # Track the task on the room. Same rationale as
+            # ``_msg_queue_task`` — an untracked create_task holds the
+            # coroutines closure (which references ``self``) in the
+            # loop's task set, keeping the room alive if content load
+            # stalls.
+            self._emit_load_task = asyncio.create_task(emit_load_event())
     
 
     @property
@@ -355,7 +373,9 @@ class YRoom(LoggingConfigurable):
         self._awareness_subscription = self._awareness.observe(
             self._on_awareness_update
         )
-        asyncio.create_task(self._awareness.start())
+        # Track the awareness startup task — same rationale as
+        # ``_msg_queue_task`` above.
+        self._awareness_start_task = asyncio.create_task(self._awareness.start())
         return self._awareness
 
 
@@ -474,18 +494,14 @@ class YRoom(LoggingConfigurable):
         Returns the persistent cell execution states for this room.
         These states survive client disconnections but are not saved to disk.
         """
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states: dict[str, str] = {}
         return self._cell_execution_states
-    
+
     def set_cell_execution_state(self, cell_id: str, execution_state: str) -> None:
         """
         Sets the execution state for a specific cell.
         This state persists across client disconnections.
         """
         self._update_activity("set_cell_execution_state")
-        if not hasattr(self, '_cell_execution_states'):
-            self._cell_execution_states = {}
         self._cell_execution_states[cell_id] = execution_state
 
     def set_cell_awareness_state(self, cell_id: str, execution_state: str) -> None:
@@ -860,8 +876,11 @@ class YRoom(LoggingConfigurable):
     def add_stop_callback(self, callback: Callable[[], Any]) -> None:
         """
         Registers a callback to be called when the room is stopped (but not
-        when restarting). The callback takes no arguments.
+        when restarting). The callback takes no arguments. Idempotent by
+        callback identity — re-registering the same callable is a no-op.
         """
+        if callback in self._on_stop_callbacks:
+            return
         self._on_stop_callbacks.append(callback)
 
     def observe_jupyter_ydoc(self, observer: Callable[[str, Any], Any]) -> str:
@@ -1061,8 +1080,12 @@ class YRoom(LoggingConfigurable):
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
         
-        # Stop awareness heartbeat
-        asyncio.create_task(self._awareness.stop())
+        # Stop awareness heartbeat. Wrap in a coroutine that first
+        # waits for ``awareness.start()`` to actually complete —
+        # otherwise pycrdt raises RuntimeError("Awareness not started")
+        # when we're torn down before startup ran to end. Any
+        # "not started" failure is swallowed as best-effort teardown.
+        self._awareness_stop_task = asyncio.create_task(self._stop_awareness())
 
         # Remove all observers
         try:
@@ -1173,7 +1196,63 @@ class YRoom(LoggingConfigurable):
             drain_observer_removals(self._ydoc)
         except Exception:
             self.log.exception("Exception while draining observer removals:")
-    
+
+        # Await background tasks the room owns so their references to
+        # ``self`` release. Without this, the tasks' coroutines pin the
+        # room in memory long past deletion from the manager's cache.
+        # ``_msg_queue_task`` exits when the ``None`` sentinel (queued by
+        # stop()) is consumed; ``_awareness_stop_task`` is the awareness
+        # teardown fired at the top of stop(); ``_awareness_start_task``
+        # normally completed at initialize but is awaited defensively.
+        # ``_emit_load_task`` blocks on ``file_api.until_content_loaded``
+        # and may never resolve if the room is stopped before content
+        # load completes — cancel it explicitly.
+        emit_load_task = self._emit_load_task
+        if emit_load_task is not None and not emit_load_task.done():
+            emit_load_task.cancel()
+        finalize_tasks = [
+            self._msg_queue_task,
+            self._awareness_start_task,
+            self._awareness_stop_task,
+            emit_load_task,
+        ]
+        for task in finalize_tasks:
+            if task is None or task.done():
+                continue
+            try:
+                await task
+            except Exception:
+                self.log.debug("Background task raised on room teardown", exc_info=True)
+
+
+    async def _stop_awareness(self) -> None:
+        """Stop the awareness heartbeat, tolerating a not-yet-started
+        awareness object.
+
+        ``pycrdt.Awareness.start()`` is an infinite heartbeat loop that
+        only exits when ``Awareness.stop()`` cancels its task group. So
+        we call ``stop()`` first — that both terminates the heartbeat
+        and lets the paired ``start()`` coroutine return (so
+        ``_finalize_stop``'s await on ``_awareness_start_task`` can
+        complete). If ``stop()`` raises ``RuntimeError('Awareness not
+        started')``, the start task hadn't entered its task group yet;
+        cancel it manually so we don't leave a dangling heartbeat.
+        """
+        try:
+            await self._awareness.stop()
+            return
+        except RuntimeError:
+            pass  # start hadn't materialised its task group yet
+
+        start_task = self._awareness_start_task
+        if start_task is not None and not start_task.done():
+            start_task.cancel()
+            try:
+                await start_task
+            except BaseException:
+                # Cancellation is expected; anything else is best-effort.
+                pass
+
 
     @property
     def until_saved(self) -> Coroutine[Any, Any, None]:

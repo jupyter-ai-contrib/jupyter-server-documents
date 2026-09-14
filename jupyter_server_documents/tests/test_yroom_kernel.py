@@ -34,9 +34,14 @@ def make_yroom():
     room._execution_queue = None
     room._execution_worker_task = None
     room.output_processor = None
+    # Match YNotebookRoom.__init__'s kernel-state attributes (the room is built
+    # via __new__ to skip the heavy YRoom base __init__).
+    room._reattach_tasks = []
     room._next_seq = {}
     room._seq_generation = {}
     room._seq_cv = asyncio.Condition()
+    # YRoom base state touched by connect/disconnect.
+    room._on_stop_callbacks = []
     return room
 
 
@@ -52,8 +57,25 @@ def make_mock_km():
     mock_client._async_wait_for_ready = AsyncMock(return_value=None)
 
     km = MagicMock()
-    km.get_connection_info.return_value = {}
-    # client_factory is what _connect_client calls to instantiate the client
+    km.get_connection_info.return_value = {
+        "ip": "127.0.0.1",
+        "shell_port": 60000,
+        "iopub_port": 60001,
+        "stdin_port": 60002,
+        "control_port": 60003,
+        "hb_port": 60004,
+        "signature_scheme": "hmac-sha256",
+        "key": b"test-key",
+        "transport": "tcp",
+    }
+    km.ready = None  # skip the ready-Future wait in wait_for_kernel_ready
+    # ``wait_for_kernel_ready`` reads the timeout via
+    # ``kernel_manager.parent.kernel_info_timeout`` (the multi kernel
+    # manager); give it a real float so the deadline comparison works.
+    km.parent.kernel_info_timeout = 5.0
+    # Force get_client to None so MagicMock's auto-attribute doesn't
+    # route _connect_client through a spurious callable.
+    km.get_client = None
     km.client_factory = MagicMock(return_value=mock_client)
     return km, mock_client
 
@@ -305,6 +327,8 @@ class TestFindKernelCell:
         with pytest.raises(ValueError):
             room._find_kernel_cell(ydoc, "cell-1")
 
+
+# ── execute_cell ──────────────────────────────────────────────────────────────
 
 class TestExecuteCell:
     """execute_cell() is fire-and-forget: it enqueues the cell and returns.
