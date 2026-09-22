@@ -93,6 +93,7 @@ class OutputProcessor(LoggingConfigurable):
             if display_id and self.use_outputs_service else None
         )
         outputs = ycell["outputs"]
+        was_empty = len(outputs) == 0
         if output_index is not None and output_index < len(outputs):
             outputs[output_index] = output
         else:
@@ -102,6 +103,24 @@ class OutputProcessor(LoggingConfigurable):
                     f"(outputs length: {len(outputs)}), appending instead."
                 )
             outputs.append(output)
+
+        # Vouch only for a cell this output found empty, never for file output.
+        if was_empty:
+            self._mark_trusted(ycell)
+
+    def _mark_trusted(self, ycell) -> None:
+        """Record that this cell's outputs came from the kernel.
+
+        `NotebookNotary.check_cells` only passes a cell with rich output when
+        `metadata.trusted` is set, and the contents manager signs a notebook
+        on save only when every cell passes. Called only for an output that
+        lands in an empty cell, so outputs loaded from the file are never
+        vouched for. Writes only into the cell's shared metadata Map; a cell
+        without one (missing, or a plain JSON value there) gets no mark.
+        """
+        metadata = ycell.get("metadata")
+        if isinstance(metadata, Map) and not metadata.get("trusted", False):
+            metadata["trusted"] = True
 
     def _clear_ycell_outputs(self, ycell, file_id: str | None, cell_id: str):
         del ycell["outputs"][:]
