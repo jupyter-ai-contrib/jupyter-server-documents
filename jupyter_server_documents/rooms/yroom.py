@@ -1,6 +1,7 @@
 from __future__ import annotations # see PEP-563 for motivation behind this
 from typing import TYPE_CHECKING, cast, Any
 import asyncio
+import inspect
 import time
 import uuid
 import pycrdt
@@ -1051,6 +1052,10 @@ class YRoom(LoggingConfigurable):
         - Clears the YDoc, Awareness, and JupyterYDoc, freeing their memory to
         the server. This deletes the YDoc history.
 
+        - Calls the `on_stop` callbacks. A callback may return an awaitable (a
+        coroutine, Task or Future); `until_saved` resolves only after it
+        completes, so it must not itself await this room's `until_saved`.
+
         IMPORTANT: If the server is shutting down, the YRoomManager should call
         `await room.until_saved`. See `until_saved` documentation for more info.
         """
@@ -1148,16 +1153,17 @@ class YRoom(LoggingConfigurable):
             elif not immediately:
                 self.log.info(f"Skipping redundant save-on-stop for YRoom '{self.room_id}'; no unsaved changes.")
 
-        # Fire `on_stop` callbacks. Sync callbacks run immediately; coroutines
-        # returned by async callbacks are collected so they can be awaited (in
-        # `_finalize_stop()`) *before* observer removals are drained. Consumers
-        # commonly unsubscribe their observers from a stop callback, so the drain
-        # must happen only after every callback has finished.
+        # Fire `on_stop` callbacks. Sync callbacks run immediately; awaitables
+        # returned by callbacks (coroutines, Tasks or Futures) are collected so
+        # they can be awaited (in `_finalize_stop()`) *before* observer removals
+        # are drained. Consumers commonly unsubscribe their observers from a
+        # stop callback, so the drain must happen only after every callback has
+        # finished.
         stop_coros: list[Any] = []
         for on_stop in self._on_stop_callbacks:
             try:
                 result = on_stop()
-                if asyncio.iscoroutine(result):
+                if inspect.isawaitable(result):
                     stop_coros.append(result)
             except Exception:
                 self.log.exception("Exception raised by on_stop() callback:")
@@ -1175,9 +1181,9 @@ class YRoom(LoggingConfigurable):
 
     async def _finalize_stop(self, stop_coros: list[Any]) -> None:
         """
-        Completes room teardown after `stop()`: awaits any async `on_stop`
-        callbacks, then drains observer removals. See `stop()` for why the drain
-        must run after the callbacks.
+        Completes room teardown after `stop()`: awaits any awaitables returned
+        by `on_stop` callbacks, then drains observer removals. See `stop()` for
+        why the drain must run after the callbacks.
         """
         if stop_coros:
             # `return_exceptions=True`: a failing callback must not prevent the
