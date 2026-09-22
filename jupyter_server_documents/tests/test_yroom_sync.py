@@ -10,11 +10,14 @@ Yjs sync protocol against a real YRoom instance. They verify:
 4. Timeout fires if client never sends SS2.
 5. Update buffer pauses/resumes correctly during divergent handshake.
 6. No data loss when mutations occur during the sync handshake.
+7. Sync updates still queued when the room stops are applied and saved if
+   their client had synced, and ignored otherwise.
 """
 
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 import pycrdt
 from pycrdt import Doc, Text
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
@@ -507,3 +510,114 @@ class TestAwarenessOnConnect:
         # Every awareness snapshot arrives after the SS2 sync reply that ran
         # mark_synced -- so a desynced client is never sent one.
         assert min(awareness_idxs) > first_sync_idx
+
+
+class TestStopDrain:
+    """`stop(immediately=False)` must apply the sync updates still queued at
+    stop time from synced clients and include them in the final save-on-close,
+    ignore those from clients that never synced, and run to completion."""
+
+    @pytest.mark.asyncio
+    async def test_stop_drain_applies_queued_sync_update(
+        self, make_yroom: MakeYRoom
+    ):
+        """A SyncUpdate still in the message queue when `stop()` runs must be
+        applied to the YDoc, must schedule the final save-on-close, and must
+        reach the file on disk; `stop()` itself must run to completion.
+
+        `stop()` empties the client group before draining the queue, so routing
+        a queued update through `handle_sync_update()` fails the client lookup
+        and aborts `stop()` before the final save.
+        """
+        yroom = await make_yroom()
+        ws = FakeWebSocket()
+        client_id = await _complete_handshake(yroom, ws)
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+
+        # The client makes an edit and sends it as a SyncUpdate.
+        ws.doc["source"] += "edit queued at stop time"
+        update = pycrdt.create_update_message(ws.doc.get_update())
+
+        # The update sits in the queue when the room stops (no await between
+        # enqueue and stop, so the message loop cannot consume it first).
+        yroom._message_queue.put_nowait((client_id, update))
+        yroom.stop()
+
+        # The synchronous drain in stop() must have applied it to the YDoc,
+        # marked the room dirty so the final save was scheduled, and stop()
+        # must have completed.
+        assert "edit queued at stop time" in jupyter_ydoc.source
+        assert yroom._save_task is not None
+        assert yroom.stopped
+
+        # The final save-on-close must have persisted the drained edit.
+        await yroom.until_saved
+        file_path = Path(
+            yroom.file_api.contents_manager.root_dir, yroom.file_api.get_path()
+        )
+        assert "edit queued at stop time" in file_path.read_text()
+
+    @pytest.mark.asyncio
+    async def test_stop_drain_survives_malformed_sync_update(
+        self, make_yroom: MakeYRoom
+    ):
+        """A queued SyncUpdate that fails to apply is logged and skipped; it
+        must not abort `stop()` or the drain of the valid update behind it."""
+        yroom = await make_yroom()
+        ws = FakeWebSocket()
+        client_id = await _complete_handshake(yroom, ws)
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+
+        # A SyncUpdate whose payload pycrdt cannot decode, then a valid one.
+        malformed = bytes(
+            [YMessageType.SYNC, YSyncMessageSubtype.SYNC_UPDATE, 5, 1, 2, 3, 4, 5]
+        )
+        ws.doc["source"] += "edit behind a malformed update"
+        valid = pycrdt.create_update_message(ws.doc.get_update())
+        yroom._message_queue.put_nowait((client_id, malformed))
+        yroom._message_queue.put_nowait((client_id, valid))
+        yroom.stop()
+
+        assert yroom.stopped
+        assert "edit behind a malformed update" in jupyter_ydoc.source
+        await yroom.until_saved
+        file_path = Path(
+            yroom.file_api.contents_manager.root_dir, yroom.file_api.get_path()
+        )
+        assert "edit behind a malformed update" in file_path.read_text()
+
+    @pytest.mark.asyncio
+    async def test_stop_drain_ignores_queued_sync_update_from_unsynced_client(
+        self, make_yroom: MakeYRoom
+    ):
+        """A SyncUpdate queued by a client that has not completed its handshake
+        when `stop()` runs is ignored, as the message loop ignores one from a
+        desynced client: it is not applied, no save is scheduled, and the file
+        on disk is unchanged.
+        """
+        yroom = await make_yroom()
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+        file_path = Path(
+            yroom.file_api.contents_manager.root_dir, yroom.file_api.get_path()
+        )
+        original = file_path.read_text()
+
+        # A client connects and sends its SyncStep1 and then an edit. Both are
+        # still queued when the room stops, so the client never synced.
+        ws = FakeWebSocket()
+        client_id = yroom.clients.add(ws)
+        ws.doc["source"] += "edit from a client that never synced"
+        yroom._message_queue.put_nowait((client_id, ws.build_ss1()))
+        yroom._message_queue.put_nowait(
+            (client_id, pycrdt.create_update_message(ws.doc.get_update()))
+        )
+        yroom.stop()
+
+        # stop() completed without applying the edit or scheduling a save.
+        assert yroom.stopped
+        assert "edit from a client that never synced" not in jupyter_ydoc.source
+        assert not yroom.file_api.has_unsaved_changes
+        assert yroom._save_task is None
+
+        await yroom.until_saved
+        assert file_path.read_text() == original

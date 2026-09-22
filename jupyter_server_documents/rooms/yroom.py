@@ -1058,6 +1058,11 @@ class YRoom(LoggingConfigurable):
             return
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
+        # The queue drain below applies SyncUpdates only from clients that are
+        # synced at this point. It does not process SyncStep1, so a client
+        # whose handshake is still queued is treated as not synced.
+        synced_client_ids = set(self.clients.synced)
+
         # Disconnect all clients with the given close code
         self.clients.stop(close_code=close_code)
         
@@ -1092,12 +1097,31 @@ class YRoom(LoggingConfigurable):
                     # are already disconnected and a handshake cannot complete.
                     msg_type = message[0]
                     if msg_type == YMessageType.SYNC and len(message) >= 2 and message[1] == YSyncMessageSubtype.SYNC_UPDATE:
-                        self.handle_sync_update(client_id, message)
-                        # Observers were removed above, so applying this update
-                        # will not schedule a save on its own. Mark the room
-                        # dirty so the final save-on-close below is not skipped.
-                        if self.file_api:
-                            self.file_api.schedule_save()
+                        # Apply directly: the client group is empty now, so
+                        # `handle_sync_update()`'s client lookup cannot pass.
+                        if client_id not in synced_client_ids:
+                            self.log.warning(
+                                "Ignoring a queued SyncUpdate message from "
+                                f"client '{client_id}' on stop because the "
+                                "client was not synced or had already "
+                                "disconnected."
+                            )
+                        else:
+                            try:
+                                pycrdt.handle_sync_message(message[1:], self._ydoc)
+                            except Exception:
+                                self.log.exception(
+                                    "An exception occurred when applying a "
+                                    "queued SyncUpdate message from client "
+                                    f"'{client_id}' on stop:"
+                                )
+                            else:
+                                # Observers were removed above, so applying
+                                # this update will not schedule a save on its
+                                # own. Mark the room dirty so the final
+                                # save-on-close below is not skipped.
+                                if self.file_api:
+                                    self.file_api.schedule_save()
                     elif msg_type == YMessageType.AWARENESS:
                         self.handle_awareness_update(client_id, message)
                 self._message_queue.task_done()
