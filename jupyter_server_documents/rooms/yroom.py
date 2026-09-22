@@ -63,6 +63,26 @@ class YRoom(LoggingConfigurable):
     See `YRoom.inactive` for more details on how activity is tracked.
     """
 
+    handshake_timeout = traitlets.Float(
+        default_value=5.0,
+        config=True,
+        help="Number of seconds to await a client's SyncStep2 reply before resuming update broadcasts to the room.",
+    )
+    """
+    Number of seconds to await a client's SyncStep2 reply before resuming
+    update broadcasts to the room.
+
+    This bounds the broadcast pause, not the client's lifetime: a reply that
+    arrives after the timeout is still applied, and the client is not
+    disconnected. See `handle_sync()`. Must be greater than 0.
+    """
+
+    @traitlets.validate("handshake_timeout")
+    def _validate_handshake_timeout(self, proposal):
+        if proposal["value"] <= 0:
+            raise traitlets.TraitError("handshake_timeout must be greater than 0.")
+        return proposal["value"]
+
     file_api_class = traitlets.Type(
         klass=YRoomFileAPI,
         help="The `YRoomFileAPI` class.",
@@ -248,6 +268,9 @@ class YRoom(LoggingConfigurable):
         self._stopped = False
         self._pending_ss2_future: asyncio.Future[bytes] | None = None
         self._pending_ss2_client_id: str | None = None
+        # Clients whose handshake timed out before their SyncStep2 reply
+        # arrived. See `handle_message()`.
+        self._awaiting_late_ss2: set[str] = set()
         self._save_task = None
         self._stop_task = None
         self._last_activity = time.monotonic()
@@ -615,7 +638,40 @@ class YRoom(LoggingConfigurable):
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP1:
             await self.handle_sync(client_id, message)
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_STEP2:
-            self.log.warning("Received SS2 message in message loop, this should never happen.")
+            # A SyncStep2 reaches the queue only if it missed its handshake's
+            # pending future. If that handshake timed out waiting for it, apply
+            # it: CRDT updates are commutative and idempotent, and dropping it
+            # is the data-loss path described in the `handle_sync()` docstring.
+            # This holds even if the client has since disconnected, which is
+            # why `_should_ignore_update()` (it needs a connected client) is not
+            # used. Any other SyncStep2 is unsolicited and is ignored, as
+            # before, without closing the connection.
+            if client_id not in self._awaiting_late_ss2:
+                self.log.warning(
+                    "Ignoring SyncStep2 from client '%s' in room '%s': no "
+                    "handshake is awaiting a reply from this client.",
+                    client_id,
+                    self.room_id
+                )
+                return
+            self._awaiting_late_ss2.discard(client_id)
+            try:
+                self.handle_sync_step2(client_id, message)
+                self.log.info(
+                    "Applied late SyncStep2 from client '%s' in room '%s'.",
+                    client_id,
+                    self.room_id
+                )
+            except Exception:
+                # `handle_sync_step2()` has already logged the exception. Do
+                # not let it kill the message-queue task. Unlike a failed
+                # in-time reply, this does not disconnect the client.
+                self.log.warning(
+                    "Skipping late SyncStep2 from client '%s' in room '%s' "
+                    "that could not be applied.",
+                    client_id,
+                    self.room_id
+                )
             return
         elif sync_message_subtype == YSyncMessageSubtype.SYNC_UPDATE:
             self.handle_sync_update(client_id, message)
@@ -647,12 +703,24 @@ class YRoom(LoggingConfigurable):
 
         1. Sends a SyncStep2 reply providing server side updates,
         2. Sends a SyncStep1 message requesting client side updates,
-        3. Awaits the client's SyncStep2 reply (up to 5s timeout),
+        3. Awaits the client's SyncStep2 reply (up to `handshake_timeout`),
         4. Applies the client's SyncStep2 reply.
 
         Content duplication from divergent clients (stale clients reconnecting
-        after YRoom GC) is handled client-side: the frontend clears its YDoc
-        on a staging copy before applying SS2, producing a zero-diff net update.
+        after YRoom GC) is handled client-side: the frontend tombstones its own
+        items and applies the server state in one transaction, and the
+        tombstones reach the server in the SS2 reply.
+
+        The timeout bounds only the broadcast pause, not the client's
+        lifetime. On expiry, broadcasts resume and the handshake stops
+        waiting, but the client stays connected and its SyncStep2 -- whenever
+        it arrives -- is applied from the message queue. That reply must never
+        be dropped: for a divergent client it is the only carrier of the
+        tombstones written by the client-side repair (the repair transaction
+        uses the provider as origin, which suppresses re-broadcast). Dropping
+        it leaves the server ignorant of the client's IDs, so the next
+        handshake is divergent again and its repair pass deletes the server's
+        own items.
         """
         # Mark client as desynced
         self.clients.mark_desynced(client_id)
@@ -684,25 +752,39 @@ class YRoom(LoggingConfigurable):
 
         # Initialize future that resolves when an SS2 reply is received.
         loop = asyncio.get_running_loop()
-        self._pending_ss2_future = loop.create_future()
+        pending = loop.create_future()
+        self._pending_ss2_future = pending
         self._pending_ss2_client_id = client_id
 
-        # Core handshake logic.
-        # If handshake fails at any point, cut the WebSocket connection.
+        # Core handshake logic. A timeout is not a failure: it only ends the
+        # broadcast pause (see the docstring). Only a genuine exception cuts
+        # the connection.
         self.log.info("Initiating handshake with client '%s' in room '%s'.", client_id, self.room_id)
         handshake_failed = False
+        ss2_message: bytes | None = None
         try:
             self.handle_sync_step1(client_id, ss1_message)
-            ss2_message = await asyncio.wait_for(self._pending_ss2_future, timeout=5.0)
-            self.handle_sync_step2(client_id, ss2_message)
-            self.log.info("Completed handshake with client '%s' in room '%s'.", client_id, self.room_id)
-        except asyncio.TimeoutError:
-            self.log.warning(
-                "Timed out waiting for SyncStep2 reply from client '%s' in room '%s'.",
-                client_id,
-                self.room_id
-            )
-            handshake_failed = True
+            try:
+                ss2_message = await asyncio.wait_for(pending, timeout=self.handshake_timeout)
+            except asyncio.TimeoutError:
+                # On Python >= 3.12, `wait_for` raises TimeoutError even when
+                # the future was resolved in the same event-loop iteration as
+                # the deadline. Read the future before treating the reply as
+                # absent; a genuine timeout leaves it cancelled instead.
+                if pending.done() and not pending.cancelled():
+                    ss2_message = pending.result()
+                else:
+                    self._awaiting_late_ss2.add(client_id)
+                    self.log.warning(
+                        "No SyncStep2 reply from client '%s' in room '%s' within %.1fs; "
+                        "resuming broadcasts. A reply that arrives later will be applied.",
+                        client_id,
+                        self.room_id,
+                        self.handshake_timeout
+                    )
+            if ss2_message is not None:
+                self.handle_sync_step2(client_id, ss2_message)
+                self.log.info("Completed handshake with client '%s' in room '%s'.", client_id, self.room_id)
         except Exception:
             self.log.exception("Exception raised during sync handshake with client '%s' in room '%s':", client_id, self.room_id)
             handshake_failed = True
@@ -714,7 +796,7 @@ class YRoom(LoggingConfigurable):
         self._pending_ss2_future = None
         self._pending_ss2_client_id = None
 
-        # Cut the connection.
+        # Cut the connection only on a genuine failure, never on a timeout.
         if handshake_failed:
             self.log.error("Disconnecting client '%s' due to failed sync handshake in room '%s'.", client_id, self.room_id)
             self.clients.remove(client_id)
