@@ -596,15 +596,18 @@ export namespace WebSocketProvider {
 /**
  * Returns whether the client's history has diverged from the server's: i.e.
  * the client's state vector contains a clientID the server's state vector does
- * not recognize.
+ * not recognize, or a clientID other than the doc's own whose clock runs past
+ * the server's.
  *
- * Such a clientID can only originate from a previous server session (the
- * current session loads its content from disk under a fresh clientID), so
- * syncing without intervention would duplicate content. Note that `self` is
- * intentionally NOT excluded: a single client that authored all content and
- * then reconnected to a recreated server session holds that content solely
- * under its own clientID, and the server has re-authored the equivalent
- * content under a new ID — so failing to clear would duplicate it.
+ * Such a clientID, or such a tail of one, can only originate from a previous
+ * server session (the current session loads its content from disk under a
+ * fresh clientID), so syncing without intervention would duplicate content.
+ * Note that `self` is intentionally NOT excluded from the presence check: a
+ * single client that authored all content and then reconnected to a recreated
+ * server session holds that content solely under its own clientID, and the
+ * server has re-authored the equivalent content under a new ID — so failing
+ * to clear would duplicate it. It IS excluded from the clock comparison; see
+ * the comment in the loop.
  */
 export function hasDivergentHistory(
   doc: Y.Doc,
@@ -612,8 +615,24 @@ export function hasDivergentHistory(
 ): boolean {
   const clientSV = Y.decodeStateVector(Y.encodeStateVector(doc));
   const serverSV = Y.decodeStateVector(serverStateVector);
-  for (const clientId of clientSV.keys()) {
-    if (!serverSV.has(clientId)) {
+  for (const [clientId, clientClock] of clientSV) {
+    const serverClock = serverSV.get(clientId);
+    if (serverClock === undefined) {
+      return true;
+    }
+    // Presence is not enough: compare clocks for every clientID other than
+    // our own. If the server covers only a PREFIX of a stale clientID's
+    // history (an earlier-reconnecting tab repaired first and taught the
+    // recreated room part of the dead session's IDs), the uncovered tail
+    // would sync as live items alongside the server's re-authored copy of
+    // the same content — permanent duplication on disk. A live room can
+    // never lack history another client relayed through it, so a non-self
+    // clock overhang always means stale history. Our OWN overhang is the
+    // normal signature of legitimate offline edits and must not trigger
+    // the repair. It is also the signature of a known, pre-existing gap: a
+    // recreated session that learned only a prefix of our own clientID from
+    // another tab. State vectors cannot tell the two apart; see #257.
+    if (clientId !== doc.clientID && clientClock > serverClock) {
       return true;
     }
   }

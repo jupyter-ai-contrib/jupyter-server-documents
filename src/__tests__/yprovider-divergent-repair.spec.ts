@@ -275,3 +275,75 @@ describe('applyServerUpdate divergent repair', () => {
     expect(client.getXmlFragment('body').toString()).toBe(expected);
   });
 });
+
+describe('hasDivergentHistory clock comparison', () => {
+  it('two tabs with unequal stale history converge without duplication (non-self clock overhang is divergent)', () => {
+    // Two tabs hold unequal amounts of a dead session's history. The
+    // less-complete tab repairs first and its SS2 reply teaches the
+    // recreated room a PREFIX of the stale clientID, as tombstones. When
+    // the fuller tab then reconnects, presence-only detection sees every
+    // clientID covered and skips the repair — its stale tail syncs as live
+    // items next to the server's re-authored copy: permanent duplication
+    // on disk. The whole handshake is simulated so the property pinned is
+    // the convergence, not just the boolean.
+    const staleSession = new Y.Doc();
+    staleSession.getText('source').insert(0, 'one|');
+    const prefix = Y.encodeStateAsUpdate(staleSession);
+    staleSession.getText('source').insert(4, 'two|');
+    const full = Y.encodeStateAsUpdate(staleSession);
+
+    // Instantiate the root type before syncing, as the provider's document
+    // model does; the repair walks instantiated types only.
+    const lesserTab = new Y.Doc();
+    lesserTab.getText('source');
+    Y.applyUpdate(lesserTab, prefix);
+    const fullerTab = new Y.Doc();
+    fullerTab.getText('source');
+    Y.applyUpdate(fullerTab, full);
+
+    const server = new Y.Doc();
+    server.getText('source').insert(0, 'one|two|'); // re-authored from disk
+
+    // The lesser tab reconnects first: divergent, repairs, reply lands.
+    const sv0 = Y.encodeStateVector(server);
+    expect(hasDivergentHistory(lesserTab, sv0)).toBe(true);
+    applyServerUpdate(
+      lesserTab,
+      Y.encodeStateAsUpdate(server, Y.encodeStateVector(lesserTab)),
+      true,
+      sv0
+    );
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(lesserTab, sv0));
+    expect(server.getText('source').toString()).toBe('one|two|');
+
+    // Now the fuller tab: the server covers the stale clientID, but only up
+    // to 'one|'. Presence-only detection says "not divergent" here.
+    const sv1 = Y.encodeStateVector(server);
+    const divergent = hasDivergentHistory(fullerTab, sv1);
+    expect(divergent).toBe(true);
+    applyServerUpdate(
+      fullerTab,
+      Y.encodeStateAsUpdate(server, Y.encodeStateVector(fullerTab)),
+      divergent,
+      sv1
+    );
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(fullerTab, sv1));
+
+    // Without the clock comparison the stale tail is duplicated, e.g.
+    // 'one|two|two|' (the order of the copies depends on the clientIDs).
+    expect(fullerTab.getText('source').toString()).toBe('one|two|');
+    expect(server.getText('source').toString()).toBe('one|two|');
+    expect(lesserTab.getText('source').toString()).toBe('one|two|');
+  });
+
+  it("does not flag the doc's own offline-edit overhang", () => {
+    const client = new Y.Doc();
+    client.getText('source').insert(0, 'synced.');
+    const server = new Y.Doc();
+    Y.applyUpdate(server, Y.encodeStateAsUpdate(client));
+    const serverSV = Y.encodeStateVector(server);
+
+    client.getText('source').insert(7, ' offline'); // legitimate offline work
+    expect(hasDivergentHistory(client, serverSV)).toBe(false);
+  });
+});
