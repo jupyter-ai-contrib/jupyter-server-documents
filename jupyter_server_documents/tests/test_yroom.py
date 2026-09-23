@@ -35,6 +35,35 @@ class TestYRoomCallbacks():
         stop_mock_1.assert_called_once()
         stop_mock_2.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_stop_awaits_task_returning_callbacks(self, make_yroom: MakeYRoom):
+        """
+        An already-scheduled Task returned by a stop callback must complete
+        before `until_saved` resolves; `stop()` itself stays synchronous and
+        returns while the Task is still pending.
+        """
+        yroom = await make_yroom()
+        done = asyncio.Event()
+
+        async def teardown():
+            await asyncio.sleep(0.05)
+            done.set()
+
+        # A stop callback that returns an already-scheduled Task
+        # (`asyncio.create_task(...)`), not a coroutine.
+        yroom.add_stop_callback(lambda: asyncio.create_task(teardown()))
+
+        yroom.stop()
+        # stop() is synchronous: the Task is still pending here, so it is
+        # until_saved, not stop(), that must wait for it.
+        assert not done.is_set()
+
+        await yroom.until_saved
+        assert done.is_set(), (
+            "stop() dropped a Task returned by a stop callback; teardown "
+            "raced shutdown"
+        )
+
 
 class TestYRoomInactivity():
     """
