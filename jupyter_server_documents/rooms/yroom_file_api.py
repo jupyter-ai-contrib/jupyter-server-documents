@@ -8,7 +8,7 @@ from jupyter_server.utils import ensure_async
 import logging
 from tornado.web import HTTPError
 from traitlets.config import LoggingConfigurable
-from traitlets import Float, validate
+from traitlets import Float, Int, validate
 
 if TYPE_CHECKING:
     from typing import Any, Coroutine, Literal
@@ -19,6 +19,8 @@ if TYPE_CHECKING:
 
 DEFAULT_MIN_POLL_INTERVAL = 0.5
 DEFAULT_POLL_INTERVAL_MULTIPLIER = 5.0
+DEFAULT_LOAD_RETRY_COUNT = 3
+DEFAULT_LOAD_RETRY_DELAY = 0.5
 class YRoomFileAPI(LoggingConfigurable):
     """Provides an API to interact with a single file for a YRoom.
 
@@ -63,6 +65,21 @@ class YRoomFileAPI(LoggingConfigurable):
         config=True,
     )
 
+    load_retry_count = Int(
+        default_value=DEFAULT_LOAD_RETRY_COUNT,
+        help="Number of times to retry the initial content load if it fails, "
+        "e.g. when the load races a concurrent write to a newly-created file. "
+        "Defaults to 3.",
+        config=True,
+    )
+
+    load_retry_delay = Float(
+        default_value=DEFAULT_LOAD_RETRY_DELAY,
+        help="Delay in seconds before the first content load retry. The delay "
+        "doubles on each subsequent retry. Defaults to 0.5 seconds.",
+        config=True,
+    )
+
     parent: YRoom
     """
     The parent `YRoom` instance that is using this instance.
@@ -88,6 +105,12 @@ class YRoomFileAPI(LoggingConfigurable):
     _save_scheduled: bool
     _content_loading: bool
     _content_load_event: asyncio.Event
+
+    _content_load_task: asyncio.Task | None
+    """
+    The task running `_load_content()`, started by `load_content_into()`.
+    `None` until loading first starts. See the `content_load_task` property.
+    """
 
     _last_modified: datetime | None
     """
@@ -156,6 +179,8 @@ class YRoomFileAPI(LoggingConfigurable):
         self._content_loading = False
         self._content_load_event = asyncio.Event()
         self._content_lock = asyncio.Lock()
+        self._content_load_task = None
+        self._watch_file_task = None
 
         # Initialize adaptive timing attributes
         self._adaptive_poll_interval = self.min_poll_interval
@@ -302,7 +327,19 @@ class YRoomFileAPI(LoggingConfigurable):
             return
 
         self._content_loading = True
-        asyncio.create_task(self._load_content(jupyter_ydoc))
+        self._content_load_task = asyncio.create_task(self._load_content(jupyter_ydoc))
+
+
+    @property
+    def content_load_task(self) -> asyncio.Task | None:
+        """The task running `_load_content()`, or `None` if loading has not
+        been started via `load_content_into()`.
+
+        Consumers may add a done-callback to this task to observe a load
+        failure. `until_content_loaded` cannot be used for this purpose, as it
+        never resolves when the load fails.
+        """
+        return self._content_load_task
 
 
     async def _get_content(self, path: str) -> tuple[Any, datetime]:
@@ -347,7 +384,47 @@ class YRoomFileAPI(LoggingConfigurable):
         return content, file_data['last_modified']
 
     async def _load_content(self, jupyter_ydoc: YBaseDoc) -> None:
-        """Internal method to load file content asynchronously.
+        """Internal method to load file content asynchronously, retrying on
+        failure.
+
+        The initial load can fail transiently, e.g. when it races a concurrent
+        write to the file by another process (a newly-created notebook may be
+        read while it is still being written, raising `NotJSONError`), so
+        failed attempts are retried up to `load_retry_count` times with
+        exponential backoff starting at `load_retry_delay` seconds.
+
+        If every attempt fails, `_content_loading` is reset so that a future
+        `load_content_into()` call can try again, and the final exception is
+        re-raised so it is observable on `content_load_task`.
+
+        Args:
+            jupyter_ydoc: The YBaseDoc instance to load content into.
+        """
+        attempt = 0
+        delay = self.load_retry_delay
+        while True:
+            try:
+                return await self._load_content_once(jupyter_ydoc)
+            except Exception:
+                if self._stopped or attempt >= self.load_retry_count:
+                    self._content_loading = False
+                    self.log.exception(
+                        f"Failed to load content for room '{self.room_id}' "
+                        f"after {attempt + 1} attempt(s)."
+                    )
+                    raise
+                attempt += 1
+                self.log.warning(
+                    f"Failed to load content for room '{self.room_id}' "
+                    f"(attempt {attempt} of {self.load_retry_count + 1}). "
+                    f"Retrying in {delay}s.",
+                    exc_info=True,
+                )
+                await asyncio.sleep(delay)
+                delay *= 2
+
+    async def _load_content_once(self, jupyter_ydoc: YBaseDoc) -> None:
+        """Performs a single attempt at loading the file content.
 
         Resolves the file path, loads content from ContentsManager, processes
         notebook outputs if applicable, and initializes the YDoc. Finally,
