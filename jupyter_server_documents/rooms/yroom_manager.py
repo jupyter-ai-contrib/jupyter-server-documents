@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from jupyter_server.extension.application import ExtensionApp
     from jupyter_server.services.contents.manager import ContentsManager
     from jupyter_events import EventLogger
+    from jupyter_client.multikernelmanager import MultiKernelManager
 
 class YRoomManager(LoggingConfigurable):
     """
@@ -127,6 +128,13 @@ class YRoomManager(LoggingConfigurable):
             raise RuntimeError("Event logger is not available")
         return event_logger
     
+
+    @property
+    def kernel_manager(self) -> MultiKernelManager:
+        if self.parent.serverapp is None:
+            raise RuntimeError("ServerApp is not available")
+        return self.parent.serverapp.kernel_manager
+
 
     @property
     def outputs_manager(self) -> OutputsManager:
@@ -298,11 +306,13 @@ class YRoomManager(LoggingConfigurable):
         - For rooms not providing notebooks: This task stops the room if it
         is inactive and empty (no WebSocket clients connected / connecting).
 
-        - For rooms providing notebooks: This task stops the room if it has is
-        inactive, has no connected clients, and its kernel execution status is
-        'idle', 'dead', 'unknown', or None. An unknown/None state means no
-        kernel has reported status for this notebook — e.g. it was opened
-        without a connected kernel, or the kernel was shut down externally.
+        - For rooms providing notebooks: This task stops the room if it is
+        inactive, has no connected clients, has no server-side execution that
+        its kernel can still finish (see `_room_has_live_executions()`), and
+        its kernel execution status is 'idle', 'dead', 'unknown', or None. An
+        unknown/None state means no kernel has reported status for this
+        notebook — e.g. it was opened without a connected kernel, or the
+        kernel was shut down externally.
 
         - See `YRoom.inactive` for details on how activity is measured.
         """
@@ -314,15 +324,48 @@ class YRoomManager(LoggingConfigurable):
         awareness = room.get_awareness().get_local_state() or {}
         execution_state = awareness.get("kernel", {}).get("execution_state", None)
         can_free_execution_state = execution_state in { "idle", "dead", "unknown", None }
-        should_free = can_free_execution_state and room.inactive_and_empty
+        # Server-side execution is tracked by the notebook room's own queue and
+        # worker, not by awareness["kernel"]; consult both.
+        has_live_executions = self._room_has_live_executions(room)
+        should_free = (
+            can_free_execution_state
+            and not has_live_executions
+            and room.inactive_and_empty
+        )
         if self.show_gc_debug and room.empty and not should_free:
             reasons = []
             if not room.inactive:
                 reasons.append("it is not yet inactive")
             if not can_free_execution_state:
                 reasons.append(f"it has execution state '{execution_state}'")
+            if has_live_executions:
+                reasons.append("it has queued or running executions on a live kernel")
             self.log.info(f"Not freeing notebook room '{room.room_id}' because {' and '.join(reasons)}.")
         return should_free
+
+    def _room_has_live_executions(self, room: YRoom) -> bool:
+        """
+        Returns whether a notebook room has server-side executions queued or
+        running that its kernel can still finish.
+
+        Work on a kernel that is gone must not keep the room resident, and
+        the room is not always told when its kernel goes away: a shutdown or
+        cull need not go through the room's `disconnect_kernel()`, and a
+        restart, through the kernels API or automatic after a crash, does not
+        reach the room at all. The worker then waits indefinitely for a
+        reply. This method is synchronous, so instead of awaiting
+        `is_alive()` it treats the work as dead when the kernel is no longer
+        in the server's kernel manager, which a shutdown removes it from (a
+        kernel culled on a gateway drops out when the kernel list is next
+        refreshed), or when the worker is stranded on a restarted kernel
+        (`YNotebookRoom.worker_is_stranded`).
+        """
+        if not isinstance(room, YNotebookRoom) or not room.has_active_executions:
+            return False
+        kernel_id = getattr(room._kernel_manager, "kernel_id", None)
+        if kernel_id is None or kernel_id not in self.kernel_manager:
+            return False
+        return not room.worker_is_stranded
     
 
     async def _free_room(self, room: YRoom) -> bool:
