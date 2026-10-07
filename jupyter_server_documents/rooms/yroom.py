@@ -1124,6 +1124,13 @@ class YRoom(LoggingConfigurable):
             elif not immediately:
                 self.log.info(f"Skipping redundant save-on-stop for YRoom '{self.room_id}'; no unsaved changes.")
 
+        # Emit a 'clean' room event, as `jupyter_collaboration` does when it frees
+        # a room. Consumers such as jupyterlab-chat release their model for this
+        # room on it, so a later 'initialize' event for the same file is treated
+        # as a new room rather than one that is already open.
+        if self.events_api:
+            self.events_api.emit_room_event("clean")
+
         # Fire `on_stop` callbacks. Sync callbacks run immediately; coroutines
         # returned by async callbacks are collected so they can be awaited (in
         # `_finalize_stop()`) *before* observer removals are drained. Consumers
