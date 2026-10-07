@@ -71,10 +71,12 @@ async def test_connect_creates_client_and_starts_four_listeners():
     mock_km.get_connection_info.return_value = {}
 
     conn = make_conn()
+    # The nudge is covered in test_websocket_nudge.py; here it is stubbed so
+    # the mock client does not stall connect() until nudge_timeout.
     with patch.object(
         KernelWebsocketConnection, "kernel_manager",
         new_callable=PropertyMock, return_value=mock_km,
-    ):
+    ), patch.object(conn, "nudge", AsyncMock(return_value="ready")):
         await conn.connect()
 
     assert conn._client is mock_client
