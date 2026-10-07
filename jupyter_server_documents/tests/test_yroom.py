@@ -35,6 +35,19 @@ class TestYRoomCallbacks():
         stop_mock_1.assert_called_once()
         stop_mock_2.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_stop_emits_clean_room_event(self, make_yroom: MakeYRoom):
+        """
+        Asserts that stopping a room emits a 'clean' room event, which
+        jupyterlab-chat relies on to release the chat for that room.
+        """
+        yroom = await make_yroom()
+        yroom.events_api.emit_room_event = Mock()
+
+        yroom.stop()
+
+        yroom.events_api.emit_room_event.assert_called_once_with("clean")
+
 
 class TestYRoomInactivity():
     """
