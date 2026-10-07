@@ -190,25 +190,11 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               return false;
             }
             if (response.ok) {
-              // Mark the cell trusted, now that the server has accepted the
-              // request. The default executor gets this from
-              // CodeCellModel.clearExecution(), which runs inside
-              // CodeCell.execute(); the server-side path bypasses that method,
-              // and without the trusted flag JupyterLab refuses unsafe rich
-              // renderers, so e.g. ipywidgets render as their text/plain repr.
-              //
-              // This must not happen any earlier. Every path above can return
-              // without executing anything, and this executor does not clear
-              // the cell's outputs, so trusting there would retroactively
-              // trust output loaded from an untrusted notebook. It also can't
-              // be undone afterwards: granting trust writes `trusted: true`
-              // into the shared cell metadata, and resetting the flag to false
-              // leaves that metadata in place for every other client.
-              //
-              // The server returns every failure status before enqueueing
-              // anything, so an OK response means execution is under way.
-              // Outputs that arrived before the response are re-rendered when
-              // the output area's trust flips, so nothing renders degraded.
+              // Trust the cell, as CodeCellModel.clearExecution() does on the
+              // default path, so rich outputs (e.g. widgets) render. Only do
+              // this once the server has accepted the request: the outputs
+              // aren't cleared here, and the grant can't be undone because it
+              // also writes `trusted: true` to the shared cell metadata.
               cell.model.trusted = true;
             }
             onCellExecuted({ cell, success: response.ok });
