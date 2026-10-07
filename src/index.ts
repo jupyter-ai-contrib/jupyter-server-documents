@@ -3,6 +3,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
+import type { ICodeCellModel } from '@jupyterlab/cells';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
@@ -46,6 +47,40 @@ export const plugin: JupyterFrontEndPlugin<void> = {
     }
   }
 };
+
+/**
+ * Trust a code cell once its execute request is accepted (`accept()`) *and*
+ * its previous outputs have been cleared, mirroring the clear-then-trust order
+ * of CodeCellModel.clearExecution(). The server's clear arrives over the
+ * document WebSocket, independently of the HTTP response; trusting before it
+ * lands would re-render the old outputs as trusted and run their scripts.
+ * Call before dispatching, so a clear that beats the response isn't missed.
+ */
+function trustOnceCleared(model: ICodeCellModel): {
+  accept: () => void;
+  cancel: () => void;
+} {
+  let cleared = model.outputs.length === 0;
+  let accepted = false;
+  const update = () => {
+    cleared = cleared || model.outputs.length === 0;
+    if (cleared && accepted) {
+      cancel();
+      model.trusted = true;
+    }
+  };
+  const cancel = () => {
+    model.outputs.changed.disconnect(update);
+  };
+  model.outputs.changed.connect(update);
+  return {
+    accept: () => {
+      accepted = true;
+      update();
+    },
+    cancel
+  };
+}
 
 /**
  * Notebook cell executor plugin.
@@ -154,6 +189,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             console.warn('[JSD] document_id not set; falling back to path');
           }
 
+          const trust = trustOnceCleared(cell.model as ICodeCellModel);
           onCellExecutionScheduled({ cell });
           try {
             const response = await ServerConnection.makeRequest(
@@ -172,12 +208,17 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               },
               serverSettings
             );
+            if (!response.ok) {
+              // A source mismatch (409) or any other failure (408, 500, etc.)
+              // breaks the chain: the request was never enqueued on the
+              // server, so the next run must not reference it as a
+              // predecessor.
+              lastRequestIdByDoc.delete(docKey);
+              trust.cancel();
+            }
             if (response.status === 409) {
               // Source mismatch — another user edited the cell after this user
               // pressed Run. Show a visible warning so the user knows to re-run.
-              // Clear the ordering chain: this request was never enqueued on the
-              // server so the next run must not reference it as a predecessor.
-              lastRequestIdByDoc.delete(docKey);
               Notification.warning(
                 'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
                 { autoClose: 5000 }
@@ -185,14 +226,16 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               onCellExecuted({ cell, success: false });
               return false;
             }
-            if (!response.ok) {
-              // Any other failure (408, 500, etc.) also breaks the chain —
-              // the request was never successfully enqueued.
-              lastRequestIdByDoc.delete(docKey);
+            if (response.ok) {
+              // Trust the cell so rich outputs (e.g. widgets) render. Failed
+              // requests never get here: granting trust can't be undone, since
+              // it also writes `trusted: true` to the shared cell metadata.
+              trust.accept();
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
+            trust.cancel();
             onCellExecuted({ cell, success: false });
             if (!cell.isDisposed) {
               throw error;
