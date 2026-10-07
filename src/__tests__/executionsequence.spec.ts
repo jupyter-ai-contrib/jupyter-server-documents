@@ -73,9 +73,9 @@ describe('ExecutionSequencer', () => {
 
 describe('conflictMessage', () => {
   it('blames the source for a source mismatch', () => {
-    expect(
-      conflictMessage({ error: 'source_mismatch', reason: undefined })
-    ).toContain('cell source changed');
+    expect(conflictMessage({ error: 'source_mismatch' })).toContain(
+      'cell source changed'
+    );
   });
 
   it('does not blame the kernel for a timed-out predecessor', () => {

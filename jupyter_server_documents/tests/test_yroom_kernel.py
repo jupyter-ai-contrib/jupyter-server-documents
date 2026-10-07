@@ -36,6 +36,7 @@ def make_yroom():
     room.output_processor = None
     room._next_seq = {}
     room._seq_generation = {}
+    room._seq_reset_reason = {}
     room._seq_cv = asyncio.Condition()
     return room
 

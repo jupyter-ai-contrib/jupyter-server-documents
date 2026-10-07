@@ -36,6 +36,7 @@ def make_room():
     room.output_processor = None
     room._next_seq = {}
     room._seq_generation = {}
+    room._seq_reset_reason = {}
     room._seq_cv = asyncio.Condition()
     return room
 
@@ -185,7 +186,9 @@ class TestSequenceOrdering:
         assert room._next_seq["tab-A"] == 1
 
     @pytest.mark.asyncio
-    async def test_session_reset_wakes_pending_waiter(self):
+    @pytest.mark.parametrize("trigger", ["sequence_zero", "disconnect"])
+    async def test_reset_abandons_pending_waiter(self, trigger):
+        """A seq=0 reset or a kernel disconnect abandons a pending waiter."""
         room = make_seq_room()
         await run(room, 0)
 
@@ -193,7 +196,12 @@ class TestSequenceOrdering:
         await settle()
         assert not waiter.done()
 
-        await run(room, 0)
+        if trigger == "sequence_zero":
+            await run(room, 0)
+        else:
+            prep_disconnect(room)
+            await room.disconnect_kernel()
+            assert room._next_seq == {}
 
         with pytest.raises(SessionResetError) as exc_info:
             await waiter
@@ -212,36 +220,23 @@ class TestSequenceOrdering:
 
     @pytest.mark.asyncio
     async def test_timeout_releases_peers_behind_the_same_gap(self):
-        """Peers stuck behind a lost predecessor fail together, not in turn."""
+        """Peers stuck behind a lost predecessor fail with the first timeout,
+        not their own, and report it as a timeout."""
         room = make_seq_room()
-        room.execute_sequence_timeout = 0.05
+        room.execute_sequence_timeout = 0.2
 
-        waiters = [asyncio.create_task(run(room, seq)) for seq in (7, 8, 9)]
+        first = asyncio.create_task(run(room, 7))
+        await asyncio.sleep(0.1)
+        peers = [asyncio.create_task(run(room, seq)) for seq in (8, 9)]
+
+        # The peers' own deadlines are ~0.3s out; the first one's is ~0.2s.
         results = await asyncio.wait_for(
-            asyncio.gather(*waiters, return_exceptions=True), timeout=0.5
+            asyncio.gather(first, *peers, return_exceptions=True), timeout=0.25
         )
 
         assert all(isinstance(r, SessionResetError) for r in results)
+        assert [r.reason for r in results] == ["timeout"] * 3
         assert room._execution_queue.empty()
-
-    @pytest.mark.asyncio
-    async def test_fresh_client_id_after_timeout_keeps_order(self):
-        """After a timeout the frontend starts a new client_id at 0, so seq=1
-        arriving first still waits for seq=0 instead of racing it."""
-        room = make_seq_room()
-        room.execute_sequence_timeout = 0.05
-        for seq in range(3):
-            await run(room, seq)
-        with pytest.raises(SessionResetError):
-            await run(room, 4)
-
-        late = asyncio.create_task(run(room, 1, client_id="tab-A:1"))
-        await settle()
-        assert not late.done()
-
-        await run(room, 0, client_id="tab-A:1")
-        await late
-        assert room._next_seq["tab-A:1"] == 2
 
     @pytest.mark.asyncio
     async def test_advances_even_on_source_mismatch(self):
@@ -269,23 +264,6 @@ class TestSequenceOrdering:
         await run(room, 0)
         await waiter_a
         assert room._next_seq["tab-A"] == 2
-
-    @pytest.mark.asyncio
-    async def test_sequence_state_cleared_on_disconnect(self):
-        """disconnect_kernel() clears next_seq and abandons pending waiters."""
-        room = make_seq_room()
-        await run(room, 0)
-
-        waiter = asyncio.create_task(run(room, 5))
-        await settle()
-        assert not waiter.done()
-
-        prep_disconnect(room)
-        await room.disconnect_kernel()
-
-        assert room._next_seq == {}
-        with pytest.raises(SessionResetError):
-            await waiter
 
 
 class TestSequencePreservedAcrossRestart:

@@ -131,10 +131,11 @@ class YNotebookRoom(YRoom):
         # Per-client sequence-based ordering for execute_cells.
         # _next_seq[client_id] is the next sequence number expected to be
         # enqueued for that client. _seq_generation[client_id] is bumped on
-        # session reset so orphaned waiters can abandon. _seq_cv coordinates
-        # all waiters.
+        # session reset so orphaned waiters can abandon, and _seq_reset_reason
+        # records why for them. _seq_cv coordinates all waiters.
         self._next_seq: dict[str, int] = {}
         self._seq_generation: dict[str, int] = {}
+        self._seq_reset_reason: dict[str, str] = {}
         self._seq_cv: asyncio.Condition = asyncio.Condition()
 
     # ── Kernel client lifecycle ───────────────────────────────────────────────────
@@ -221,8 +222,9 @@ class YNotebookRoom(YRoom):
             # by bumping every client's generation counter. Waiters check
             # generation on wake and raise SessionResetError if it changed.
             async with self._seq_cv:
-                for client_id in list(self._seq_generation.keys()):
+                for client_id in self._seq_generation:
                     self._seq_generation[client_id] += 1
+                    self._seq_reset_reason[client_id] = "reset"
                 self._next_seq.clear()
                 self._seq_cv.notify_all()
 
@@ -542,6 +544,7 @@ class YNotebookRoom(YRoom):
             if sequence == 0 and current > 0:
                 self._next_seq[client_id] = 0
                 self._seq_generation[client_id] += 1
+                self._seq_reset_reason[client_id] = "reset"
                 self._seq_cv.notify_all()
                 return
 
@@ -564,6 +567,7 @@ class YNotebookRoom(YRoom):
                 # Wake every peer behind the same lost predecessor so they
                 # don't each wait out a full timeout in turn.
                 self._seq_generation[client_id] += 1
+                self._seq_reset_reason[client_id] = "timeout"
                 self._seq_cv.notify_all()
                 raise SessionResetError(
                     f"client_id {client_id!r} timed out waiting for "
@@ -574,7 +578,7 @@ class YNotebookRoom(YRoom):
                 raise SessionResetError(
                     f"client_id {client_id!r} session was reset "
                     f"while waiting for sequence {sequence}",
-                    reason="reset",
+                    reason=self._seq_reset_reason[client_id],
                 )
 
     async def _advance_seq(self, client_id: str) -> None:
