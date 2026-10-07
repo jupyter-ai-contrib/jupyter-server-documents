@@ -11,6 +11,7 @@ import { jsdDocumentProviderFactory } from './docprovider';
 import { disableSavePlugin } from './disablesave';
 import { outputsServicePlugin } from './outputs';
 import { murmur2 } from './murmur2';
+import { conflictMessage, ExecutionSequencer } from './executionsequence';
 
 /**
  * Initialization data for the @jupyter-ai-contrib/server-documents extension.
@@ -71,11 +72,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
       }
 
       const serverSettings = app.serviceManager.serverSettings;
-      // Sequence-based ordering: per (document, client, kernel) monotonic
-      // counter. The server enqueues in sequence order; out-of-order
-      // arrivals are buffered until their predecessors show up. Reset to
-      // 0 signals a session reset to the server.
-      const nextSeqByDoc = new Map<string, number>();
+      const sequencer = new ExecutionSequencer();
 
       return {
         async runCell({
@@ -154,17 +151,12 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             notebook.sharedModel.awareness?.clientID ?? ''
           );
 
-          // Generate a unique ID for this request (opaque, for tracing)
-          // and attach a monotonic sequence number so the server enqueues
-          // requests in strict order per (document, client, kernel)
-          // regardless of arrival timing. The counter is keyed by
-          // kernel_id as well so that when the kernel changes, the
-          // counter naturally resets to 0 for the new kernel — matching
-          // the server's per-disconnect _next_seq clear.
+          // Keyed by kernel id too, so a new kernel starts a fresh sequence
+          // to match the server's clear on disconnect. Without a client id
+          // there is nothing to scope a sequence to, so send no ordering.
           const docKey = `${documentId ?? path}:${clientId}:${kernelId}`;
           const requestId = crypto.randomUUID();
-          const sequence = nextSeqByDoc.get(docKey) ?? 0;
-          nextSeqByDoc.set(docKey, sequence + 1);
+          const order = clientId ? sequencer.claim(docKey, clientId) : null;
 
           if (!documentId) {
             // document_id not yet in shared model state — fall back to path.
@@ -181,52 +173,34 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
                 body: JSON.stringify({
                   document_id: documentId ?? path,
                   cells: [{ cell_id: cellId, source_hash: sourceHash }],
-                  client_id: clientId || undefined,
                   request_id: requestId,
-                  sequence
+                  ...(order
+                    ? { client_id: order.clientId, sequence: order.sequence }
+                    : {})
                 })
               },
               serverSettings
             );
             if (response.status === 409) {
-              // Two distinct 409 shapes:
-              //   { error: "source_mismatch", cell_id: ... } — the source
-              //     changed under us; the server advanced the sequence
-              //     slot regardless, so our counter is still in sync.
-              //   { error: "session_reset" } — the server rewound state
-              //     (kernel disconnect or an explicit seq=0 from us);
-              //     reset our counter so the next request starts fresh.
-              let body: { error?: string } = {};
-              try {
-                body = await response.json();
-              } catch {
-                // fall through with empty body
-              }
+              // source_mismatch: the server consumed the slot, so the sequence
+              // is still in step. session_reset: start a new sequence.
+              const body = await response.json().catch(() => ({}));
               if (body.error === 'session_reset') {
-                nextSeqByDoc.delete(docKey);
-                Notification.warning(
-                  'Cell not executed: the kernel changed while the request was in flight. Please re-run the cell.',
-                  { autoClose: 5000 }
-                );
-                onCellExecuted({ cell, success: false });
-                return false;
+                sequencer.reset(docKey, order);
               }
-              Notification.warning(
-                'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
-                { autoClose: 5000 }
-              );
+              Notification.warning(conflictMessage(body), { autoClose: 5000 });
               onCellExecuted({ cell, success: false });
               return false;
             }
             if (!response.ok) {
-              // 4xx/5xx other than 409 — conservatively reset the counter
-              // so we don't wedge on a sequence the server may not have
-              // observed.
-              nextSeqByDoc.delete(docKey);
+              // The server may or may not have consumed the slot.
+              sequencer.reset(docKey, order);
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
+            // The request may never have arrived.
+            sequencer.reset(docKey, order);
             onCellExecuted({ cell, success: false });
             if (!cell.isDisposed) {
               throw error;

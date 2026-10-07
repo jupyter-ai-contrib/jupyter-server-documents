@@ -34,7 +34,6 @@ def make_room():
     room._execution_queue = asyncio.Queue()
     room._execution_worker_task = MagicMock(done=MagicMock(return_value=False))
     room.output_processor = None
-    room._reattach_tasks = []
     room._next_seq = {}
     room._seq_generation = {}
     room._seq_cv = asyncio.Condition()
@@ -111,55 +110,56 @@ class TestSourceHashVerification:
 
 # ── sequence-based ordering ───────────────────────────────────────────────────
 
+def make_seq_room():
+    """A room whose single cell's hash matches ``run()``'s default."""
+    room = make_room()
+    ydoc, _ = make_ydoc("x = 1")
+    room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+    return room
+
+
+async def run(room, sequence, client_id="tab-A", source_hash=_source_hash("x = 1")):
+    await room.execute_cell(
+        "cell-1", source_hash=source_hash, client_id=client_id, sequence=sequence
+    )
+
+
+async def settle():
+    """Let pending tasks reach their sequence wait."""
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+
+
+def prep_disconnect(room):
+    """Stub out the kernel pieces disconnect_kernel() touches."""
+    room._execution_worker_task = MagicMock()
+    room._execution_worker_task.done.return_value = True
+    room._kernel_manager = MagicMock(
+        remove_restart_callback=MagicMock(side_effect=Exception("not registered"))
+    )
+
+
 class TestSequenceOrdering:
     """execute_cells enqueues in strict sequence order per client_id."""
 
     @pytest.mark.asyncio
     async def test_in_order_arrivals_advance_next_seq(self):
-        """Three sequential arrivals bump next_seq to 3."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
-
+        room = make_seq_room()
         for seq in range(3):
-            await room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=seq,
-            )
+            await run(room, seq)
 
         assert room._next_seq["tab-A"] == 3
         assert room._execution_queue.qsize() == 3
 
     @pytest.mark.asyncio
     async def test_out_of_order_buffered_until_predecessor_arrives(self):
-        """seq=1 arrives before seq=0; waits, then processes after seq=0."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+        room = make_seq_room()
 
-        # seq=1 arrives first — should block waiting for seq=0.
-        task_b = asyncio.create_task(
-            room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=1,
-            )
-        )
-        # Give the coroutine a chance to hit the wait.
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        task_b = asyncio.create_task(run(room, 1))
+        await settle()
         assert room._execution_queue.empty(), "seq=1 must be blocked waiting for seq=0"
 
-        # seq=0 arrives — should enqueue, then unblock seq=1 which also enqueues.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=0,
-        )
+        await run(room, 0)
         await task_b
 
         assert room._execution_queue.qsize() == 2
@@ -167,261 +167,143 @@ class TestSequenceOrdering:
 
     @pytest.mark.asyncio
     async def test_sequence_below_next_seq_raises(self):
-        """A late/duplicate sequence below next_seq is rejected."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
-
-        # Advance to seq=1 (next_seq=2).
-        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), client_id="tab-A", sequence=0)
-        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), client_id="tab-A", sequence=1)
+        room = make_seq_room()
+        await run(room, 0)
+        await run(room, 1)
 
         with pytest.raises(SequenceOutOfRangeError):
-            await room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=1,   # already processed
-            )
+            await run(room, 1)
 
     @pytest.mark.asyncio
     async def test_sequence_zero_after_high_seq_resets_state(self):
-        """seq=0 after next_seq > 0 clears state and starts over."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
-
+        room = make_seq_room()
         for seq in range(3):
-            await room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=seq,
-            )
-        assert room._next_seq["tab-A"] == 3
+            await run(room, seq)
 
-        # Browser resets — sends seq=0.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=0,
-        )
-        # After reset + this request, next_seq is 1 (0 processed, advanced to 1).
+        await run(room, 0)
+
         assert room._next_seq["tab-A"] == 1
 
     @pytest.mark.asyncio
     async def test_session_reset_wakes_pending_waiter(self):
-        """A pending seq=5 waiter is abandoned when a seq=0 reset arrives."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+        room = make_seq_room()
+        await run(room, 0)
 
-        # Advance to next_seq=1 first (so the reset actually resets something).
-        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), client_id="tab-A", sequence=0)
-
-        # seq=5 arrives, blocks waiting for seq=1..4.
-        waiter = asyncio.create_task(
-            room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=5,
-            )
-        )
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        waiter = asyncio.create_task(run(room, 5))
+        await settle()
         assert not waiter.done()
 
-        # Reset comes in — the waiter should raise SessionResetError.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=0,
-        )
+        await run(room, 0)
 
-        with pytest.raises(SessionResetError):
+        with pytest.raises(SessionResetError) as exc_info:
             await waiter
+        assert exc_info.value.reason == "reset"
 
     @pytest.mark.asyncio
-    async def test_lost_predecessor_times_out(self, monkeypatch):
-        """A waiter whose predecessor request never arrives is abandoned
-        after ``kernel_info_timeout`` so peers stuck behind it recover."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+    async def test_lost_predecessor_times_out(self):
+        """A waiter whose predecessor never arrives gives up after
+        ``execute_sequence_timeout``."""
+        room = make_seq_room()
+        room.execute_sequence_timeout = 0.05
 
-        # Force a short timeout so the test doesn't wait 60s.
-        monkeypatch.setattr(room, "_seq_wait_timeout", lambda: 0.05)
+        with pytest.raises(SessionResetError, match="timed out") as exc_info:
+            await run(room, 3)
+        assert exc_info.value.reason == "timeout"
 
-        # Send seq=3 without ever sending seq=0..2.
-        with pytest.raises(SessionResetError, match="timed out"):
-            await room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=3,
-            )
+    @pytest.mark.asyncio
+    async def test_timeout_releases_peers_behind_the_same_gap(self):
+        """Peers stuck behind a lost predecessor fail together, not in turn."""
+        room = make_seq_room()
+        room.execute_sequence_timeout = 0.05
+
+        waiters = [asyncio.create_task(run(room, seq)) for seq in (7, 8, 9)]
+        results = await asyncio.wait_for(
+            asyncio.gather(*waiters, return_exceptions=True), timeout=0.5
+        )
+
+        assert all(isinstance(r, SessionResetError) for r in results)
+        assert room._execution_queue.empty()
+
+    @pytest.mark.asyncio
+    async def test_fresh_client_id_after_timeout_keeps_order(self):
+        """After a timeout the frontend starts a new client_id at 0, so seq=1
+        arriving first still waits for seq=0 instead of racing it."""
+        room = make_seq_room()
+        room.execute_sequence_timeout = 0.05
+        for seq in range(3):
+            await run(room, seq)
+        with pytest.raises(SessionResetError):
+            await run(room, 4)
+
+        late = asyncio.create_task(run(room, 1, client_id="tab-A:1"))
+        await settle()
+        assert not late.done()
+
+        await run(room, 0, client_id="tab-A:1")
+        await late
+        assert room._next_seq["tab-A:1"] == 2
 
     @pytest.mark.asyncio
     async def test_advances_even_on_source_mismatch(self):
         """A failed request still advances the sequence — the slot is used."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+        room = make_seq_room()
 
         with pytest.raises(SourceMismatchError):
-            await room.execute_cell(
-                "cell-1",
-                source_hash="does-not-match",
-                client_id="tab-A",
-                sequence=0,
-            )
+            await run(room, 0, source_hash="does-not-match")
 
-        # next_seq must have advanced so subsequent requests aren't stuck.
         assert room._next_seq["tab-A"] == 1
-
-        # Next request with seq=1 proceeds normally.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=1,
-        )
+        await run(room, 1)
         assert not room._execution_queue.empty()
 
     @pytest.mark.asyncio
     async def test_independent_clients_dont_block_each_other(self):
-        """tab-A's out-of-order queue doesn't block tab-B."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+        room = make_seq_room()
 
-        # tab-A seq=1 arrives first — blocks.
-        waiter_a = asyncio.create_task(
-            room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=1,
-            )
-        )
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        waiter_a = asyncio.create_task(run(room, 1))
+        await settle()
         assert not waiter_a.done()
 
-        # tab-B seq=0 must run to completion independently.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-B",
-            sequence=0,
-        )
+        await run(room, 0, client_id="tab-B")
         assert room._next_seq["tab-B"] == 1
 
-        # Unblock tab-A.
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=0,
-        )
+        await run(room, 0)
         await waiter_a
         assert room._next_seq["tab-A"] == 2
 
     @pytest.mark.asyncio
     async def test_sequence_state_cleared_on_disconnect(self):
         """disconnect_kernel() clears next_seq and abandons pending waiters."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
+        room = make_seq_room()
+        await run(room, 0)
 
-        await room.execute_cell("cell-1", source_hash=_source_hash("x = 1"), client_id="tab-A", sequence=0)
-
-        waiter = asyncio.create_task(
-            room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=5,
-            )
-        )
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        waiter = asyncio.create_task(run(room, 5))
+        await settle()
         assert not waiter.done()
 
-        # Prep for disconnect_kernel — pretend the worker task is already done.
-        room._execution_worker_task = MagicMock()
-        room._execution_worker_task.done.return_value = True
-        room._kernel_manager = MagicMock(
-            remove_restart_callback=MagicMock(side_effect=Exception("not registered"))
-        )
-
+        prep_disconnect(room)
         await room.disconnect_kernel()
 
         assert room._next_seq == {}
         with pytest.raises(SessionResetError):
             await waiter
 
+
 class TestSequencePreservedAcrossRestart:
     """Kernel restart-in-place preserves per-client sequence counters.
 
     The browser's per-``docKey`` counter isn't reset on restart (same
     ``kernel_id``), so the server's ``_next_seq`` must survive too —
-    otherwise the next request (with sequence N > 0) waits forever for
-    predecessors that will never arrive.
+    otherwise the next request (with sequence N > 0) waits for predecessors
+    that will never arrive.
     """
 
     @pytest.mark.asyncio
     async def test_disconnect_kernel_reset_false_preserves_next_seq(self):
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
-
-        # Advance next_seq to 3 by running three cells.
+        room = make_seq_room()
         for seq in range(3):
-            await room.execute_cell(
-                "cell-1",
-                source_hash=_source_hash("x = 1"),
-                client_id="tab-A",
-                sequence=seq,
-            )
-        assert room._next_seq["tab-A"] == 3
+            await run(room, seq)
 
-        # Prep for disconnect_kernel — pretend worker is already done.
-        room._execution_worker_task = MagicMock()
-        room._execution_worker_task.done.return_value = True
-        room._kernel_manager = MagicMock(
-            remove_restart_callback=MagicMock(side_effect=Exception("not registered"))
-        )
-
+        prep_disconnect(room)
         await room.disconnect_kernel(reset_sequences=False)
 
-        # Next_seq preserved. Next request with sequence=3 proceeds normally.
         assert room._next_seq["tab-A"] == 3
-
-    @pytest.mark.asyncio
-    async def test_default_disconnect_kernel_still_resets(self):
-        """Default reset_sequences=True still clears state (existing behaviour)."""
-        room = make_room()
-        ydoc, _ = make_ydoc("x = 1")
-        room.get_jupyter_ydoc = AsyncMock(return_value=ydoc)
-
-        await room.execute_cell(
-            "cell-1",
-            source_hash=_source_hash("x = 1"),
-            client_id="tab-A",
-            sequence=0,
-        )
-        assert room._next_seq["tab-A"] == 1
-
-        room._execution_worker_task = MagicMock()
-        room._execution_worker_task.done.return_value = True
-        room._kernel_manager = MagicMock(
-            remove_restart_callback=MagicMock(side_effect=Exception("not registered"))
-        )
-
-        await room.disconnect_kernel()
-
-        assert room._next_seq == {}

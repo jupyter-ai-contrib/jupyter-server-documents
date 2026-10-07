@@ -6,7 +6,6 @@ from tornado.escape import json_encode
 from .rooms.ynotebook_room import (
     YNotebookRoom,
     SourceMismatchError,
-    SequenceOutOfRangeError,
     SessionResetError,
 )
 
@@ -57,7 +56,8 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
     - ``200 null``  — accepted (fire-and-forget)
     - ``400``       — bad request
     - ``409 {"error": "source_mismatch", "cell_id": "..."}`` — source diverged
-    - ``409``       — session reset (client should clear its counter and retry with sequence=0)
+    - ``409 {"error": "session_reset", "reason": "timeout" | "reset"}`` — the
+      sequence wait was abandoned; the client should start a new sequence
     """
 
     @web.authenticated
@@ -78,7 +78,7 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
         sequence = body.get("sequence")
 
         if sequence is not None:
-            if not isinstance(sequence, int) or sequence < 0:
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
                 raise web.HTTPError(400, "sequence must be a non-negative integer")
             if not client_id:
                 raise web.HTTPError(400, "client_id is required when sequence is present")
@@ -101,12 +101,10 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
             self.set_status(409)
             self.finish(json_encode({"error": "source_mismatch", "cell_id": e.cell_id}))
             return
-        except SessionResetError:
+        except SessionResetError as e:
             self.set_status(409)
-            self.finish(json_encode({"error": "session_reset"}))
+            self.finish(json_encode({"error": "session_reset", "reason": e.reason}))
             return
-        except SequenceOutOfRangeError as e:
-            raise web.HTTPError(400, str(e))
         except (LookupError, ValueError, RuntimeError) as e:
             raise web.HTTPError(400, str(e))
 

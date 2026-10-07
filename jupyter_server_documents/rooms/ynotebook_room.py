@@ -11,8 +11,11 @@ Keeping kernel-related state and methods in a dedicated subclass means:
 from __future__ import annotations
 from typing import TYPE_CHECKING, Any, Optional
 import asyncio
+import contextlib
 import struct
 from dataclasses import dataclass
+
+import traitlets
 
 from .yroom import YRoom
 
@@ -68,7 +71,7 @@ class SourceMismatchError(Exception):
         self.cell_id = cell_id
 
 
-class SequenceOutOfRangeError(Exception):
+class SequenceOutOfRangeError(ValueError):
     """A request arrived with a sequence number below the expected next value.
 
     Raised when the client either duplicated a request or somehow rewound
@@ -77,12 +80,16 @@ class SequenceOutOfRangeError(Exception):
 
 
 class SessionResetError(Exception):
-    """A pending sequence wait was abandoned because the client session was reset.
+    """A pending sequence wait was abandoned.
 
-    Signalled when the browser sent ``sequence == 0`` while the server was
-    already tracking a higher sequence for that ``client_id``, or when the
-    kernel was disconnected mid-wait.
+    ``reason`` is ``"timeout"`` when a predecessor never arrived, or
+    ``"reset"`` when the client sent ``sequence == 0`` or the kernel was
+    disconnected mid-wait.
     """
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 @dataclass
@@ -104,6 +111,13 @@ class YNotebookRoom(YRoom):
     execution; outputs and execution state are written directly into the YDoc
     so all connected clients see them via normal Yjs sync.
     """
+
+    execute_sequence_timeout = traitlets.Float(
+        default_value=10.0,
+        config=True,
+        help="Seconds an execute request waits for an earlier request from "
+        "the same client to arrive before it is rejected.",
+    )
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -208,7 +222,7 @@ class YNotebookRoom(YRoom):
             # generation on wake and raise SessionResetError if it changed.
             async with self._seq_cv:
                 for client_id in list(self._seq_generation.keys()):
-                    self._seq_generation[client_id] = self._seq_generation[client_id] + 1
+                    self._seq_generation[client_id] += 1
                 self._next_seq.clear()
                 self._seq_cv.notify_all()
 
@@ -428,14 +442,13 @@ class YNotebookRoom(YRoom):
         intended order, callers pass a ``(client_id, sequence)`` pair.
         ``sequence`` is a monotonic counter per ``client_id``; the server
         enqueues in sequence order, buffering out-of-order arrivals until their
-        predecessors show up. This is deterministic — there is no timeout
-        heuristic.
+        predecessors show up. A waiter whose predecessor never arrives gives up
+        after ``execute_sequence_timeout`` with ``SessionResetError``.
 
         Session reset: a request with ``sequence == 0`` when the server has
-        already seen higher sequences for that client_id signals the browser has
-        restarted its counter (new tab, kernel swap, explicit reset). The server
-        clears state and abandons pending waiters for that client_id with
-        ``SessionResetError``.
+        already seen higher sequences for that client_id signals the client has
+        restarted its counter. The server clears state and abandons pending
+        waiters for that client_id with ``SessionResetError``.
 
         Args:
             cells: List of dicts with keys:
@@ -454,12 +467,7 @@ class YNotebookRoom(YRoom):
         if self._execution_queue is None:
             raise RuntimeError("YNotebookRoom execution worker is not running")
 
-        acquired_seq = False
-        if client_id is not None and sequence is not None:
-            await self._wait_for_seq_turn(client_id, sequence)
-            acquired_seq = True
-
-        try:
+        async with self._sequence_turn(client_id, sequence):
             ydoc = await self.get_jupyter_ydoc()
             file_id = self.room_id.split(":", 2)[2]
 
@@ -490,24 +498,37 @@ class YNotebookRoom(YRoom):
                     file_id=file_id,
                     clear_outputs=clear_outputs,
                 ))
+            self.log.debug(
+                "Enqueued %d cell(s) for request %s (client %s, sequence %s)",
+                len(items), request_id, client_id, sequence,
+            )
+
+    @contextlib.asynccontextmanager
+    async def _sequence_turn(self, client_id: Optional[str], sequence: Optional[int]):
+        """Hold this request's sequence slot; a no-op without ordering fields.
+
+        The slot is consumed even if the body raises, so successors never wait
+        on a sequence the server has already decided to skip.
+        """
+        if client_id is None or sequence is None:
+            yield
+            return
+        await self._wait_for_seq_turn(client_id, sequence)
+        try:
+            yield
         finally:
-            # Always advance the client's sequence, even on error: the sequence
-            # slot is "consumed" by having entered execute_cells. If we didn't
-            # advance on error, successive requests would wait forever for a
-            # sequence the server has decided to skip.
-            if acquired_seq:
-                await self._advance_seq(client_id)  # type: ignore[arg-type]
+            await self._advance_seq(client_id)
 
     async def _wait_for_seq_turn(self, client_id: str, sequence: int) -> None:
         """Block until it is this ``(client_id, sequence)``'s turn to enqueue.
 
         The wait only bounds *ordering* of concurrent POSTs — not execution — so
         it should complete on the order of a network round-trip. If a
-        predecessor request is genuinely lost (client crash, network drop) the
-        waiter would otherwise block forever; we cap it and raise
-        ``SessionResetError`` on expiry. The frontend responds to the resulting
-        409 by clearing its counter and retrying with ``sequence=0``, which
-        drains any peers still stuck behind the same lost predecessor.
+        predecessor is genuinely lost (client crash, network drop) the waiter
+        gives up after ``execute_sequence_timeout`` and raises
+        ``SessionResetError``, taking any peers stuck behind the same gap with
+        it. The frontend responds to the 409 by starting a new ``client_id``
+        at ``sequence=0``.
 
         Signals a session reset if ``sequence == 0`` when the server already
         holds higher state for this client. Raises ``SessionResetError`` if a
@@ -517,7 +538,7 @@ class YNotebookRoom(YRoom):
             self._seq_generation.setdefault(client_id, 0)
             current = self._next_seq.get(client_id, 0)
 
-            # Session reset: browser sent sequence=0 while we're past it.
+            # Session reset: client sent sequence=0 while we're past it.
             if sequence == 0 and current > 0:
                 self._next_seq[client_id] = 0
                 self._seq_generation[client_id] += 1
@@ -531,48 +552,36 @@ class YNotebookRoom(YRoom):
                 )
 
             gen_at_start = self._seq_generation[client_id]
-            loop = asyncio.get_running_loop()
-            deadline = loop.time() + self._seq_wait_timeout()
-            while self._next_seq.get(client_id, 0) < sequence:
-                remaining = deadline - loop.time()
-                timed_out = remaining <= 0
-                if not timed_out:
-                    try:
-                        await asyncio.wait_for(self._seq_cv.wait(), timeout=remaining)
-                    except asyncio.TimeoutError:
-                        timed_out = True
-                if timed_out:
-                    # Bump generation + wake every peer waiting on this client_id
-                    # before raising, so peers stuck behind the same lost
-                    # predecessor don't each eat a full timeout in serial.
-                    self._seq_generation[client_id] += 1
-                    self._seq_cv.notify_all()
-                    raise SessionResetError(
-                        f"client_id {client_id!r} timed out waiting for "
-                        f"sequence {sequence} (predecessor never arrived)"
-                    )
-                if self._seq_generation.get(client_id, 0) != gen_at_start:
-                    raise SessionResetError(
-                        f"client_id {client_id!r} session was reset "
-                        f"while waiting for sequence {sequence}"
-                    )
+            try:
+                await asyncio.wait_for(
+                    self._seq_cv.wait_for(
+                        lambda: self._seq_generation[client_id] != gen_at_start
+                        or self._next_seq.get(client_id, 0) >= sequence
+                    ),
+                    timeout=self.execute_sequence_timeout,
+                )
+            except asyncio.TimeoutError:
+                # Wake every peer behind the same lost predecessor so they
+                # don't each wait out a full timeout in turn.
+                self._seq_generation[client_id] += 1
+                self._seq_cv.notify_all()
+                raise SessionResetError(
+                    f"client_id {client_id!r} timed out waiting for "
+                    f"sequence {sequence} (predecessor never arrived)",
+                    reason="timeout",
+                ) from None
+            if self._seq_generation[client_id] != gen_at_start:
+                raise SessionResetError(
+                    f"client_id {client_id!r} session was reset "
+                    f"while waiting for sequence {sequence}",
+                    reason="reset",
+                )
 
     async def _advance_seq(self, client_id: str) -> None:
         """Bump ``_next_seq[client_id]`` and wake any waiters."""
         async with self._seq_cv:
             self._next_seq[client_id] = self._next_seq.get(client_id, 0) + 1
             self._seq_cv.notify_all()
-
-    def _seq_wait_timeout(self) -> float:
-        """Max time a waiter blocks for its predecessor's POST to arrive.
-
-        Reads ``kernel_info_timeout`` off the multi_kernel_manager when
-        available (jupyter_server's "how long may a kernel be unresponsive"
-        knob); falls back to 60s in test / stub environments.
-        """
-        km = self._kernel_manager
-        mkm = getattr(km, "parent", None) if km is not None else None
-        return float(getattr(mkm, "kernel_info_timeout", 60.0))
 
     async def execute_cell(
         self,
