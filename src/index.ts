@@ -11,6 +11,7 @@ import { jsdDocumentProviderFactory } from './docprovider';
 import { disableSavePlugin } from './disablesave';
 import { outputsServicePlugin } from './outputs';
 import { murmur2 } from './murmur2';
+import { conflictMessage, ExecutionSequencer } from './executionsequence';
 
 /**
  * Initialization data for the @jupyter-ai-contrib/server-documents extension.
@@ -71,9 +72,8 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
       }
 
       const serverSettings = app.serviceManager.serverSettings;
-      // Track the last request_id per document so successive runCell calls
-      // can chain previous_request_id without touching any notebook internals.
-      const lastRequestIdByDoc = new Map<string, string>();
+      const sequencer = new ExecutionSequencer();
+
       return {
         async runCell({
           cell,
@@ -108,7 +108,20 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             return true;
           }
 
+          // sessionContext.hasNoKernel can flip to false the moment a
+          // Kernel object exists, before the server has assigned it an
+          // id. Await ``sessionContext.ready`` (resolves once the
+          // session + kernel are fully connected) and re-check the
+          // kernel id — otherwise we POST to
+          // ``/api/kernels/undefined/execute`` and the server rejects
+          // with "YNotebookRoom is not connected to a kernel".
+          await sessionContext.ready;
           const kernelId = sessionContext?.session?.kernel?.id;
+          if (!kernelId) {
+            onCellExecuted({ cell, success: false });
+            return false;
+          }
+
           const apiURL = URLExt.join(
             serverSettings.baseUrl,
             `api/kernels/${kernelId}/execute`
@@ -138,15 +151,12 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             notebook.sharedModel.awareness?.clientID ?? ''
           );
 
-          // Generate a unique ID for this request and chain it to the
-          // previous one so the server can enforce FIFO order even when
-          // network jitter causes requests to arrive out of sequence.
-          // The chain is keyed per document+client so that two users running
-          // cells simultaneously don't block each other.
-          const docKey = `${documentId ?? path}:${clientId}`;
+          // Keyed by kernel id too, so a new kernel starts a fresh sequence
+          // to match the server's clear on disconnect. Without a client id
+          // there is nothing to scope a sequence to, so send no ordering.
+          const docKey = `${documentId ?? path}:${clientId}:${kernelId}`;
           const requestId = crypto.randomUUID();
-          const previousRequestId = lastRequestIdByDoc.get(docKey);
-          lastRequestIdByDoc.set(docKey, requestId);
+          const order = clientId ? sequencer.claim(docKey, clientId) : null;
 
           if (!documentId) {
             // document_id not yet in shared model state — fall back to path.
@@ -163,36 +173,34 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
                 body: JSON.stringify({
                   document_id: documentId ?? path,
                   cells: [{ cell_id: cellId, source_hash: sourceHash }],
-                  client_id: clientId || undefined,
                   request_id: requestId,
-                  ...(previousRequestId
-                    ? { previous_request_id: previousRequestId }
+                  ...(order
+                    ? { client_id: order.clientId, sequence: order.sequence }
                     : {})
                 })
               },
               serverSettings
             );
             if (response.status === 409) {
-              // Source mismatch — another user edited the cell after this user
-              // pressed Run. Show a visible warning so the user knows to re-run.
-              // Clear the ordering chain: this request was never enqueued on the
-              // server so the next run must not reference it as a predecessor.
-              lastRequestIdByDoc.delete(docKey);
-              Notification.warning(
-                'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
-                { autoClose: 5000 }
-              );
+              // source_mismatch: the server consumed the slot, so the sequence
+              // is still in step. session_reset: start a new sequence.
+              const body = await response.json().catch(() => ({}));
+              if (body.error === 'session_reset') {
+                sequencer.reset(docKey, order);
+              }
+              Notification.warning(conflictMessage(body), { autoClose: 5000 });
               onCellExecuted({ cell, success: false });
               return false;
             }
             if (!response.ok) {
-              // Any other failure (408, 500, etc.) also breaks the chain —
-              // the request was never successfully enqueued.
-              lastRequestIdByDoc.delete(docKey);
+              // The server may or may not have consumed the slot.
+              sequencer.reset(docKey, order);
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
+            // The request may never have arrived.
+            sequencer.reset(docKey, order);
             onCellExecuted({ cell, success: false });
             if (!cell.isDisposed) {
               throw error;

@@ -3,7 +3,11 @@ from jupyter_server.base.handlers import APIHandler
 from tornado import web
 from tornado.escape import json_encode
 
-from .rooms.ynotebook_room import YNotebookRoom, SourceMismatchError, PredecessorTimeoutError
+from .rooms.ynotebook_room import (
+    YNotebookRoom,
+    SourceMismatchError,
+    SessionResetError,
+)
 
 
 AUTH_RESOURCE = "executions"
@@ -32,9 +36,9 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
       ],
 
       // Execution ordering (optional)
-      "client_id":          "string",  // document client ID
-      "request_id":         "string",  // UUID for this request
-      "previous_request_id":"string"   // wait for this request to be enqueued first
+      "client_id": "string",  // identifies the browser tab; scopes `sequence`
+      "sequence":  0,         // monotonic counter per client_id, starts at 0
+      "request_id":"string"   // opaque UUID for logging / tracing
     }
     ```
 
@@ -51,8 +55,9 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
     ## Responses
     - ``200 null``  — accepted (fire-and-forget)
     - ``400``       — bad request
-    - ``408``       — predecessor request timed out
     - ``409 {"error": "source_mismatch", "cell_id": "..."}`` — source diverged
+    - ``409 {"error": "session_reset", "reason": "timeout" | "reset"}`` — the
+      sequence wait was abandoned; the client should start a new sequence
     """
 
     @web.authenticated
@@ -70,7 +75,13 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
 
         client_id = body.get("client_id")
         request_id = body.get("request_id")
-        previous_request_id = body.get("previous_request_id")
+        sequence = body.get("sequence")
+
+        if sequence is not None:
+            if isinstance(sequence, bool) or not isinstance(sequence, int) or sequence < 0:
+                raise web.HTTPError(400, "sequence must be a non-negative integer")
+            if not client_id:
+                raise web.HTTPError(400, "client_id is required when sequence is present")
 
         yroom = self.settings["yroom_manager"].get_room(document_id)
         if yroom is None:
@@ -83,14 +94,17 @@ class KernelExecuteHandler(ExecutionsAPIHandler):
                 cells_payload,
                 clear_outputs=True,
                 request_id=request_id,
-                previous_request_id=previous_request_id,
+                client_id=client_id,
+                sequence=sequence,
             )
         except SourceMismatchError as e:
             self.set_status(409)
             self.finish(json_encode({"error": "source_mismatch", "cell_id": e.cell_id}))
             return
-        except PredecessorTimeoutError:
-            raise web.HTTPError(408, "Timed out waiting for previous_request_id to be enqueued")
+        except SessionResetError as e:
+            self.set_status(409)
+            self.finish(json_encode({"error": "session_reset", "reason": e.reason}))
+            return
         except (LookupError, ValueError, RuntimeError) as e:
             raise web.HTTPError(400, str(e))
 
