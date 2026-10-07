@@ -19,18 +19,31 @@ import { serverCellExecutorPlugin } from '../index';
  *
  * The server-side path bypasses `CodeCellModel.clearExecution()`, which is
  * where the default executor marks a user-executed cell trusted. This
- * executor grants that trust itself, so it must grant it *only* when
- * execution is actually dispatched: the method has several early returns
- * that execute nothing, and it never clears the cell's outputs, so trusting
- * on those paths would retroactively trust output loaded from an untrusted
- * notebook.
+ * executor grants that trust itself, so it must grant it *only* once the
+ * server has accepted the request: the method has several paths that execute
+ * nothing, and it never clears the cell's outputs, so trusting on those paths
+ * would retroactively trust output loaded from an untrusted notebook.
+ *
+ * A grant can't be taken back either. `CodeCellModel` writes `trusted: true`
+ * into the shared cell metadata when trust is granted and leaves it there when
+ * the flag is reset, so the tests assert that failure paths never write the
+ * flag at all, rather than that it ends up false.
  */
 
 function makeCell(options: { type?: string; trusted?: boolean } = {}): any {
+  let trusted = options.trusted ?? false;
+  const trustWrites: boolean[] = [];
   return {
+    trustWrites,
     model: {
       type: options.type ?? 'code',
-      trusted: options.trusted ?? false,
+      get trusted() {
+        return trusted;
+      },
+      set trusted(value: boolean) {
+        trustWrites.push(value);
+        trusted = value;
+      },
       sharedModel: {
         getId: () => 'cell-1',
         getSource: () => 'print(1)'
@@ -93,11 +106,15 @@ describe('serverCellExecutorPlugin runCell trust', () => {
     jest.restoreAllMocks();
   });
 
-  it('grants trust when execution is dispatched successfully', async () => {
-    requestSpy.mockResolvedValue({ ok: true, status: 200 } as any);
+  it('grants trust once the server accepts the request', async () => {
     const executor = makeExecutor();
     const cell = makeCell();
     const callbacks = makeCallbacks();
+    let trustedWhileInFlight: boolean | undefined;
+    requestSpy.mockImplementation(async () => {
+      trustedWhileInFlight = cell.model.trusted;
+      return { ok: true, status: 200 } as any;
+    });
 
     const result = await executor.runCell({
       cell,
@@ -108,7 +125,8 @@ describe('serverCellExecutorPlugin runCell trust', () => {
 
     expect(result).toBe(true);
     expect(requestSpy).toHaveBeenCalledTimes(1);
-    expect(cell.model.trusted).toBe(true);
+    expect(trustedWhileInFlight).toBe(false);
+    expect(cell.trustWrites).toEqual([true]);
   });
 
   it('does not grant trust when there is no session context', async () => {
@@ -125,7 +143,7 @@ describe('serverCellExecutorPlugin runCell trust', () => {
 
     expect(result).toBe(true);
     // Nothing was dispatched, so nothing may be trusted.
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
     expect(requestSpy).not.toHaveBeenCalled();
     expect(callbacks.onCellExecutionScheduled).not.toHaveBeenCalled();
   });
@@ -149,12 +167,12 @@ describe('serverCellExecutorPlugin runCell trust', () => {
 
     expect(result).toBe(true);
     expect(sessionContext.startKernel).toHaveBeenCalled();
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
     expect(requestSpy).not.toHaveBeenCalled();
     expect(callbacks.onCellExecutionScheduled).not.toHaveBeenCalled();
   });
 
-  it('restores the previous trust state when the source hash is rejected', async () => {
+  it('does not grant trust when the source hash is rejected', async () => {
     requestSpy.mockResolvedValue({ ok: false, status: 409 } as any);
     const executor = makeExecutor();
     const cell = makeCell();
@@ -168,10 +186,10 @@ describe('serverCellExecutorPlugin runCell trust', () => {
     });
 
     expect(result).toBe(false);
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
   });
 
-  it('restores the previous trust state when the request fails', async () => {
+  it('does not grant trust when the request fails', async () => {
     requestSpy.mockResolvedValue({ ok: false, status: 500 } as any);
     const executor = makeExecutor();
     const cell = makeCell();
@@ -185,10 +203,10 @@ describe('serverCellExecutorPlugin runCell trust', () => {
     });
 
     expect(result).toBe(false);
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
   });
 
-  it('restores the previous trust state when the request throws', async () => {
+  it('does not grant trust when the request throws', async () => {
     requestSpy.mockRejectedValue(new Error('network down'));
     const executor = makeExecutor();
     const cell = makeCell();
@@ -203,10 +221,10 @@ describe('serverCellExecutorPlugin runCell trust', () => {
       })
     ).rejects.toThrow('network down');
 
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
   });
 
-  it('keeps an already-trusted cell trusted when the request fails', async () => {
+  it('leaves an already-trusted cell trusted when the request fails', async () => {
     requestSpy.mockResolvedValue({ ok: false, status: 500 } as any);
     const executor = makeExecutor();
     // A cell from a trusted notebook must not be *downgraded* by a failure.
@@ -236,7 +254,7 @@ describe('serverCellExecutorPlugin runCell trust', () => {
     });
 
     expect(result).toBe(true);
-    expect(cell.model.trusted).toBe(false);
+    expect(cell.trustWrites).toEqual([]);
     expect(requestSpy).not.toHaveBeenCalled();
   });
 });

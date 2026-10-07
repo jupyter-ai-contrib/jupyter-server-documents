@@ -154,23 +154,6 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             console.warn('[JSD] document_id not set; falling back to path');
           }
 
-          // Mark the cell trusted, now that execution is actually being
-          // dispatched. The default executor gets this from
-          // CodeCellModel.clearExecution(), which runs inside
-          // CodeCell.execute(); the server-side path bypasses that method,
-          // and without the trusted flag JupyterLab refuses unsafe rich
-          // renderers, so e.g. ipywidgets render as their text/plain repr.
-          //
-          // This must happen here rather than earlier in the method: every
-          // path above can return without executing anything (no session
-          // context, or no kernel after the start attempt). Trusting there
-          // would trust a cell that never ran -- and because this path does
-          // not clear the cell's outputs, it would retroactively trust
-          // output loaded from an untrusted notebook, which JupyterLab
-          // would then re-render with unsafe renderers.
-          const previousTrusted = cell.model.trusted;
-          cell.model.trusted = true;
-
           onCellExecutionScheduled({ cell });
           try {
             const response = await ServerConnection.makeRequest(
@@ -193,10 +176,8 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               // A source mismatch (409) or any other failure (408, 500, etc.)
               // breaks the chain: the request was never enqueued on the
               // server, so the next run must not reference it as a
-              // predecessor. Nothing executed either, so restore the previous
-              // trust state rather than leaving the cell trusted.
+              // predecessor.
               lastRequestIdByDoc.delete(docKey);
-              cell.model.trusted = previousTrusted;
             }
             if (response.status === 409) {
               // Source mismatch — another user edited the cell after this user
@@ -208,11 +189,31 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               onCellExecuted({ cell, success: false });
               return false;
             }
+            if (response.ok) {
+              // Mark the cell trusted, now that the server has accepted the
+              // request. The default executor gets this from
+              // CodeCellModel.clearExecution(), which runs inside
+              // CodeCell.execute(); the server-side path bypasses that method,
+              // and without the trusted flag JupyterLab refuses unsafe rich
+              // renderers, so e.g. ipywidgets render as their text/plain repr.
+              //
+              // This must not happen any earlier. Every path above can return
+              // without executing anything, and this executor does not clear
+              // the cell's outputs, so trusting there would retroactively
+              // trust output loaded from an untrusted notebook. It also can't
+              // be undone afterwards: granting trust writes `trusted: true`
+              // into the shared cell metadata, and resetting the flag to false
+              // leaves that metadata in place for every other client.
+              //
+              // The server returns every failure status before enqueueing
+              // anything, so an OK response means execution is under way.
+              // Outputs that arrived before the response are re-rendered when
+              // the output area's trust flips, so nothing renders degraded.
+              cell.model.trusted = true;
+            }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
-            // The request never reached the server; nothing executed.
-            cell.model.trusted = previousTrusted;
             onCellExecuted({ cell, success: false });
             if (!cell.isDisposed) {
               throw error;
