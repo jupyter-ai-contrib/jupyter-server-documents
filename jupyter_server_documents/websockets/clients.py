@@ -130,15 +130,22 @@ class YjsClientGroup:
         except Exception as e:
             self.log.exception(f"An exception occurred when remove client '{client_id}' for room '{self.room_id}': {e}")  
     
+    def find(self, client_id: str) -> YjsClient | None:
+        """
+        Returns the connected client with the given ID, or `None` if the client
+        is not in this group or its Websocket is closed.
+        """
+        client = self.synced.get(client_id) or self.desynced.get(client_id)
+        if client and client.websocket and client.websocket.ws_connection:
+            return client
+        return None
+
     def get(self, client_id: str) -> YjsClient:
         """
-        Gets a client from its ID.
+        Gets a client from its ID. Raises if the client is not connected; use
+        `find()` to get `None` instead.
         """
-        if client_id in self.desynced: 
-            client = self.desynced[client_id]
-        if client_id in self.synced:
-            client = self.synced[client_id]
-        if client.websocket and client.websocket.ws_connection:
+        if client := self.find(client_id):
             return client
         error_message = f"The client_id '{client_id}' is not found in client group in room '{self.room_id}'"
         self.log.error(error_message)
