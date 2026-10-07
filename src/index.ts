@@ -3,6 +3,7 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
+import type { ICodeCellModel } from '@jupyterlab/cells';
 import { INotebookCellExecutor, runCell } from '@jupyterlab/notebook';
 import { PageConfig, URLExt } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
@@ -46,6 +47,40 @@ export const plugin: JupyterFrontEndPlugin<void> = {
     }
   }
 };
+
+/**
+ * Trust a code cell once its execute request is accepted (`accept()`) *and*
+ * its previous outputs have been cleared, mirroring the clear-then-trust order
+ * of CodeCellModel.clearExecution(). The server's clear arrives over the
+ * document WebSocket, independently of the HTTP response; trusting before it
+ * lands would re-render the old outputs as trusted and run their scripts.
+ * Call before dispatching, so a clear that beats the response isn't missed.
+ */
+function trustOnceCleared(model: ICodeCellModel): {
+  accept: () => void;
+  cancel: () => void;
+} {
+  let cleared = model.outputs.length === 0;
+  let accepted = false;
+  const update = () => {
+    cleared = cleared || model.outputs.length === 0;
+    if (cleared && accepted) {
+      cancel();
+      model.trusted = true;
+    }
+  };
+  const cancel = () => {
+    model.outputs.changed.disconnect(update);
+  };
+  model.outputs.changed.connect(update);
+  return {
+    accept: () => {
+      accepted = true;
+      update();
+    },
+    cancel
+  };
+}
 
 /**
  * Notebook cell executor plugin.
@@ -154,6 +189,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             console.warn('[JSD] document_id not set; falling back to path');
           }
 
+          const trust = trustOnceCleared(cell.model as ICodeCellModel);
           onCellExecutionScheduled({ cell });
           try {
             const response = await ServerConnection.makeRequest(
@@ -178,6 +214,7 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               // server, so the next run must not reference it as a
               // predecessor.
               lastRequestIdByDoc.delete(docKey);
+              trust.cancel();
             }
             if (response.status === 409) {
               // Source mismatch — another user edited the cell after this user
@@ -190,16 +227,15 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               return false;
             }
             if (response.ok) {
-              // Trust the cell, as CodeCellModel.clearExecution() does on the
-              // default path, so rich outputs (e.g. widgets) render. Only do
-              // this once the server has accepted the request: the outputs
-              // aren't cleared here, and the grant can't be undone because it
-              // also writes `trusted: true` to the shared cell metadata.
-              cell.model.trusted = true;
+              // Trust the cell so rich outputs (e.g. widgets) render. Failed
+              // requests never get here: granting trust can't be undone, since
+              // it also writes `trusted: true` to the shared cell metadata.
+              trust.accept();
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
           } catch (error) {
+            trust.cancel();
             onCellExecuted({ cell, success: false });
             if (!cell.isDisposed) {
               throw error;

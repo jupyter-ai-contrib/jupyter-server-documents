@@ -4,6 +4,7 @@
 import { Notification } from '@jupyterlab/apputils';
 import { PageConfig } from '@jupyterlab/coreutils';
 import { ServerConnection } from '@jupyterlab/services';
+import { Signal } from '@lumino/signaling';
 
 // The executor is the only plugin under test here. Its sibling plugins pull
 // in ESM-only dependencies that this repository's Jest transform does not
@@ -28,15 +29,34 @@ import { serverCellExecutorPlugin } from '../index';
  * into the shared cell metadata when trust is granted and leaves it there when
  * the flag is reset, so the tests assert that failure paths never write the
  * flag at all, rather than that it ends up false.
+ *
+ * The server clears a cell's previous outputs, but that clear reaches the
+ * client over the document WebSocket, independently of the HTTP response.
+ * Trust must wait for it, or the old outputs re-render as trusted.
  */
 
-function makeCell(options: { type?: string; trusted?: boolean } = {}): any {
+function makeCell(
+  options: { type?: string; trusted?: boolean; outputs?: number } = {}
+): any {
   let trusted = options.trusted ?? false;
   const trustWrites: boolean[] = [];
+  const outputs: any = { length: options.outputs ?? 0 };
+  outputs.changed = new Signal<any, void>(outputs);
   return {
     trustWrites,
+    /** Simulate the server's clear arriving over the document WebSocket. */
+    clearOutputs: () => {
+      outputs.length = 0;
+      outputs.changed.emit();
+    },
+    /** Simulate a new output from this run arriving. */
+    addOutput: () => {
+      outputs.length += 1;
+      outputs.changed.emit();
+    },
     model: {
       type: options.type ?? 'code',
+      outputs,
       get trusted() {
         return trusted;
       },
@@ -127,6 +147,72 @@ describe('serverCellExecutorPlugin runCell trust', () => {
     expect(requestSpy).toHaveBeenCalledTimes(1);
     expect(trustedWhileInFlight).toBe(false);
     expect(cell.trustWrites).toEqual([true]);
+  });
+
+  it('waits for previous outputs to be cleared before granting trust', async () => {
+    requestSpy.mockResolvedValue({ ok: true, status: 200 } as any);
+    const executor = makeExecutor();
+    // Outputs loaded with the notebook, which may be untrusted.
+    const cell = makeCell({ outputs: 1 });
+    const callbacks = makeCallbacks();
+
+    const result = await executor.runCell({
+      cell,
+      notebook,
+      sessionContext: liveSessionContext(),
+      ...callbacks
+    });
+
+    // The response arrived before the server's clear did: trusting now would
+    // re-render the old outputs as trusted.
+    expect(result).toBe(true);
+    expect(cell.trustWrites).toEqual([]);
+
+    cell.clearOutputs();
+    expect(cell.trustWrites).toEqual([true]);
+
+    // New outputs don't trigger another grant.
+    cell.addOutput();
+    expect(cell.trustWrites).toEqual([true]);
+  });
+
+  it('grants trust on the response when the clear arrived first', async () => {
+    const executor = makeExecutor();
+    const cell = makeCell({ outputs: 2 });
+    const callbacks = makeCallbacks();
+    // The clear, and then the run's first new output, both beat the response.
+    requestSpy.mockImplementation(async () => {
+      cell.clearOutputs();
+      cell.addOutput();
+      return { ok: true, status: 200 } as any;
+    });
+
+    await executor.runCell({
+      cell,
+      notebook,
+      sessionContext: liveSessionContext(),
+      ...callbacks
+    });
+
+    expect(cell.trustWrites).toEqual([true]);
+  });
+
+  it('does not grant trust when a failed request is followed by a clear', async () => {
+    requestSpy.mockResolvedValue({ ok: false, status: 409 } as any);
+    const executor = makeExecutor();
+    const cell = makeCell({ outputs: 1 });
+    const callbacks = makeCallbacks();
+
+    await executor.runCell({
+      cell,
+      notebook,
+      sessionContext: liveSessionContext(),
+      ...callbacks
+    });
+    // e.g. the user clears the outputs by hand afterwards.
+    cell.clearOutputs();
+
+    expect(cell.trustWrites).toEqual([]);
   });
 
   it('does not grant trust when there is no session context', async () => {
