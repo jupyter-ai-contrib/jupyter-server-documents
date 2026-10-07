@@ -70,20 +70,25 @@ def _attach_router_observer(router, log) -> None:
     """Attach a message observer to every chat room the router connects."""
     global _ROUTER_HOOKED
 
-    def _record(room_id, message):
-        _ROUTER_FIRES.setdefault(room_id, []).append(getattr(message, "body", ""))
+    def _observe(chat_id, chat):
+        # jupyter-ai-router >= 0.1 keys chats by `chat.get_id()` rather than the
+        # room ID, so record fires under the room ID that jupyterlab-chat stamps
+        # on the model. Older routers pass the room ID as `chat_id`.
+        room_id = getattr(chat, "room_id", None) or chat_id
 
-    def _on_chat_init(room_id, _ychat):
-        # Re-registered on every (re)connect: the router clears a room's message
+        def _record(_chat_id, message):
+            _ROUTER_FIRES.setdefault(room_id, []).append(getattr(message, "body", ""))
+
+        # Re-registered on every (re)connect: the router clears a chat's message
         # observers on disconnect, so this never double-counts.
-        router.observe_chat_msg(room_id, _record)
+        router.observe_chat_msg(chat_id, _record)
 
-    router.observe_chat_init(_on_chat_init)
+    router.observe_chat_init(_observe)
 
     # Cover any chats that connected before this hook registered (defensive;
     # in the tests chats are opened well after startup).
-    for room_id in list(getattr(router, "active_chats", {}).keys()):
-        router.observe_chat_msg(room_id, _record)
+    for chat_id, chat in list(getattr(router, "active_chats", {}).items()):
+        _observe(chat_id, chat)
 
     _ROUTER_HOOKED = True
     log.info("jsd_test_ext: attached jupyter-ai-router message observer")
