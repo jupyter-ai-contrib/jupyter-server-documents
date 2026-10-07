@@ -238,12 +238,33 @@ class YNotebookRoom(YRoom):
         # Without this _async_is_alive() always returns False.
         self._kernel_client.hb_channel.unpause()
         deadline = asyncio.get_event_loop().time() + 30.0
+        start_time = asyncio.get_event_loop().time()
         while not await self._kernel_client._async_is_alive():
             if asyncio.get_event_loop().time() > deadline:
                 raise RuntimeError(
                     f"Kernel heartbeat timeout "
                     f"(shell_port={connection_info.get('shell_port')})"
                 )
+            # Fail fast if the kernel process has already exited (e.g. missing
+            # ipykernel). Without this check, a dead kernel causes us to poll
+            # for the full 30s timeout, and when multiple notebooks restore
+            # simultaneously with broken kernels, this starves the Tornado
+            # event loop and makes the server unresponsive to health checks.
+            # We wait at least 1s before checking to avoid false positives
+            # during normal kernel startup.
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > 1.0 and hasattr(kernel_manager, 'is_alive'):
+                try:
+                    process_alive = kernel_manager.is_alive()
+                except Exception:
+                    process_alive = True  # Assume alive on error; let timeout handle it
+                if not process_alive:
+                    raise RuntimeError(
+                        f"Kernel process died before heartbeat was established "
+                        f"(shell_port={connection_info.get('shell_port')}). "
+                        f"Check that the kernel spec has all required dependencies "
+                        f"(e.g. ipykernel)."
+                    )
             await asyncio.sleep(0.2)
 
     async def _fetch_kernel_info(self) -> None:
