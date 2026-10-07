@@ -554,12 +554,23 @@ class YRoom(LoggingConfigurable):
 
             # Otherwise, process & handle the new message
             client_id, message = queue_item
-            await self.handle_message(client_id, message)
-            
-            # Finally, inform the asyncio Queue that the task was complete
-            # This is required for `self._message_queue.join()` to unblock once
-            # queue is empty in `self.stop()`.
-            self._message_queue.task_done()
+            try:
+                await self.handle_message(client_id, message)
+            except Exception:
+                # A message that cannot be handled (e.g. one enqueued by a
+                # client that has since disconnected) must not terminate this
+                # background task; otherwise the room stops processing all
+                # future messages from every client.
+                self.log.exception(
+                    f"Error handling message from client '{client_id}' in "
+                    f"YRoom '{self.room_id}'. Skipping this message."
+                )
+            finally:
+                # Finally, inform the asyncio Queue that the task was complete
+                # This is required for `self._message_queue.join()` to unblock
+                # once queue is empty in `self.stop()`, including when handling
+                # the message raised an exception.
+                self._message_queue.task_done()
 
         self.log.debug(
             "Stopped `self._process_message_queue()` background task "
@@ -951,12 +962,18 @@ class YRoom(LoggingConfigurable):
     def _should_ignore_update(self, client_id: str, message_type: Literal['AwarenessUpdate', 'SyncUpdate']) -> bool:
         """
         Returns whether a handler method should ignore an AwarenessUpdate or
-        SyncUpdate message from a client because it is desynced. Automatically
-        logs a warning if returning `True`. `message_type` is used to produce
-        more readable warnings.
+        SyncUpdate message from a client because it is desynced or no longer
+        connected. Automatically logs a warning if returning `True`.
+        `message_type` is used to produce more readable warnings.
         """
 
-        client = self.clients.get(client_id)
+        client = self.clients.find(client_id)
+        if client is None:
+            self.log.warning(
+                f"Ignoring a {message_type} message from client "
+                f"'{client_id}' because the client is no longer connected."
+            )
+            return True
         if not client.synced:
             self.log.warning(
                 f"Ignoring a {message_type} message from client "
@@ -1058,9 +1075,6 @@ class YRoom(LoggingConfigurable):
             return
         self.log.info(f"Stopping YRoom '{self.room_id}'.")
 
-        # Disconnect all clients with the given close code
-        self.clients.stop(close_code=close_code)
-        
         # Stop awareness heartbeat
         asyncio.create_task(self._awareness.stop())
 
@@ -1101,6 +1115,11 @@ class YRoom(LoggingConfigurable):
                     elif msg_type == YMessageType.AWARENESS:
                         self.handle_awareness_update(client_id, message)
                 self._message_queue.task_done()
+
+        # Disconnect all clients with the given close code. This happens after
+        # the queue is drained, since `handle_sync_update()` ignores updates
+        # from clients that are no longer in the client group.
+        self.clients.stop(close_code=close_code)
         
         # Stop the `_process_message_queue` task by enqueueing `None`
         self._message_queue.put_nowait(None)

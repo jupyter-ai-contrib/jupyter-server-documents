@@ -15,10 +15,12 @@ Yjs sync protocol against a real YRoom instance. They verify:
 from __future__ import annotations
 
 import asyncio
+import logging
 import pycrdt
 from pycrdt import Doc, Text
 from pycrdt import YMessageType, YSyncMessageType as YSyncMessageSubtype
 import pytest
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -507,3 +509,60 @@ class TestAwarenessOnConnect:
         # Every awareness snapshot arrives after the SS2 sync reply that ran
         # mark_synced -- so a desynced client is never sent one.
         assert min(awareness_idxs) > first_sync_idx
+
+
+def _build_update(ws: FakeWebSocket, text: str) -> bytes:
+    """Helper: append `text` to the client's YDoc and return the resulting
+    SyncUpdate message, as the frontend would send it."""
+    state = ws.doc.get_state()
+    ws.doc["source"] += text
+    return pycrdt.create_update_message(ws.doc.get_update(state))
+
+
+class TestStaleClientMessages:
+    """
+    Tests for messages left in the message queue by clients that are no longer
+    connected (jupyter-ai-contrib/jupyter-server-documents#271).
+    """
+
+    @pytest.mark.asyncio
+    async def test_update_from_removed_client_is_ignored(
+        self, make_yroom: MakeYRoom, caplog: pytest.LogCaptureFixture
+    ):
+        """A SyncUpdate queued by a client that disconnects before it is
+        processed is ignored with a warning, and later messages from other
+        clients are still applied."""
+        yroom = await make_yroom()
+        jupyter_ydoc = await yroom.get_jupyter_ydoc()
+        ws_a = FakeWebSocket()
+        cid_a = await _complete_handshake(yroom, ws_a)
+        ws_b = FakeWebSocket()
+        cid_b = await _complete_handshake(yroom, ws_b)
+
+        # B sends an update, then disconnects before the queue reaches it.
+        yroom.add_message(cid_b, _build_update(ws_b, "from B"))
+        yroom.clients.remove(cid_b)
+        yroom.add_message(cid_a, _build_update(ws_a, "from A"))
+        await asyncio.sleep(0.1)
+
+        assert jupyter_ydoc.source == "from A"
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+    @pytest.mark.asyncio
+    async def test_stop_applies_pending_update(
+        self, make_yroom: MakeYRoom, tmp_path: Path
+    ):
+        """`stop()` applies a SyncUpdate still in the message queue and saves
+        it, instead of raising because the client group was already emptied."""
+        yroom = await make_yroom()
+        path = tmp_path / yroom.file_api.get_path()
+        ws = FakeWebSocket()
+        client_id = await _complete_handshake(yroom, ws)
+
+        # Enqueue without awaiting, so the update is still pending in `stop()`.
+        yroom.add_message(client_id, _build_update(ws, "hello"))
+        yroom.stop()
+        await yroom.until_saved
+
+        assert yroom.stopped
+        assert path.read_text() == "hello"
