@@ -53,11 +53,8 @@ class TestYjsClientGroupGet():
         Regression test for #271: a queued message from a client that has
         already been removed previously raised `UnboundLocalError`.
         """
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception, match="not found"):
             client_group.get("unknown-client-id")
-
-        assert not isinstance(excinfo.value, UnboundLocalError)
-        assert "not found" in str(excinfo.value)
 
     def test_get_removed_client_raises_cleanly(self, client_group: YjsClientGroup):
         """
@@ -67,8 +64,16 @@ class TestYjsClientGroupGet():
         client_id = client_group.add(_mock_websocket())
         client_group.remove(client_id)
 
-        with pytest.raises(Exception) as excinfo:
+        with pytest.raises(Exception, match="not found"):
             client_group.get(client_id)
 
-        assert not isinstance(excinfo.value, UnboundLocalError)
-        assert "not found" in str(excinfo.value)
+    def test_find_returns_none_for_removed_client(self, client_group: YjsClientGroup):
+        """
+        Asserts that `find()` returns `None` instead of raising for a client
+        that was previously added and then removed.
+        """
+        client_id = client_group.add(_mock_websocket())
+        assert client_group.find(client_id).id == client_id
+
+        client_group.remove(client_id)
+        assert client_group.find(client_id) is None
