@@ -151,7 +151,9 @@ asserts.
 
 - The client-side fix is in `src/docprovider/yprovider.ts`
   (`hasDivergentHistory` — a full state-vector subset check, **no** self
-  exclusion — and `applyServerUpdate`, which clears + re-applies on divergence).
+  exclusion — and `applyServerUpdate`, which on divergence deletes only the
+  items the server's state vector does not cover and then applies the server
+  state, so repeating the repair is safe).
 - The backend logs (but does not act on) divergence in
   `jupyter_server_documents/rooms/yroom.py` (`handle_sync` →
   `_has_divergent_history`).
