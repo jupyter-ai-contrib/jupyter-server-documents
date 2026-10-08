@@ -104,6 +104,11 @@ class YNotebookRoom(YRoom):
         self._shell_confirmed: bool = False
         self._execution_queue: asyncio.Queue | None = None
         self._execution_worker_task: asyncio.Task | None = None
+        # Set by the worker while it holds an item, together with the kernel
+        # manager's `ready` future at that moment; see `has_active_executions`
+        # and `worker_is_stranded`.
+        self._worker_busy: bool = False
+        self._worker_kernel_ready: object | None = None
         self.output_processor: OutputProcessor | None = None
         # Per-request ordering: maps request_id → Event that is set once the
         # request has been enqueued.  Lets a successor wait for its predecessor
@@ -274,13 +279,50 @@ class YNotebookRoom(YRoom):
 
     # ── Execution queue and worker ────────────────────────────────────────────────
 
+    @property
+    def has_active_executions(self) -> bool:
+        """Whether a server-side execution is queued or running.
+
+        Counts the cell the worker is running as well as the cells queued
+        behind it. Queue depth alone is not enough: the worker takes an item
+        off the queue before running it, so for the whole duration of a
+        long-running cell the queue is empty while `_worker_busy` is True.
+        """
+        if self._worker_busy:
+            return True
+        return self._execution_queue is not None and not self._execution_queue.empty()
+
+    @property
+    def worker_is_stranded(self) -> bool:
+        """Whether the worker is running a cell on a kernel that has since
+        been restarted or shut down.
+
+        The room is not told about restarts. A restart through the kernels
+        API does not fire the restart callbacks registered in
+        `connect_kernel()`. An automatic restart after a crash fires them,
+        but they are coroutine functions and jupyter_client's
+        `KernelRestarter` does not await them, so they never run. Either way
+        the worker keeps waiting for a reply that will not come.
+        A kernel manager replaces its `ready` future every time it starts or
+        shuts down a kernel (jupyter_client's `in_pending_state`), so a
+        `ready` that differs from the one recorded when the worker took its
+        item means the kernel that item was sent to is gone.
+        """
+        if not self._worker_busy:
+            return False
+        km = self._kernel_manager
+        return km is None or getattr(km, "ready", None) is not self._worker_kernel_ready
+
     async def _execution_worker(self) -> None:
         """Process queued cell executions one at a time."""
         assert self._execution_queue is not None
         try:
             while True:
                 item = await self._execution_queue.get()
+                self._worker_busy = True
                 try:
+                    self._worker_kernel_ready = getattr(self._kernel_manager, "ready", None)
+
                     # Wait for kernel_info to be fetched (connect_kernel is async).
                     if not self._shell_confirmed:
                         wait_deadline = asyncio.get_event_loop().time() + 60.0
@@ -305,6 +347,8 @@ class YNotebookRoom(YRoom):
                     item.ycell["execution_state"] = "idle"
                     self.log.error("Execution worker error for cell %s: %s", item.cell_id, e)
                 finally:
+                    self._worker_busy = False
+                    self._worker_kernel_ready = None
                     self._execution_queue.task_done()
         except asyncio.CancelledError:
             pass
