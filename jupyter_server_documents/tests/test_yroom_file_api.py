@@ -122,3 +122,25 @@ async def test_load_plaintext_file(
     # stop file file api to avoid coroutine warnings
     file_api.stop()
 
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_save_skips_deleted_file(
+    plaintext_file_api: YRoomFileAPI,
+    empty_yunicode: YUnicode,
+    mock_plaintext_file: str,
+    fileid_manager: ArbitraryFileIdManager,
+    caplog,
+):
+    file_api = plaintext_file_api
+    jupyter_ydoc = empty_yunicode
+    jupyter_ydoc.source = "unsaved content"
+
+    # Remove the file ID record so that `get_path()` returns `None`, as it
+    # does after the file is deleted.
+    relpath = os.path.relpath(mock_plaintext_file, file_api.contents_manager.root_dir)
+    fileid_manager.delete(relpath)
+    assert file_api.get_path() is None
+
+    await file_api.save(jupyter_ydoc)
+
+    assert not any(r.levelname == "ERROR" for r in caplog.records)
