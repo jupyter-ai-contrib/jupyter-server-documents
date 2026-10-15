@@ -34,7 +34,9 @@ def make_yroom():
     room._execution_queue = None
     room._execution_worker_task = None
     room.output_processor = None
-    room._enqueued_events = {}
+    room._next_seq = {}
+    room._seq_generation = {}
+    room._seq_cv = asyncio.Condition()
     return room
 
 
@@ -61,6 +63,32 @@ def patch_client(mock_client):
     # No patching needed — make_mock_km already sets km.client_factory.
     from contextlib import nullcontext
     return nullcontext()
+
+
+def make_iopub_feed(msg_id, messages):
+    """Build an iopub message list: each given message tagged with the parent
+    ``msg_id`` and followed by a terminal status:idle so ``_run_item`` breaks.
+
+    ``_run_item`` sends ``client.execute()`` (returning ``msg_id``) then drains
+    ``client.iopub_channel.get_msg()`` filtering on ``parent_header.msg_id``.
+    """
+    feed = [{**m, "parent_header": {"msg_id": msg_id}} for m in messages]
+    feed.append({
+        "header": {"msg_type": "status"},
+        "parent_header": {"msg_id": msg_id},
+        "content": {"execution_state": "idle"},
+    })
+    return feed
+
+
+async def wait_idle(cell, timeout=2.0):
+    """Wait until the execution worker marks the cell idle (run complete)."""
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while cell.get("execution_state") != "idle":
+        if loop.time() > deadline:
+            raise AssertionError("cell did not reach idle state in time")
+        await asyncio.sleep(0.01)
 
 
 async def connect(room, km=None, mock_client=None):
@@ -278,8 +306,6 @@ class TestFindKernelCell:
             room._find_kernel_cell(ydoc, "cell-1")
 
 
-# ── execute_cell ──────────────────────────────────────────────────────────────
-
 class TestExecuteCell:
     """execute_cell() is fire-and-forget: it enqueues the cell and returns.
 
@@ -327,7 +353,7 @@ class TestExecuteCell:
 
     @pytest.mark.asyncio
     async def test_sends_source_to_kernel(self):
-        """The cell's source must be passed verbatim to _async_execute_interactive."""
+        """The cell's source must be passed verbatim to client.execute()."""
         room = make_yroom()
         room._kernel_client = MagicMock()
         room._kernel_manager = MagicMock()
@@ -339,21 +365,21 @@ class TestExecuteCell:
         mock_ydoc.ycells = [mock_cell]
         room.get_jupyter_ydoc = AsyncMock(return_value=mock_ydoc)
 
-        executed = asyncio.Event()
-
-        async def fake_execute(code, **kwargs):
-            executed.set()
-            return {"status": "ok"}
-
-        room._kernel_client._async_execute_interactive = fake_execute
+        room._kernel_client.execute = MagicMock(return_value="req-1")
+        room._kernel_client.iopub_channel.get_msg = AsyncMock(
+            side_effect=make_iopub_feed("req-1", [])
+        )
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
         await room.execute_cell("cell-1", source_hash="3975440051")
-        await asyncio.wait_for(executed.wait(), timeout=2.0)
+        await wait_idle(mock_cell)
 
         room._execution_worker_task.cancel()
         await asyncio.gather(room._execution_worker_task, return_exceptions=True)
+
+        room._kernel_client.execute.assert_called_once()
+        assert room._kernel_client.execute.call_args.args[0] == "print('hello')"
 
     @pytest.mark.asyncio
     async def test_stdin_disabled(self):
@@ -369,25 +395,20 @@ class TestExecuteCell:
         mock_ydoc.ycells = [mock_cell]
         room.get_jupyter_ydoc = AsyncMock(return_value=mock_ydoc)
 
-        captured_kwargs = {}
-        executed = asyncio.Event()
-
-        async def fake_execute(code, **kwargs):
-            captured_kwargs.update(kwargs)
-            executed.set()
-            return {"status": "ok"}
-
-        room._kernel_client._async_execute_interactive = fake_execute
+        room._kernel_client.execute = MagicMock(return_value="req-1")
+        room._kernel_client.iopub_channel.get_msg = AsyncMock(
+            side_effect=make_iopub_feed("req-1", [])
+        )
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
         await room.execute_cell("cell-1", source_hash="2878563358")
-        await asyncio.wait_for(executed.wait(), timeout=2.0)
+        await wait_idle(mock_cell)
 
         room._execution_worker_task.cancel()
         await asyncio.gather(room._execution_worker_task, return_exceptions=True)
 
-        assert captured_kwargs.get("allow_stdin") is False
+        assert room._kernel_client.execute.call_args.kwargs.get("allow_stdin") is False
 
 
 # ── output_hook routing ───────────────────────────────────────────────────────
@@ -402,7 +423,12 @@ class TestOutputHook:
     """
 
     async def _run_with_hook(self, messages):
-        """Helper: run a cell and collect output_processor calls."""
+        """Helper: run a cell through _run_item and collect output_processor calls.
+
+        Feeds the given iopub ``messages`` (tagged with the execute request's
+        parent msg_id, followed by a terminal status:idle) and returns
+        ``(cell, output_processor)``.
+        """
         room = make_yroom()
         room._kernel_client = MagicMock()
         room._kernel_manager = MagicMock()
@@ -415,21 +441,15 @@ class TestOutputHook:
         mock_ydoc.ycells = [mock_cell]
         room.get_jupyter_ydoc = AsyncMock(return_value=mock_ydoc)
 
-        executed = asyncio.Event()
-
-        async def fake_execute(code, output_hook=None, **kwargs):
-            for msg in messages:
-                if output_hook:
-                    output_hook(msg)
-            executed.set()
-            return {"status": "ok"}
-
-        room._kernel_client._async_execute_interactive = fake_execute
+        room._kernel_client.execute = MagicMock(return_value="req-1")
+        room._kernel_client.iopub_channel.get_msg = AsyncMock(
+            side_effect=make_iopub_feed("req-1", messages)
+        )
         room._execution_queue = asyncio.Queue()
         room._execution_worker_task = asyncio.create_task(room._execution_worker())
 
         await room.execute_cell("cell-1", source_hash="372604132")
-        await asyncio.wait_for(executed.wait(), timeout=2.0)
+        await wait_idle(mock_cell)
         room._execution_worker_task.cancel()
         await asyncio.gather(room._execution_worker_task, return_exceptions=True)
         return mock_cell, mock_processor

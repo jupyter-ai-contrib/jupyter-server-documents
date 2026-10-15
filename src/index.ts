@@ -71,9 +71,12 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
       }
 
       const serverSettings = app.serviceManager.serverSettings;
-      // Track the last request_id per document so successive runCell calls
-      // can chain previous_request_id without touching any notebook internals.
-      const lastRequestIdByDoc = new Map<string, string>();
+      // Sequence-based ordering: per (document, client, kernel) monotonic
+      // counter. The server enqueues in sequence order; out-of-order
+      // arrivals are buffered until their predecessors show up. Reset to
+      // 0 signals a session reset to the server.
+      const nextSeqByDoc = new Map<string, number>();
+
       return {
         async runCell({
           cell,
@@ -108,7 +111,20 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             return true;
           }
 
+          // sessionContext.hasNoKernel can flip to false the moment a
+          // Kernel object exists, before the server has assigned it an
+          // id. Await ``sessionContext.ready`` (resolves once the
+          // session + kernel are fully connected) and re-check the
+          // kernel id — otherwise we POST to
+          // ``/api/kernels/undefined/execute`` and the server rejects
+          // with "YNotebookRoom is not connected to a kernel".
+          await sessionContext.ready;
           const kernelId = sessionContext?.session?.kernel?.id;
+          if (!kernelId) {
+            onCellExecuted({ cell, success: false });
+            return false;
+          }
+
           const apiURL = URLExt.join(
             serverSettings.baseUrl,
             `api/kernels/${kernelId}/execute`
@@ -138,15 +154,17 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
             notebook.sharedModel.awareness?.clientID ?? ''
           );
 
-          // Generate a unique ID for this request and chain it to the
-          // previous one so the server can enforce FIFO order even when
-          // network jitter causes requests to arrive out of sequence.
-          // The chain is keyed per document+client so that two users running
-          // cells simultaneously don't block each other.
-          const docKey = `${documentId ?? path}:${clientId}`;
+          // Generate a unique ID for this request (opaque, for tracing)
+          // and attach a monotonic sequence number so the server enqueues
+          // requests in strict order per (document, client, kernel)
+          // regardless of arrival timing. The counter is keyed by
+          // kernel_id as well so that when the kernel changes, the
+          // counter naturally resets to 0 for the new kernel — matching
+          // the server's per-disconnect _next_seq clear.
+          const docKey = `${documentId ?? path}:${clientId}:${kernelId}`;
           const requestId = crypto.randomUUID();
-          const previousRequestId = lastRequestIdByDoc.get(docKey);
-          lastRequestIdByDoc.set(docKey, requestId);
+          const sequence = nextSeqByDoc.get(docKey) ?? 0;
+          nextSeqByDoc.set(docKey, sequence + 1);
 
           if (!documentId) {
             // document_id not yet in shared model state — fall back to path.
@@ -165,19 +183,34 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
                   cells: [{ cell_id: cellId, source_hash: sourceHash }],
                   client_id: clientId || undefined,
                   request_id: requestId,
-                  ...(previousRequestId
-                    ? { previous_request_id: previousRequestId }
-                    : {})
+                  sequence
                 })
               },
               serverSettings
             );
             if (response.status === 409) {
-              // Source mismatch — another user edited the cell after this user
-              // pressed Run. Show a visible warning so the user knows to re-run.
-              // Clear the ordering chain: this request was never enqueued on the
-              // server so the next run must not reference it as a predecessor.
-              lastRequestIdByDoc.delete(docKey);
+              // Two distinct 409 shapes:
+              //   { error: "source_mismatch", cell_id: ... } — the source
+              //     changed under us; the server advanced the sequence
+              //     slot regardless, so our counter is still in sync.
+              //   { error: "session_reset" } — the server rewound state
+              //     (kernel disconnect or an explicit seq=0 from us);
+              //     reset our counter so the next request starts fresh.
+              let body: { error?: string } = {};
+              try {
+                body = await response.json();
+              } catch {
+                // fall through with empty body
+              }
+              if (body.error === 'session_reset') {
+                nextSeqByDoc.delete(docKey);
+                Notification.warning(
+                  'Cell not executed: the kernel changed while the request was in flight. Please re-run the cell.',
+                  { autoClose: 5000 }
+                );
+                onCellExecuted({ cell, success: false });
+                return false;
+              }
               Notification.warning(
                 'Cell not executed: the cell source changed while the request was in flight. Please re-run the cell.',
                 { autoClose: 5000 }
@@ -186,9 +219,10 @@ export const serverCellExecutorPlugin: JupyterFrontEndPlugin<INotebookCellExecut
               return false;
             }
             if (!response.ok) {
-              // Any other failure (408, 500, etc.) also breaks the chain —
-              // the request was never successfully enqueued.
-              lastRequestIdByDoc.delete(docKey);
+              // 4xx/5xx other than 409 — conservatively reset the counter
+              // so we don't wedge on a sequence the server may not have
+              // observed.
+              nextSeqByDoc.delete(docKey);
             }
             onCellExecuted({ cell, success: response.ok });
             return response.ok;
