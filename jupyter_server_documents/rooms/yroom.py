@@ -283,19 +283,29 @@ class YRoom(LoggingConfigurable):
             )
             self.file_api.load_content_into(self._jupyter_ydoc)
 
+            # Close this room if the content ultimately cannot be loaded, so
+            # that clients are disconnected instead of waiting forever on a
+            # document that will never sync, and so the next connection
+            # creates a fresh room, which retries the load.
+            assert self.file_api.content_load_task
+            self.file_api.content_load_task.add_done_callback(
+                self._on_content_load_done
+            )
+
             # Initialize YRoomEventsAPI
             EventsAPIClass = self.events_api_class
             self.events_api = EventsAPIClass(parent=self)
-        
+
         # Initialize message queue and start background task that routes new
         # messages in the message queue to the appropriate handler method.
         self._message_queue = asyncio.Queue()
-        asyncio.create_task(self._process_message_queue())
+        self._message_queue_task = asyncio.create_task(self._process_message_queue())
 
         # Log notification that room is ready
         self.log.info(f"Room '{self.room_id}' initialized.")
 
         # Emit events if defined
+        self._emit_load_event_task = None
         if self.events_api:
             # Emit 'initialize' event
             self.events_api.emit_room_event("initialize")
@@ -305,8 +315,43 @@ class YRoom(LoggingConfigurable):
             async def emit_load_event():
                 await self.file_api.until_content_loaded
                 self.events_api.emit_room_event("load")
-            asyncio.create_task(emit_load_event())
-    
+            self._emit_load_event_task = asyncio.create_task(emit_load_event())
+
+
+    def _on_content_load_done(self, task: asyncio.Task) -> None:
+        """Callback invoked when the initial content load task finishes.
+
+        If the load failed (after the retries performed by
+        `YRoomFileAPI._load_content()`), this stops the room and removes it
+        from the `YRoomManager`, so that:
+
+        - connected clients are disconnected (close code 1011) instead of
+          waiting forever on a document that will never sync, and
+        - the next connection to this room ID creates a fresh room, which
+          retries the load.
+        """
+        if task.cancelled() or task.exception() is None:
+            return
+
+        self.log.error(
+            f"Closing room '{self.room_id}' and disconnecting its clients "
+            "because the content could not be loaded. Reopening the document "
+            "will create a new room and retry the load.",
+            exc_info=task.exception(),
+        )
+
+        # Cancel the background tasks blocked on `until_content_loaded`,
+        # which never resolves after a failed load.
+        self._message_queue_task.cancel()
+        if self._emit_load_event_task:
+            self._emit_load_event_task.cancel()
+
+        # Stop with `immediately=True`: no content was loaded, so there are no
+        # pending updates worth applying, and saving the empty YDoc would
+        # overwrite the file.
+        self.stop(close_code=1011, immediately=True)
+        self.parent.discard_room(self.room_id)
+
 
     @property
     def fileid_manager(self) -> BaseFileIdManager:

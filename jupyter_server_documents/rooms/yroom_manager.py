@@ -221,6 +221,21 @@ class YRoomManager(LoggingConfigurable):
             return False
     
     
+    def discard_room(self, room_id: str) -> None:
+        """
+        Removes a YRoom from this manager WITHOUT saving its content, so the
+        next connection to this room ID creates a fresh room.
+
+        This is used by `YRoom` when a room failed to initialize (i.e. its
+        content could not be loaded), where saving the (empty) YDoc via
+        `delete_room()` would overwrite the file on disk. Callers are
+        responsible for stopping the room first.
+        """
+        self._rooms_by_id.pop(room_id, None)
+        self._inactive_rooms.discard(room_id)
+        self._freeing_rooms.discard(room_id)
+
+
     def list_document_rooms(self) -> list[YRoom]:
         """
         Lists all document rooms, excluding "JupyterLab:globalAwareness".
