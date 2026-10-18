@@ -621,6 +621,8 @@ class YRoomFileAPI(LoggingConfigurable):
                 return
             # Build arguments to `CM.save()`
             path = self.get_path()
+            if path is None:
+                return
             content = jupyter_ydoc.source
             # Guard against truncating a notebook: skip the save when the
             # notebook content is empty (an empty `{}` document). Saving that
