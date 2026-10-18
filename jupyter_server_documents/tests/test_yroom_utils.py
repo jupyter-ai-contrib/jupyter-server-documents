@@ -15,10 +15,7 @@ import weakref
 import pycrdt
 import pytest
 
-from jupyter_server_documents.rooms.yroom_utils import (
-    GC_DRAIN_SENTINEL,
-    drain_observer_removals,
-)
+from jupyter_server_documents.rooms.yroom_utils import drain_observer_removals
 
 
 class _Owner:
@@ -84,14 +81,16 @@ class TestDrainObserverRemovals:
         del owner, target, sub
         for _ in range(3):
             gc.collect()
-        assert owner_ref() is not None, (
-            "expected the owner to leak without a drain (deferred removal); if this "
-            "fails, pycrdt/yrs may no longer defer and the workaround can be removed"
-        )
+        if owner_ref() is None:
+            # pycrdt >= 0.14.8 releases unobserved callbacks immediately, so there
+            # is no leak for this control to demonstrate. Once the minimum pycrdt
+            # version includes that fix, the drain workaround can be removed.
+            pytest.skip("this pycrdt version no longer defers observer removal")
 
-    def test_drain_preserves_content_and_leaves_no_sentinel(self):
-        """The write+revert must be content-neutral across every shared type kind
-        and must not leave the drain sentinel behind."""
+    def test_drain_preserves_content_and_fires_no_observers(self):
+        """The drain must not change content or fire observers that are still
+        subscribed. Consumers such as `YChat` assume every inserted array item is
+        a real message, so any transient write would reach them."""
         ydoc = pycrdt.Doc()
         text = ydoc.get("source", type=pycrdt.Text)
         mp = ydoc.get("meta", type=pycrdt.Map)
@@ -100,14 +99,25 @@ class TestDrainObserverRemovals:
             text += "hello"
             mp["k"] = "v"
             arr.append(1)
-            arr.append(2)
+            arr.append(pycrdt.Map({"id": "m1"}))
+
+        events: list = []
+        subs = [
+            (ydoc, ydoc.observe(events.append)),
+            (text, text.observe(events.append)),
+            (mp, mp.observe(events.append)),
+            (arr, arr.observe(events.append)),
+            (arr, arr.observe_deep(events.append)),
+        ]
 
         drain_observer_removals(ydoc)
 
+        assert events == []
         assert str(text) == "hello"
         assert dict(mp.to_py()) == {"k": "v"}
-        assert list(arr.to_py()) == [1, 2]
-        assert GC_DRAIN_SENTINEL not in dict(mp.to_py())
+        assert list(arr.to_py()) == [1, {"id": "m1"}]
+        for target, sub in subs:
+            target.unobserve(sub)
 
     def test_drain_is_safe_on_empty_document(self):
         """Draining a document with no root types (nothing to touch) is a no-op."""

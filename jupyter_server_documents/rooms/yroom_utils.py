@@ -11,9 +11,9 @@ from typing import Any
 
 import pycrdt
 
-# Sentinel key/value used by `drain_observer_removals()`. Chosen to be extremely
-# unlikely to collide with real document content.
-GC_DRAIN_SENTINEL = "__jsd_gc_drain_sentinel__"
+def _noop(*args: Any) -> None:
+    """Placeholder observer. Captures nothing, so its own deferred removal is
+    harmless."""
 
 
 def drain_observer_removals(ydoc: pycrdt.Doc) -> None:
@@ -27,12 +27,12 @@ def drain_observer_removals(ydoc: pycrdt.Doc) -> None:
     capture the owning `YRoom` and its `YDoc` -- are never released, leaking the
     whole room.
 
-    This works around it by committing a content-neutral mutation (and immediately
-    reverting it) on every shared type reachable from the document, which triggers
-    `yrs` to drain the pending-removal queue for each. The write+revert is a true
-    no-op from the content/persistence perspective (JSD does not persist YDoc
-    history). Callers should invoke this only after all clients are disconnected
-    and the file API is stopped, so no client or save observes the transient state.
+    This works around it by subscribing and immediately unsubscribing a no-op
+    observer on the document and on every shared type reachable from it, which
+    triggers `yrs` to drain the pending-removal queue for each. Unlike writing to
+    the document, this changes no content and fires no observer callbacks, so it
+    is safe even if a consumer (e.g. a `YChat` message observer) is still
+    subscribed when the room is torn down.
 
     This is a temporary workaround; remove it once deferred observer removal is
     fixed upstream.
@@ -58,28 +58,7 @@ def drain_observer_removals(ydoc: pycrdt.Doc) -> None:
                 if isinstance(value, (Map, Array, Text)):
                     frontier.append(value)
 
-    if not nodes:
-        return
-
-    def touch(node: Any) -> None:
-        if isinstance(node, Text):
-            node += "\x00"
-        elif isinstance(node, Map):
-            node[GC_DRAIN_SENTINEL] = 1
-        elif isinstance(node, Array):
-            node.append(None)
-
-    def revert(node: Any) -> None:
-        if isinstance(node, Text):
-            del node[len(node) - 1 : len(node)]
-        elif isinstance(node, Map):
-            del node[GC_DRAIN_SENTINEL]
-        elif isinstance(node, Array):
-            del node[len(node) - 1 : len(node)]
-
-    with ydoc.transaction():
-        for node in nodes:
-            touch(node)
-    with ydoc.transaction():
-        for node in nodes:
-            revert(node)
+    ydoc.unobserve(ydoc.observe(_noop))
+    for node in nodes:
+        node.unobserve(node.observe(_noop))
+        node.unobserve(node.observe_deep(_noop))
