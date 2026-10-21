@@ -98,6 +98,34 @@ async def test_missing_source_hash_returns_400(jp_fetch):
     assert exc_info.value.code == 400
 
 
+@pytest.mark.parametrize(
+    "ordering",
+    [
+        {"client_id": "tab-A", "sequence": -1},
+        {"client_id": "tab-A", "sequence": True},
+        {"client_id": "tab-A", "sequence": "0"},
+        {"sequence": 0},
+    ],
+    ids=["negative", "bool", "string", "missing-client-id"],
+)
+async def test_invalid_ordering_fields_return_400(jp_fetch, ordering):
+    """sequence must be a non-negative int and needs a client_id."""
+    with pytest.raises(HTTPClientError) as exc_info:
+        await jp_fetch(
+            "api", "kernels", "00000000-0000-0000-0000-000000000000", "execute",
+            method="POST",
+            body=json.dumps({
+                "document_id": "json:notebook:does-not-exist",
+                "cells": [{"cell_id": CELL_ID, "source_hash": CELL_SOURCE_HASH}],
+                **ordering,
+            }),
+            headers={"Content-Type": "application/json"},
+        )
+    assert exc_info.value.code == 400
+    # Rejected by validation, not by the unknown document_id further down.
+    assert "sequence" in exc_info.value.response.body.decode()
+
+
 # ── End-to-end test (requires ipykernel) ──────────────────────────────────────
 
 
