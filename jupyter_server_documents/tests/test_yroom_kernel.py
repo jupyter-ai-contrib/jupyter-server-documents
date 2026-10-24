@@ -16,6 +16,7 @@ Critical invariants tested here:
 """
 import asyncio
 import pytest
+from jupyter_client.restarter import KernelRestarter
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -186,6 +187,82 @@ class TestConnectKernel:
         first_client.stop_channels.assert_called_once()
         assert room._kernel_client is second_client
         await room.disconnect_kernel()
+
+
+# ── automatic kernel restart/death ────────────────────────────────────────────
+
+class TestKernelRestarterCallbacks:
+    """Exercise jupyter_client's synchronous callback dispatcher."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("room_count", [1, 2])
+    async def test_restart_reconnects_rooms(self, room_count):
+        restarter = KernelRestarter()
+        km, first_client = make_mock_km()
+        km.add_restart_callback.side_effect = restarter.add_callback
+        km.remove_restart_callback.side_effect = restarter.remove_callback
+        rooms = [make_yroom() for _ in range(room_count)]
+        try:
+            for room in rooms:
+                await connect(room, km, first_client)
+
+            # Repeat to verify the callbacks survive disconnect/reconnect without
+            # accumulating registrations or skipping another room's callback.
+            for _ in range(2):
+                old_workers = [room._execution_worker_task for room in rooms]
+                old_queues = [room._execution_queue for room in rooms]
+                _, next_client = make_mock_km()
+                km.client_factory.return_value = next_client
+
+                restarter._fire_callbacks("restart")
+
+                async def wait_for_reconnect():
+                    while any(
+                        room._kernel_client is not next_client or not room._shell_confirmed
+                        for room in rooms
+                    ):
+                        await asyncio.sleep(0)
+
+                await asyncio.wait_for(wait_for_reconnect(), timeout=2.0)
+                for room, worker, queue in zip(rooms, old_workers, old_queues):
+                    assert worker.done()
+                    assert room._execution_worker_task is not worker
+                    assert room._execution_queue is not queue
+                    assert room._kernel_manager is km
+                assert len(restarter.callbacks["restart"]) == room_count
+                assert len(restarter.callbacks["dead"]) == room_count
+        finally:
+            for room in rooms:
+                await room.disconnect_kernel()
+
+        assert restarter.callbacks == {"restart": [], "dead": []}
+
+    @pytest.mark.asyncio
+    async def test_dead_disconnects_room(self):
+        restarter = KernelRestarter()
+        km, client = make_mock_km()
+        km.add_restart_callback.side_effect = restarter.add_callback
+        km.remove_restart_callback.side_effect = restarter.remove_callback
+        room = make_yroom()
+        try:
+            await connect(room, km, client)
+            worker = room._execution_worker_task
+            restarter._fire_callbacks("dead")
+
+            async def wait_for_disconnect():
+                while room._kernel_manager is not None:
+                    await asyncio.sleep(0)
+
+            await asyncio.wait_for(wait_for_disconnect(), timeout=2.0)
+            client.stop_channels.assert_called_once()
+            assert worker.done()
+            assert room._kernel_client is None
+            assert room._execution_worker_task is None
+            assert room._execution_queue is None
+            assert not room._shell_confirmed
+            assert restarter.callbacks == {"restart": [], "dead": []}
+        finally:
+            await room.disconnect_kernel()
 
 
 # ── disconnect_kernel ─────────────────────────────────────────────────────────

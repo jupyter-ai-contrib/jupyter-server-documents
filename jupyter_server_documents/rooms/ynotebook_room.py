@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Optional
 import asyncio
 import struct
 from dataclasses import dataclass
+from tornado.ioloop import IOLoop
 
 from .yroom import YRoom
 
@@ -184,7 +185,12 @@ class YNotebookRoom(YRoom):
         # don't linger and consume memory across sessions.
         self._enqueued_events.clear()
 
-    async def _on_kernel_restart(self) -> None:
+    def _on_kernel_restart(self) -> None:
+        # KernelRestarter invokes callbacks synchronously. Let the IOLoop await
+        # the reconnect and report errors after callback dispatch has finished.
+        IOLoop.current().add_callback(self._reconnect_kernel)
+
+    async def _reconnect_kernel(self) -> None:
         # Save the kernel manager before disconnect_kernel() nulls it out,
         # so we can pass it back to connect_kernel() below.
         km = self._kernel_manager
@@ -192,8 +198,8 @@ class YNotebookRoom(YRoom):
         if km is not None:
             await self.connect_kernel(km)
 
-    async def _on_kernel_dead(self) -> None:
-        await self.disconnect_kernel()
+    def _on_kernel_dead(self) -> None:
+        IOLoop.current().add_callback(self.disconnect_kernel)
 
     # ── Internal client helpers ───────────────────────────────────────────────────
 
